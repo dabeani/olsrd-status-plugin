@@ -16,7 +16,8 @@ LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
 }
 ```
 
-
+# how to bring it into the build env
+scp olsrd.......zip ubnt@172.30.1.96:/home/ubnt/
 
 # from the root of your olsrd repo
 unzip -o olsrd-status-plugin-packed-v11.zip -d .
