@@ -804,7 +804,8 @@ static int h_traceroute(http_request_t *r) {
   size_t cmdlen = strlen(g_traceroute_path) + 4 + strlen(target) + 32;
   char *cmd = (char*)malloc(cmdlen);
   if (!cmd) { send_text(r, "error allocating memory\n"); return 0; }
-  snprintf(cmd, cmdlen, "%s -n %s 2>&1", g_traceroute_path, target);
+  /* conservative flags: IPv4, numeric, wait 2s, 1 probe per hop, max 8 hops */
+  snprintf(cmd, cmdlen, "%s -4 -n -w 2 -q 1 -m 8 %s 2>&1", g_traceroute_path, target);
   char *out = NULL; size_t n = 0;
   if (util_exec(cmd, &out, &n) == 0 && out) {
     http_send_status(r, 200, "OK");
@@ -820,7 +821,7 @@ static int h_traceroute(http_request_t *r) {
     size_t cmdlen2 = strlen(g_traceroute_path) + 8 + strlen(target) + 32;
     char *cmd2 = malloc(cmdlen2);
     if (cmd2) {
-      snprintf(cmd2, cmdlen2, "%s -I -n %s 2>&1", g_traceroute_path, target);
+  snprintf(cmd2, cmdlen2, "%s -I -n -w 2 -q 1 -m 8 %s 2>&1", g_traceroute_path, target);
       char *out2 = NULL; size_t n2 = 0;
       if (util_exec(cmd2, &out2, &n2) == 0 && out2) {
         http_send_status(r, 200, "OK");
