@@ -120,10 +120,10 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
         struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
         if (he && he->h_name) snprintf(namebuf, sizeof(namebuf), "%s", he->h_name);
       }
-      json_buf_append(&buf, &len, &cap, "{\"ipv4\":\""); json_append_escaped(&buf,&len,&cap, ip);
-      json_buf_append(&buf, &len, &cap, "\",\"hwaddr\":\""); json_append_escaped(&buf,&len,&cap, hw);
-      json_buf_append(&buf, &len, &cap, "\",\"hostname\":\""); json_append_escaped(&buf,&len,&cap, namebuf);
-      json_buf_append(&buf, &len, &cap, "\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\"}");
+  json_buf_append(&buf, &len, &cap, "{\"ipv4\":"); json_append_escaped(&buf,&len,&cap, ip);
+  json_buf_append(&buf, &len, &cap, ",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap, hw);
+  json_buf_append(&buf, &len, &cap, ",\"hostname\":"); json_append_escaped(&buf,&len,&cap, namebuf);
+  json_buf_append(&buf, &len, &cap, ",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\"}");
     }
   }
   fclose(f);
@@ -294,6 +294,13 @@ static int h_status(http_request_t *r) {
     uptime_seconds = (long)atof(upt);
     free(upt); upt = NULL;
   }
+  /* fallback: if /proc/uptime didn't yield a value, try sysinfo() on Linux */
+#if defined(__linux__)
+  if (uptime_seconds == 0) {
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) uptime_seconds = (long)si.uptime;
+  }
+#endif
 
   /* airosdata: include raw JSON from /tmp/10-all.json if present */
   char *airos_raw = NULL; size_t airos_n = 0;
@@ -339,8 +346,7 @@ static int h_status(http_request_t *r) {
   APPEND("\"hostname\":"); json_append_escaped(&buf, &len, &cap, def_hostname);
   APPEND("},");
 
-  /* devices: leave empty array for now (can be populated from ubnt-discover later) */
-  APPEND("\"devices\":[] ,");
+  /* devices will be populated below from ubnt-discover or arp fallback */
 
   /* airosdata: raw JSON if present */
   if (have_airos) {
@@ -586,7 +592,8 @@ static int h_capabilities_local(http_request_t *r) {
             }
           }
         }
-        if (!nl) break; p = nl + 1;
+  if (!nl) break;
+  p = nl + 1;
       }
       free(s);
     }
