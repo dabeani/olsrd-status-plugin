@@ -1129,7 +1129,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
     if (!path_exists(*np)) continue;
     char *nbuf = NULL; size_t nbs = 0;
     if (util_read_file(*np, &nbuf, &nbs) == 0 && nbuf && nbs>0) {
-      char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 120, ipv4);
+  char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 117, ipv4);
       char *pos = strstr(nbuf, needle);
       if (pos) {
         char *hpos = strstr(pos, "\"hostname\":");
@@ -1143,7 +1143,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
   /* try remote node_db as last resort */
   char *outb = NULL; size_t obn = 0;
   if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &outb, &obn) == 0 && outb && obn>0) {
-  char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 120, ipv4);
+  char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 117, ipv4);
     char *pos = strstr(outb, needle);
     if (pos) {
       char *hpos = strstr(pos, "\"hostname\":");
