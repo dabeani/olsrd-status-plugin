@@ -146,15 +146,28 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   const char *ubnt_candidates[] = { "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", "/usr/local/sbin/ubnt-discover", "/usr/local/bin/ubnt-discover", "/opt/ubnt/ubnt-discover", NULL };
   const char *ub = find_first_existing(ubnt_candidates);
   if (ub) {
+    fprintf(stderr, "[status-plugin] found ubnt-discover at: %s\n", ub);
     char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -d 150 -V -i none -j", ub);
-    if (util_exec(cmd, out, outlen) == 0 && *out && *outlen>0) return 0;
+    if (util_exec(cmd, out, outlen) == 0 && *out && *outlen>0) {
+      fprintf(stderr, "[status-plugin] ubnt-discover succeeded\n");
+      return 0;
+    } else {
+      fprintf(stderr, "[status-plugin] ubnt-discover failed\n");
+    }
+  } else {
+    fprintf(stderr, "[status-plugin] ubnt-discover not found\n");
   }
   /* try preexisting dump */
   if (path_exists("/tmp/10-all.json")) {
+    fprintf(stderr, "[status-plugin] using /tmp/10-all.json\n");
     if (util_read_file("/tmp/10-all.json", out, outlen) == 0 && *out && *outlen>0) return 0;
+  } else {
+    fprintf(stderr, "[status-plugin] /tmp/10-all.json not found\n");
   }
   /* fallback to arp-based device list */
+  fprintf(stderr, "[status-plugin] falling back to ARP table\n");
   if (devices_from_arp_json(out, outlen) == 0) return 0;
+  fprintf(stderr, "[status-plugin] all device discovery methods failed\n");
   return -1;
 }
 
@@ -349,7 +362,7 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
       if (!r || r<=obj) break;
   char *v; size_t vlen;
       char originator[128] = ""; char bindto[64] = ""; char lq[32] = ""; char nlq[32] = ""; char cost[32] = ""; char metric[32] = ""; char hostname[256] = "";
-      if (find_json_string_value(obj, "neighbor_originator", &v, &vlen) || find_json_string_value(obj, "originator", &v, &vlen)) snprintf(originator, sizeof(originator), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "neighbor_originator", &v, &vlen) || find_json_string_value(obj, "originator", &v, &vlen) || find_json_string_value(obj, "ipAddress", &v, &vlen)) snprintf(originator, sizeof(originator), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "link_bindto", &v, &vlen) || find_json_string_value(obj, "link_bindto", &v, &vlen)) snprintf(bindto, sizeof(bindto), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "linkQuality", &v, &vlen) || find_json_string_value(obj, "lq", &v, &vlen)) snprintf(lq, sizeof(lq), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen) || find_json_string_value(obj, "nlq", &v, &vlen)) snprintf(nlq, sizeof(nlq), "%.*s", (int)vlen, v);
@@ -457,6 +470,9 @@ static int h_status(http_request_t *r) {
   char *pout = NULL; size_t pn = 0; int olsr2_on = 0;
   if (util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout, &pn) == 0 && pout && pn>0) {
     olsr2_on = 1; /* keep pout for diagnostics, free after JSON emitted */
+    fprintf(stderr, "[status-plugin] detected OLSR process: %s\n", pout);
+  } else {
+    fprintf(stderr, "[status-plugin] no OLSR process detected\n");
   }
 
   /* try to fetch olsrd links from local JSON API endpoints if pidof didn't detect process */
@@ -465,10 +481,16 @@ static int h_status(http_request_t *r) {
     const char *endpoints[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
     for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
       char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
+      fprintf(stderr, "[status-plugin] trying OLSR endpoint: %s\n", *ep);
       if (util_exec(cmd, &olsr_links_raw, &oln) == 0 && olsr_links_raw && oln>0) {
-        olsr2_on = 1; break;
+        olsr2_on = 1;
+        fprintf(stderr, "[status-plugin] successfully connected to OLSR at %s\n", *ep);
+        break;
       }
       if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
+    }
+    if (!olsr2_on) {
+      fprintf(stderr, "[status-plugin] no OLSR API endpoints accessible\n");
     }
   }
   /* additionally try to fetch neighbors, routes and topology JSON for inclusion in /status */
@@ -577,6 +599,7 @@ static int h_status(http_request_t *r) {
   {
     char *ud = NULL; size_t udn = 0;
     if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
+      fprintf(stderr, "[status-plugin] got device data from ubnt-discover or fallback (%zu bytes)\n", udn);
       char *normalized = NULL; size_t nlen = 0;
       if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
         APPEND("\"devices\":");
@@ -584,10 +607,12 @@ static int h_status(http_request_t *r) {
         APPEND(",");
         free(normalized);
       } else {
+        fprintf(stderr, "[status-plugin] failed to normalize device data\n");
         APPEND("\"devices\":[] ,");
       }
       free(ud);
     } else {
+      fprintf(stderr, "[status-plugin] no device data available\n");
       APPEND("\"devices\":[] ,");
     }
   }
@@ -598,9 +623,9 @@ static int h_status(http_request_t *r) {
     char *norm = NULL; size_t nn = 0;
     if (normalize_olsrd_links(olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
-      /* also attempt to normalize neighbors from same raw payload */
+      /* also attempt to normalize neighbors from neighbors payload */
       char *nne = NULL; size_t nne_n = 0;
-      if (normalize_olsrd_neighbors(olsr_links_raw, &nne, &nne_n) == 0 && nne && nne_n>0) {
+      if (olsr_neighbors_raw && olnn > 0 && normalize_olsrd_neighbors(olsr_neighbors_raw, &nne, &nne_n) == 0 && nne && nne_n>0) {
         APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne); APPEND(",");
         free(nne);
       } else {
@@ -609,9 +634,10 @@ static int h_status(http_request_t *r) {
       free(norm);
     } else {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
-      /* neighbors fallback: try to extract neighbors separately */
+      /* neighbors fallback: try neighbors data first, then links */
       char *nne2 = NULL; size_t nne2_n = 0;
-      if (normalize_olsrd_neighbors(olsr_links_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0) {
+      if ((olsr_neighbors_raw && olnn > 0 && normalize_olsrd_neighbors(olsr_neighbors_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0) ||
+          (normalize_olsrd_neighbors(olsr_links_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0)) {
         APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne2); APPEND(","); free(nne2);
       } else {
         APPEND("\"neighbors\":[],");
@@ -619,7 +645,14 @@ static int h_status(http_request_t *r) {
     }
   } else {
     APPEND("\"links\":[],");
-    APPEND("\"neighbors\":[],");
+    /* try to get neighbors even if no links */
+    char *nne3 = NULL; size_t nne3_n = 0;
+    if (olsr_neighbors_raw && olnn > 0 && normalize_olsrd_neighbors(olsr_neighbors_raw, &nne3, &nne3_n) == 0 && nne3 && nne3_n>0) {
+      APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne3); APPEND(",");
+      free(nne3);
+    } else {
+      APPEND("\"neighbors\":[],");
+    }
   }
   APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
 
@@ -977,7 +1010,20 @@ static int h_traceroute(http_request_t *r) {
 
 
 static int h_embedded_appjs(http_request_t *r) {
-  return http_send_file(r, g_asset_root, "js/app.js", NULL);
+  if (http_send_file(r, g_asset_root, "js/app.js", NULL) != 0) {
+    /* Fallback: serve minimal JavaScript for debugging */
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: application/javascript; charset=utf-8\r\n\r\n");
+    http_printf(r, "console.log('OLSR Status Plugin - app.js fallback loaded');\n");
+    http_printf(r, "window.addEventListener('load', function() {\n");
+    http_printf(r, "  console.log('Page loaded, fetching status...');\n");
+    http_printf(r, "  fetch('/status').then(r => r.json()).then(data => {\n");
+    http_printf(r, "    console.log('Status data:', data);\n");
+    http_printf(r, "    document.body.innerHTML += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';\n");
+    http_printf(r, "  }).catch(e => console.error('Error fetching status:', e));\n");
+    http_printf(r, "});\n");
+  }
+  return 0;
 }
 
 /* Simple proxy for selected OLSRd JSON queries (whitelist q values). */
@@ -1190,6 +1236,18 @@ int olsrd_plugin_init(void) {
   for (const char **p = tracer_candidates; *p; ++p) { if (path_exists(*p)) { g_has_traceroute = 1; snprintf(g_traceroute_path, sizeof(g_traceroute_path), "%s", *p); break; } }
   for (const char **p = olsrd_candidates; *p; ++p) { if (path_exists(*p)) { snprintf(g_olsrd_path, sizeof(g_olsrd_path), "%s", *p); break; } }
   g_is_edgerouter = env_is_edgerouter();
+
+  /* Try to detect local www directory for development */
+  if (!path_exists(g_asset_root) || !path_exists(g_asset_root)) {
+    char local_www[512];
+    snprintf(local_www, sizeof(local_www), "./www");
+    if (path_exists(local_www)) {
+      fprintf(stderr, "[status-plugin] using local www directory: %s\n", local_www);
+      snprintf(g_asset_root, sizeof(g_asset_root), "%s", local_www);
+    } else {
+      fprintf(stderr, "[status-plugin] warning: asset root %s not found, web interface may not work\n", g_asset_root);
+    }
+  }
 
   if (http_server_start(g_bind, g_port, g_asset_root) != 0) {
     fprintf(stderr, "[status-plugin] failed to start http server on %s:%d\n", g_bind, g_port);

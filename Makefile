@@ -27,7 +27,7 @@ LIBDIR   ?= $(PREFIX)/lib/olsrd
 SHAREDIR ?= $(PREFIX)/share/olsrd-status-plugin
 ASSETDIR ?= $(SHAREDIR)/www
 
-SCRIPTS := scripts/fetch-assets.sh
+SCRIPTS := scripts/fetch-assets.sh scripts/debug-plugin.sh
 
 .PHONY: all clean status_plugin status_plugin_clean install uninstall status_plugin_install status_plugin_uninstall
 

@@ -278,6 +278,7 @@ static void h_capabilities(http_request_t *r){
 }
 
 /* Serve index.html at "/" from assetroot; fallback to text summary */
+static void h_root_fallback(http_request_t *r) __attribute__((unused));
 static void h_root_fallback(http_request_t *r) {
   http_send_status(r, 200, "OK");
   http_printf(r, "olsrd-status-plugin\n(no index.html found at assetroot: %s)\n", g_asset_root);
@@ -287,7 +288,14 @@ static void h_root_fallback(http_request_t *r) {
 static void h_root(http_request_t *r) __attribute__((unused));
 static void h_root(http_request_t *r){
   if (http_send_file(r, g_asset_root, "index.html", "text/html; charset=utf-8") != 0){
-    h_root_fallback(r);
-    http_printf(r, "olsrd-status-plugin\n(no index.html found at assetroot: %s)\n", g_asset_root);
+    /* Fallback to embedded minimal HTML */
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: text/html; charset=utf-8\r\n\r\n");
+    http_printf(r, "<!DOCTYPE html><html><head><title>OLSR Status</title></head><body>\n");
+    http_printf(r, "<h1>OLSR Status Plugin</h1>\n");
+    http_printf(r, "<p>Asset files not found at: %s</p>\n", g_asset_root);
+    http_printf(r, "<p>Check plugin installation and assetroot parameter.</p>\n");
+    http_printf(r, "<p><a href='/status'>Status JSON</a> | <a href='/capabilities'>Capabilities</a></p>\n");
+    http_printf(r, "</body></html>\n");
   }
 }
