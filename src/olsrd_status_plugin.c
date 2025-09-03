@@ -763,12 +763,38 @@ static const char embedded_index_html[] =
 "  <link rel=\"icon\" type=\"image/png\" href=\"/css/favicon-16x16.png\" sizes=\"16x16\">\n"
 "  <link rel=\"icon\" type=\"image/x-icon\" href=\"/css/favicon.ico\">\n"
 "  <title>olsrd status</title>\n"
-"  <link rel=\"stylesheet\" href=\"/css/bootstrap.min.css\">\n"
 "  <style>\n"
 "    body { padding: 20px; }\n"
 "    .badge-env { font-size: 12px; margin-left: 8px; }\n"
 "    pre { max-height: 400px; overflow:auto; background:#111; color:#0f0; padding:12px; }\n"
 "    .tab-content { margin-top: 15px; }\n"
+"    .table { width: 100%; margin-bottom: 20px; }\n"
+"    .table th, .table td { padding: 8px; text-align: left; border: 1px solid #ddd; }\n"
+"    .table th { background-color: #f5f5f5; }\n"
+"    .btn { display: inline-block; padding: 6px 12px; margin-bottom: 0; font-size: 14px; font-weight: normal; line-height: 1.42857143; text-align: center; white-space: nowrap; vertical-align: middle; cursor: pointer; border: 1px solid transparent; border-radius: 4px; }\n"
+"    .btn-primary { color: #fff; background-color: #337ab7; border-color: #2e6da4; }\n"
+"    .btn-default { color: #333; background-color: #fff; border-color: #ccc; }\n"
+"    .form-control { display: block; width: 100%; height: 34px; padding: 6px 12px; font-size: 14px; line-height: 1.42857143; color: #555; background-color: #fff; border: 1px solid #ccc; border-radius: 4px; }\n"
+"    .input-group { position: relative; display: table; border-collapse: separate; }\n"
+"    .input-group-btn { position: relative; font-size: 0; white-space: nowrap; }\n"
+"    .input-group-btn .btn { position: relative; border-radius: 0; }\n"
+"    .input-group .form-control { position: relative; z-index: 2; float: left; width: 100%; margin-bottom: 0; }\n"
+"    .input-group .form-control:focus { z-index: 3; }\n"
+"    .input-group-btn .btn { border-left-width: 0; }\n"
+"    .input-group-btn:first-child .btn { border-right-width: 0; }\n"
+"    .nav-tabs { border-bottom: 1px solid #ddd; }\n"
+"    .nav-tabs > li { float: left; margin-bottom: -1px; }\n"
+"    .nav-tabs > li > a { margin-right: 2px; line-height: 1.42857143; border: 1px solid transparent; border-radius: 4px 4px 0 0; }\n"
+"    .nav-tabs > li.active > a, .nav-tabs > li.active > a:hover, .nav-tabs > li.active > a:focus { color: #555; background-color: #fff; border: 1px solid #ddd; border-bottom-color: transparent; cursor: default; }\n"
+"    .tab-content > .tab-pane { display: none; }\n"
+"    .tab-content > .active { display: block; }\n"
+"    .dl-horizontal dt { float: left; width: 160px; clear: left; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n"
+"    .dl-horizontal dd { margin-left: 180px; }\n"
+"    .panel { margin-bottom: 20px; background-color: #fff; border: 1px solid #ddd; border-radius: 4px; }\n"
+"    .panel-body { padding: 15px; }\n"
+"    .panel-footer { padding: 10px 15px; background-color: #f5f5f5; border-top: 1px solid #ddd; border-bottom-right-radius: 3px; border-bottom-left-radius: 3px; }\n"
+"    .alert { padding: 15px; margin-bottom: 20px; border: 1px solid transparent; border-radius: 4px; }\n"
+"    .alert-warning { color: #8a6d3b; background-color: #fcf8e3; border-color: #faebcc; }\n"
 "  </style>\n"
 "</head>\n"
 "<body>\n"
@@ -1170,7 +1196,7 @@ static int h_emb_bootstrap(http_request_t *r) { http_send_status(r,200,"OK"); ht
 
 /* check asset files under g_asset_root and log their existence and permissions */
 static void log_asset_permissions(void) {
-  const char *rel_files[] = { "index.html", "js/app.js", "css/bootstrap.min.css" };
+  const char *rel_files[] = { };
   char path[1024];
   struct stat st;
   /* check root */
