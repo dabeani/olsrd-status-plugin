@@ -181,6 +181,9 @@ static int find_json_string_value(const char *start, const char *key, char **val
 
 /* forward declaration for cached hostname lookup (defined later) */
 static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
+/* forward declarations for OLSRd proxy cache helpers */
+static int olsr_cache_get(const char *key, char *out, size_t outlen);
+static void olsr_cache_set(const char *key, const char *val);
 
 /* Normalize devices array from ubnt-discover JSON string `ud` into a new allocated JSON array in *outbuf (caller must free). */
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen) {
@@ -954,9 +957,14 @@ static int h_olsrd_json(http_request_t *r) {
   int ok = 0;
   for (const char **p = allowed; *p; ++p) if (strcmp(*p, q) == 0) { ok = 1; break; }
   if (!ok) { send_json(r, "{}\n"); return 0; }
-  char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/%s", q);
+  /* consult in-memory cache first */
+  char cached[256] = "";
+  if (olsr_cache_get(q, cached, sizeof(cached))) { send_json(r, cached); return 0; }
+  char cmd[512]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/%s", q);
   char *out = NULL; size_t n = 0;
   if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+    /* cache truncated to OLSR_CACHE_VAL-1 */
+    olsr_cache_set(q, out);
     send_json(r, out); free(out); return 0;
   }
   send_json(r, "{}\n"); return 0;
@@ -1020,6 +1028,32 @@ int olsrd_plugin_interface_version(void) {
 #define CACHE_TTL 60
 struct kv_cache_entry { char key[128]; char val[256]; time_t ts; };
 static struct kv_cache_entry g_host_cache[CACHE_SIZE];
+/* separate cache for OLSRd proxy responses; uses same slot size as kv_cache_entry */
+static struct kv_cache_entry g_olsr_cache[CACHE_SIZE];
+
+static int olsr_cache_get(const char *key, char *out, size_t outlen) {
+  if (!key || !out) return 0;
+  unsigned long h = 1469598103934665603UL;
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  int idx = (int)(h % CACHE_SIZE);
+  if (g_olsr_cache[idx].key[0] == 0) return 0;
+  if (strcmp(g_olsr_cache[idx].key, key) != 0) return 0;
+  if (difftime(time(NULL), g_olsr_cache[idx].ts) > CACHE_TTL) return 0;
+  /* copy up to outlen-1 chars */
+  snprintf(out, outlen, "%s", g_olsr_cache[idx].val);
+  return 1;
+}
+
+static void olsr_cache_set(const char *key, const char *val) {
+  if (!key || !val) return;
+  unsigned long h = 1469598103934665603UL;
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  int idx = (int)(h % CACHE_SIZE);
+  snprintf(g_olsr_cache[idx].key, sizeof(g_olsr_cache[idx].key), "%s", key);
+  /* store truncated value (safe) */
+  snprintf(g_olsr_cache[idx].val, sizeof(g_olsr_cache[idx].val), "%s", val);
+  g_olsr_cache[idx].ts = time(NULL);
+}
 
 static void cache_set(struct kv_cache_entry *cache, const char *key, const char *val) {
   if (!key || !val) return;
