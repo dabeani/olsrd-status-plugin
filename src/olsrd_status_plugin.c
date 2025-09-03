@@ -86,6 +86,8 @@ static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, co
 
 /* global flags set at init */
 extern int g_is_edgerouter;
+extern int g_has_traceroute;
+extern char g_traceroute_path[];
 
 
 /* Return first existing path from candidates or NULL */
@@ -348,6 +350,35 @@ static int h_status(http_request_t *r) {
       APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
     }
   }
+  /* attempt to read traceroute_to from settings.inc (same path as python reference) */
+  char traceroute_to[256] = "";
+  {
+    char *s=NULL; size_t sn=0;
+    if (util_read_file("/config/custom/www/settings.inc", &s, &sn) == 0 && s && sn>0) {
+      /* simple parse: look for traceroute_to= value */
+      char *line = s; char *end = s + sn;
+      while (line && line < end) {
+        char *nl = memchr(line, '\n', (size_t)(end - line));
+        size_t linelen = nl ? (size_t)(nl - line) : (size_t)(end - line);
+        if (linelen > 0 && memmem(line, linelen, "traceroute_to", 12)) {
+          /* find '=' */
+          char *eq = memchr(line, '=', linelen);
+          if (eq) {
+            char *v = eq + 1; size_t vlen = (size_t)(end - v);
+            /* trim semicolons, quotes and whitespace */
+            while (vlen && (v[vlen-1]=='\n' || v[vlen-1]=='\r' || v[vlen-1]==' ' || v[vlen-1]=='\'' || v[vlen-1]=='\"' || v[vlen-1]==';')) vlen--;
+            while (vlen && (*v==' ' || *v=='\'' || *v=='\"')) { v++; vlen--; }
+            if (vlen > 0) {
+              size_t copy = vlen < sizeof(traceroute_to)-1 ? vlen : sizeof(traceroute_to)-1;
+              memcpy(traceroute_to, v, copy); traceroute_to[copy]=0;
+            }
+          }
+        }
+        if (!nl) break; line = nl + 1;
+      }
+      free(s);
+    }
+  }
   /* Try to populate devices from ubnt-discover (or fallback) using helper */
   {
     char *ud = NULL; size_t udn = 0;
@@ -369,6 +400,60 @@ static int h_status(http_request_t *r) {
 
   /* links */ APPEND("\"links\":[],");
   APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
+
+  /* include fixed traceroute-to-uplink output (mimic python behavior) */
+  if (traceroute_to[0] && g_has_traceroute) {
+    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -4 -w 1 -q 1 %s", g_traceroute_path[0]?g_traceroute_path:"traceroute", traceroute_to);
+    char *tout = NULL; size_t t_n = 0;
+    if (util_exec(cmd, &tout, &t_n) == 0 && tout && t_n>0) {
+      /* parse lines into simple objects */
+      APPEND(",\"trace_target\":"); json_append_escaped(&buf,&len,&cap,traceroute_to);
+      APPEND(",\"trace_to_uplink\":[");
+      char *p = tout; char *line; int first = 1;
+      while ((line = strsep(&p, "\n")) != NULL) {
+        if (!line || !*line) continue;
+        /* skip header line starting with 'traceroute to' */
+        if (strstr(line, "traceroute to") == line) continue;
+        /* tokenize */
+        char *copy = strdup(line);
+        char *tok = NULL; char *save = NULL; int idx = 0;
+        char hop[16] = ""; char ip[64] = ""; char host[256] = ""; char ping[64] = "";
+        tok = strtok_r(copy, " \t", &save);
+        while (tok) {
+          if (idx == 0) { snprintf(hop, sizeof(hop), "%s", tok); }
+          else if (idx == 1) {
+            /* could be hostname or ip */
+            if (tok[0] == '(') {
+              /* unexpected, skip */
+            } else {
+              /* store as ip for now */
+              snprintf(ip, sizeof(ip), "%s", tok);
+            }
+          } else if (idx == 2) {
+            /* maybe ip in parentheses or first ping */
+            if (tok[0] == '(') {
+              /* strip parentheses */
+              char *endp = strchr(tok, ')');
+              if (endp) { *endp = 0; snprintf(host, sizeof(host), "%s", tok+1); }
+            } else if (!ping[0]) {
+              snprintf(ping, sizeof(ping), "%s", tok);
+            }
+          } else {
+            if (!ping[0] && strchr(tok, 'm')) { snprintf(ping, sizeof(ping), "%s", tok); }
+          }
+          idx++; tok = strtok_r(NULL, " \t", &save);
+        }
+        free(copy);
+        if (!first) APPEND(","); first = 0;
+        APPEND("{\"hop\":%s,\"ip\":", hop); json_append_escaped(&buf,&len,&cap, ip);
+        APPEND(",\"host\":"); json_append_escaped(&buf,&len,&cap, host);
+        APPEND(",\"ping\":"); json_append_escaped(&buf,&len,&cap, ping);
+        APPEND("}");
+      }
+      APPEND("]");
+      free(tout);
+    }
+  }
 
   /* optionally include admin_url when running on EdgeRouter */
   if (g_is_edgerouter) {
