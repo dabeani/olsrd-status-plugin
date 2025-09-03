@@ -484,7 +484,14 @@ static int h_status(http_request_t *r) {
 
   /* links: either from olsrd API or empty array */
   if (olsr_links_raw && oln>0) {
-    APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
+    /* try to normalize olsrd raw links into UI-friendly format */
+    char *norm = NULL; size_t nn = 0;
+    if (normalize_olsrd_links(olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
+      APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
+      free(norm);
+    } else {
+      APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
+    }
   } else {
     APPEND("\"links\":[],");
   }
