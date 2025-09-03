@@ -239,6 +239,51 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
   *outbuf = full; *outlen = 3 + len; return 0;
 }
 
+/* Normalize olsrd API JSON links into simple array expected by UI
+ * For each link object, produce {intf, local, remote, remote_host, lq, nlq, cost, routes, nodes}
+ */
+static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  const char *p = strstr(raw, "\"links\"");
+  if (!p) return -1;
+  const char *arr = strchr(p, '[');
+  if (!arr) return -1;
+  const char *q = arr; int depth = 0;
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
+  json_buf_append(&buf, &len, &cap, "["); int first = 1;
+  while (*q) {
+    if (*q == '[') { depth++; q++; continue; }
+    if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
+    if (*q == '{') {
+      const char *obj = q; int od = 0; const char *r = q;
+      while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
+      if (!r || r<=obj) break;
+      /* extract fields */
+      const char *v; size_t vlen;
+      char intf[64] = ""; char local[64] = ""; char remote[64] = ""; char remote_host[256] = ""; char lq[32] = ""; char nlq[32] = ""; char cost[32] = "";
+      if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen)) snprintf(intf, sizeof(intf), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "localIP", &v, &vlen)) snprintf(local, sizeof(local), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "remoteIP", &v, &vlen)) snprintf(remote, sizeof(remote), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq, sizeof(lq), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq, sizeof(nlq), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost, sizeof(cost), "%.*s", (int)vlen, v);
+      if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
+      json_buf_append(&buf, &len, &cap, "{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf);
+      json_buf_append(&buf, &len, &cap, ",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
+      json_buf_append(&buf, &len, &cap, ",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
+      json_buf_append(&buf, &len, &cap, ",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
+      json_buf_append(&buf, &len, &cap, ",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
+      json_buf_append(&buf, &len, &cap, ",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
+      json_buf_append(&buf, &len, &cap, ",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
+      json_buf_append(&buf, &len, &cap, ",\"routes\":\"\",\"nodes\":\"\"}");
+      q = r; continue;
+    }
+    q++; 
+  }
+  json_buf_append(&buf, &len, &cap, "]"); *outbuf = buf; *outlen = len; return 0;
+}
+
 /* forward decls for local helpers used before their definitions */
 static void send_text(http_request_t *r, const char *text);
 static void send_json(http_request_t *r, const char *json);
