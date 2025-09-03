@@ -759,6 +759,7 @@ static const char embedded_index_html[] =
 "  <meta name=\"description\" content=\"\">\n"
 "  <meta name=\"author\" content=\"\">\n"
 "  <title>olsrd status</title>\n"
+"  <link rel=\"stylesheet\" href=\"/css/bootstrap.min.css\">\n"
 "  <style>\n"
 "    body { padding: 20px; }\n"
 "    .badge-env { font-size: 12px; margin-left: 8px; }\n"
