@@ -440,7 +440,7 @@ static int h_status(http_request_t *r) {
   char dyn_url[256] = "";
   if (ipbuf[0]) snprintf(dyn_url, sizeof(dyn_url), "http://%s:2006/lin", ipbuf);
   int found_links = 0;
-  char curlcmd[256];
+  char curlcmd[512];
   for (const char **p = link_candidates; !found_links && *p; ++p) {
     snprintf(curlcmd, sizeof(curlcmd), "/usr/bin/curl -s --connect-timeout 1 %s", *p);
     if (util_exec(curlcmd, &linksbuf, &linksn) == 0 && linksbuf && linksn>0) { found_links = 1; break; }
@@ -617,8 +617,9 @@ static int h_status(http_request_t *r) {
               for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
                 if (!ifa->ifa_addr) continue;
                 if (ifa->ifa_addr->sa_family == AF_INET) {
-                  struct sockaddr_in *sa = (struct sockaddr_in*)ifa->ifa_addr;
-                  char addrbuf[128] = ""; inet_ntop(AF_INET, &sa->sin_addr, addrbuf, sizeof(addrbuf));
+                  struct sockaddr_in sa;
+                  memcpy(&sa, ifa->ifa_addr, sizeof(struct sockaddr_in));
+                  char addrbuf[128] = ""; inet_ntop(AF_INET, &sa.sin_addr, addrbuf, sizeof(addrbuf));
                   if (addrbuf[0] && strcmp(addrbuf, lip) == 0) { snprintf(intf, sizeof(intf), "%s", ifa->ifa_name); break; }
                 }
               }
@@ -1205,7 +1206,8 @@ static void log_asset_permissions(void) {
   } else {
     fprintf(stderr, "[status-plugin] asset root missing or not a directory: %s\n", g_asset_root);
   }
-  for (size_t i = 0; i < sizeof(rel_files)/sizeof(rel_files[0]); i++) {
+  size_t num_files = sizeof(rel_files)/sizeof(rel_files[0]);
+  for (size_t i = 0; i < num_files; i++) {
     snprintf(path, sizeof(path), "%s/%s", g_asset_root, rel_files[i]);
     if (stat(path, &st) == 0) {
       int ok_r = access(path, R_OK) == 0;
