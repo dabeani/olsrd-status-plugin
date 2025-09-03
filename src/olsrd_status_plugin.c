@@ -292,6 +292,61 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   json_buf_append(&buf, &len, &cap, "]"); *outbuf = buf; *outlen = len; return 0;
 }
 
+/* Normalize olsrd neighbors JSON into array expected by UI
+ * For each neighbor object produce { originator, bindto, lq, nlq, cost, metric, hostname }
+ */
+static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  const char *p = strstr(raw, "\"neighbors\"");
+  if (!p) p = strstr(raw, "\"link\""); /* olsr2 may use 'link' for nhdpinfo */
+  const char *arr = p ? strchr(p, '[') : NULL;
+  if (!arr) {
+    /* If raw looks like an array already, try starting at first '[' */
+    arr = strchr(raw, '[');
+    if (!arr) return -1;
+  }
+  const char *q = arr; int depth = 0;
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
+  json_buf_append(&buf, &len, &cap, "["); int first = 1;
+  while (*q) {
+    if (*q == '[') { depth++; q++; continue; }
+    if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
+    if (*q == '{') {
+      const char *obj = q; int od = 0; const char *r = q;
+      while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
+      if (!r || r<=obj) break;
+      const char *v; size_t vlen;
+      char originator[128] = ""; char bindto[64] = ""; char lq[32] = ""; char nlq[32] = ""; char cost[32] = ""; char metric[32] = ""; char hostname[256] = "";
+      if (find_json_string_value(obj, "neighbor_originator", &v, &vlen) || find_json_string_value(obj, "originator", &v, &vlen)) snprintf(originator, sizeof(originator), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "link_bindto", &v, &vlen) || find_json_string_value(obj, "link_bindto", &v, &vlen)) snprintf(bindto, sizeof(bindto), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "linkQuality", &v, &vlen) || find_json_string_value(obj, "lq", &v, &vlen)) snprintf(lq, sizeof(lq), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen) || find_json_string_value(obj, "nlq", &v, &vlen)) snprintf(nlq, sizeof(nlq), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "linkCost", &v, &vlen) || find_json_string_value(obj, "cost", &v, &vlen)) snprintf(cost, sizeof(cost), "%.*s", (int)vlen, v);
+      if (find_json_string_value(obj, "metric", &v, &vlen)) snprintf(metric, sizeof(metric), "%.*s", (int)vlen, v);
+      /* try to resolve originator to hostname */
+      if (originator[0]) {
+        struct in_addr ina; if (inet_aton(originator, &ina)) {
+          struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
+          if (he && he->h_name) snprintf(hostname, sizeof(hostname), "%s", he->h_name);
+        }
+      }
+      if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
+      json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap, originator);
+      json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap, bindto);
+      json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap, lq);
+      json_buf_append(&buf,&len,&cap,",\"nlq\":"); json_append_escaped(&buf,&len,&cap, nlq);
+      json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap, cost);
+      json_buf_append(&buf,&len,&cap,",\"metric\":"); json_append_escaped(&buf,&len,&cap, metric);
+      json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap, hostname);
+      json_buf_append(&buf,&len,&cap, "}");
+      q = r; continue;
+    }
+    q++; 
+  }
+  json_buf_append(&buf, &len, &cap, "]"); *outbuf = buf; *outlen = len; return 0;
+}
+
 /* forward decls for local helpers used before their definitions */
 static void send_text(http_request_t *r, const char *text);
 static void send_json(http_request_t *r, const char *json);
@@ -496,12 +551,28 @@ static int h_status(http_request_t *r) {
     char *norm = NULL; size_t nn = 0;
     if (normalize_olsrd_links(olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
+      /* also attempt to normalize neighbors from same raw payload */
+      char *nne = NULL; size_t nne_n = 0;
+      if (normalize_olsrd_neighbors(olsr_links_raw, &nne, &nne_n) == 0 && nne && nne_n>0) {
+        APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne); APPEND(",");
+        free(nne);
+      } else {
+        APPEND("\"neighbors\":[],");
+      }
       free(norm);
     } else {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
+      /* neighbors fallback: try to extract neighbors separately */
+      char *nne2 = NULL; size_t nne2_n = 0;
+      if (normalize_olsrd_neighbors(olsr_links_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0) {
+        APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne2); APPEND(","); free(nne2);
+      } else {
+        APPEND("\"neighbors\":[],");
+      }
     }
   } else {
     APPEND("\"links\":[],");
+    APPEND("\"neighbors\":[],");
   }
   APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
 

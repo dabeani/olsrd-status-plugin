@@ -93,6 +93,24 @@ function populateOlsrLinksTable(links) {
   });
 }
 
+function populateNeighborsTable(neighbors) {
+  var tbody = document.querySelector('#neighborsTable tbody');
+  if (!tbody) return; tbody.innerHTML = '';
+  if (!neighbors || !Array.isArray(neighbors)) return;
+  neighbors.forEach(function(n){
+    var tr = document.createElement('tr');
+    function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
+    tr.appendChild(td(n.originator));
+    tr.appendChild(td(n.hostname));
+    tr.appendChild(td(n.bindto));
+    tr.appendChild(td(n.lq));
+    tr.appendChild(td(n.nlq));
+    tr.appendChild(td(n.cost));
+    tr.appendChild(td(n.metric));
+    tbody.appendChild(tr);
+  });
+}
+
 function updateUI(data) {
   setText('hostname', data.hostname || 'Unknown');
   setText('ip', data.ip || '');
@@ -165,14 +183,21 @@ function detectPlatformAndLoad() {
           } else {
             updateUI(data);
             try {
+              // OLSR Links
               if (data.links && data.links.length) {
-                // show OLSR links tab when we have link data
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
                 if (linkTab) linkTab.parentElement.style.display = '';
                 populateOlsrLinksTable(data.links);
               } else {
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
                 if (linkTab) linkTab.parentElement.style.display = 'none';
+              }
+              // Neighbors
+              if (status.neighbors && Array.isArray(status.neighbors) && status.neighbors.length) {
+                var nTab = document.querySelector('#mainTabs a[href="#tab-neighbors"]'); if (nTab) nTab.parentElement.style.display = '';
+                populateNeighborsTable(status.neighbors);
+              } else {
+                var nTab = document.querySelector('#mainTabs a[href="#tab-neighbors"]'); if (nTab) nTab.parentElement.style.display = 'none';
               }
             } catch(e){}
           }
