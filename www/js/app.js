@@ -131,10 +131,26 @@ if (!window.Promise) {
     return new window.Promise(function(resolve) { resolve(value); });
   };
   
-  window.Promise.reject = function(reason) {
-    return new window.Promise(function(resolve, reject) { reject(reason); });
+  window.Promise.all = function(promises) {
+    return new window.Promise(function(resolve, reject) {
+      var results = [];
+      var completed = 0;
+      var total = promises.length;
+      if (total === 0) {
+        resolve(results);
+        return;
+      }
+      promises.forEach(function(promise, index) {
+        promise.then(function(value) {
+          results[index] = value;
+          completed++;
+          if (completed === total) {
+            resolve(results);
+          }
+        }, reject);
+      });
+    });
   };
-}
 
 // Fetch polyfill for older browsers
 if (!window.fetch) {
@@ -187,7 +203,15 @@ window.refreshTab = function(id, url) {
 
 function setText(id, text) {
   var el = document.getElementById(id);
-  if (el) el.textContent = text;
+  if (el) {
+    if (typeof el.textContent !== 'undefined') {
+      el.textContent = text;
+    } else if (typeof el.innerText !== 'undefined') {
+      el.innerText = text;
+    } else {
+      el.innerHTML = text;
+    }
+  }
 }
 
 function setHTML(id, html) {
@@ -295,6 +319,7 @@ function populateNeighborsTable(neighbors) {
 }
 
 function updateUI(data) {
+  try {
   setText('hostname', data.hostname || 'Unknown');
   setText('ip', data.ip || '');
   // prefer human-friendly uptime string if provided by backend
@@ -334,9 +359,11 @@ function updateUI(data) {
   } else {
     showTab('tab-admin', false);
   }
+  } catch(e) {}
 }
 
 function detectPlatformAndLoad() {
+  try {
   fetch('/capabilities', {cache: 'no-store'})
     .then(function(r) { return r.json(); })
     .then(function(caps) {
@@ -432,6 +459,118 @@ function detectPlatformAndLoad() {
           } catch(e) { /* ignore */ }
         });
     });
+  } catch(e) {
+    // Fallback: try to load data without capabilities
+    try {
+      fetch('/status', {cache: 'no-store'})
+        .then(function(r) { return r.json(); })
+        .then(function(status) {
+          updateUI({
+            hostname: status.hostname || 'Unknown',
+            ip: status.ip || '',
+            uptime: status.uptime_str || status.uptime || '',
+            uptime_str: status.uptime_str || status.uptime || '',
+            devices: status.devices || [],
+            airos: status.airosdata || {},
+            default_route: status.default_route || {},
+            links: status.links || []
+          });
+        });
+    } catch(e2) {}
+  }
+}
+
+// console polyfill for older browsers
+if (!window.console) {
+  window.console = {
+    log: function() {},
+    error: function() {},
+    warn: function() {},
+    info: function() {}
+  };
+}
+
+// trim polyfill for older browsers
+if (!String.prototype.trim) {
+  String.prototype.trim = function() {
+    return this.replace(/^\s+|\s+$/g, '');
+  };
+}
+
+// forEach polyfill for older browsers
+if (!Array.prototype.forEach) {
+  Array.prototype.forEach = function(callback, thisArg) {
+    for (var i = 0; i < this.length; i++) {
+      callback.call(thisArg, this[i], i, this);
+    }
+  };
+}
+
+// Array.prototype.map polyfill for older browsers
+if (!Array.prototype.map) {
+  Array.prototype.map = function(callback, thisArg) {
+    var result = [];
+    for (var i = 0; i < this.length; i++) {
+      result[i] = callback.call(thisArg, this[i], i, this);
+    }
+    return result;
+  };
+}
+
+// classList polyfill for older browsers
+if (!HTMLElement.prototype.classList) {
+  HTMLElement.prototype.classList = {
+    add: function(className) {
+      if (!new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className)) {
+        this.className += (this.className ? ' ' : '') + className;
+      }
+    },
+    remove: function(className) {
+      this.className = this.className.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ');
+    },
+    contains: function(className) {
+      return new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className);
+    }
+  };
+}
+
+// querySelector and querySelectorAll polyfills for older browsers
+if (!document.querySelector) {
+  document.querySelector = function(selector) {
+    if (selector.charAt(0) === '#') {
+      return document.getElementById(selector.substring(1));
+    }
+    return document.getElementsByTagName(selector.substring(1))[0];
+  };
+}
+
+if (!document.querySelectorAll) {
+  document.querySelectorAll = function(selector) {
+    if (selector.charAt(0) === '#') {
+      var el = document.getElementById(selector.substring(1));
+      return el ? [el] : [];
+    }
+    return document.getElementsByTagName(selector.substring(1));
+  };
+}
+
+// addEventListener polyfill for older browsers
+if (!document.addEventListener) {
+  document.addEventListener = function(event, callback) {
+    if (event === 'DOMContentLoaded') {
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        callback();
+      } else {
+        document.attachEvent('onreadystatechange', function() {
+          if (document.readyState === 'complete') {
+            callback();
+          }
+        });
+      }
+    } else {
+      document.attachEvent('on' + event, callback);
+    }
+  };
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -542,7 +681,12 @@ function sortTableByColumn(key) {
     var idx = getColumnIndexByKey(key);
     var va = a.cells[idx] ? a.cells[idx].textContent.trim() : '';
     var vb = b.cells[idx] ? b.cells[idx].textContent.trim() : '';
-    return va.localeCompare(vb, undefined, {numeric:true});
+    // Fallback for older browsers that don't support localeCompare options
+    if (typeof va.localeCompare === 'function' && va.localeCompare.length >= 2) {
+      return va.localeCompare(vb, undefined, {numeric:true});
+    } else {
+      return va.localeCompare(vb);
+    }
   });
   rows.forEach(function(r){ tbody.appendChild(r); });
 }
