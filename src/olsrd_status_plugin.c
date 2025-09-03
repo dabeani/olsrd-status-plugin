@@ -265,6 +265,14 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen)) snprintf(intf, sizeof(intf), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "localIP", &v, &vlen)) snprintf(local, sizeof(local), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "remoteIP", &v, &vlen)) snprintf(remote, sizeof(remote), "%.*s", (int)vlen, v);
+      /* attempt to resolve remote IP to a hostname for UI */
+      if (remote[0]) {
+        struct in_addr ina_r;
+        if (inet_aton(remote, &ina_r)) {
+          struct hostent *hre = gethostbyaddr(&ina_r, sizeof(ina_r), AF_INET);
+          if (hre && hre->h_name) snprintf(remote_host, sizeof(remote_host), "%s", hre->h_name);
+        }
+      }
       if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq, sizeof(lq), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq, sizeof(nlq), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost, sizeof(cost), "%.*s", (int)vlen, v);
@@ -272,7 +280,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf, &len, &cap, "{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf);
       json_buf_append(&buf, &len, &cap, ",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
       json_buf_append(&buf, &len, &cap, ",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
-      json_buf_append(&buf, &len, &cap, ",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
+  json_buf_append(&buf, &len, &cap, ",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
       json_buf_append(&buf, &len, &cap, ",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
       json_buf_append(&buf, &len, &cap, ",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
       json_buf_append(&buf, &len, &cap, ",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);

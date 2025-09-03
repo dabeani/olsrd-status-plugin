@@ -164,7 +164,17 @@ function detectPlatformAndLoad() {
               .then(t => { data.olsr2info = t; updateUI(data); try { if (data.links && data.links.length) populateOlsrLinksTable(data.links); } catch(e){} });
           } else {
             updateUI(data);
-            try { if (data.links && data.links.length) populateOlsrLinksTable(data.links); } catch(e){}
+            try {
+              if (data.links && data.links.length) {
+                // show OLSR links tab when we have link data
+                var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
+                if (linkTab) linkTab.parentElement.style.display = '';
+                populateOlsrLinksTable(data.links);
+              } else {
+                var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
+                if (linkTab) linkTab.parentElement.style.display = 'none';
+              }
+            } catch(e){}
           }
           if (status.admin_url) {
             data.admin = { url: status.admin_url };
@@ -198,6 +208,19 @@ function detectPlatformAndLoad() {
           document.getElementById('tr-run').addEventListener('click', function(){ runTraceroute(); });
           document.getElementById('refresh-connections').addEventListener('click', loadConnections);
           document.getElementById('refresh-versions').addEventListener('click', loadVersions);
+          // render fixed traceroute-to-uplink results when provided by /status
+          try {
+            if (status.trace_to_uplink && Array.isArray(status.trace_to_uplink) && status.trace_to_uplink.length) {
+              // show traceroute tab and populate table
+              var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
+              if (trTab) trTab.parentElement.style.display = '';
+              var hops = status.trace_to_uplink.map(function(h){ return { hop: h.hop || h.hop || '', ip: h.ip || h.ip || '', hostname: h.host || h.hostname || h.host || '', ping: h.ping || h.ping || '' }; });
+              populateTracerouteTable(hops);
+              // also show a short textual summary
+              var summaryEl = document.getElementById('traceroute-summary');
+              if (summaryEl) summaryEl.textContent = 'Traceroute to ' + (status.trace_target || '') + ': ' + hops.length + ' hop(s)';
+            }
+          } catch(e) { /* ignore */ }
         });
     });
 }
