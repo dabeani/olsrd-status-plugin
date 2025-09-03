@@ -23,17 +23,37 @@
 
 /* JSON buffer helpers used by h_status and other responders */
 static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
-  va_list ap; char t[1024]; va_start(ap, fmt); int n = vsnprintf(t, sizeof(t), fmt, ap); va_end(ap);
-  if (n < 0) return -1;
-  if (n >= (int)sizeof(t)) n = (int)sizeof(t) - 1;
+  va_list ap; char *t = NULL; int n;
+  va_start(ap, fmt);
+#if defined(_GNU_SOURCE) || defined(__GNU__)
+#if defined(__GNUC__)
+  _Pragma("GCC diagnostic push");
+  _Pragma("GCC diagnostic ignored \"-Wformat-nonliteral\"");
+#endif
+  n = vasprintf(&t, fmt, ap);
+#if defined(__GNUC__)
+  _Pragma("GCC diagnostic pop");
+#endif
+#else
+  /* fallback: estimate with a stack buffer */
+  char _tmpbuf[1024];
+  n = vsnprintf(_tmpbuf, sizeof(_tmpbuf), fmt, ap);
+  if (n >= 0) {
+    t = malloc((size_t)n + 1);
+    if (t) memcpy(t, _tmpbuf, (size_t)n + 1);
+  }
+#endif
+  va_end(ap);
+  if (n < 0 || !t) return -1;
   if (*lenptr + (size_t)n + 1 > *capptr) {
     while (*capptr < *lenptr + (size_t)n + 1) *capptr *= 2;
     char *nb = (char*)realloc(*bufptr, *capptr);
-    if (!nb) return -1;
+    if (!nb) { free(t); return -1; }
     *bufptr = nb;
   }
   memcpy(*bufptr + *lenptr, t, (size_t)n);
   *lenptr += (size_t)n; (*bufptr)[*lenptr] = 0;
+  free(t);
   return 0;
 }
 
@@ -161,10 +181,10 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
   const char *arr = strchr(p, '[');
   if (!arr) { json_buf_append(&buf,&len,&cap,"[]"); *outbuf=buf; *outlen=len; return 0; }
   /* iterate objects inside array by scanning braces */
-  const char *q = arr; int depth = 0; const char *end = NULL;
+  const char *q = arr; int depth = 0;
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
-    if (*q == ']') { depth--; if (depth==0) { end = q; break; } q++; continue; }
+  if (*q == ']') { depth--; if (depth==0) { break; } q++; continue; }
     if (*q == '{') {
       /* parse object from q to matching } */
       const char *obj_start = q; int od = 0; const char *r = q;
@@ -249,8 +269,10 @@ static int h_status(http_request_t *r) {
       if (!ifa->ifa_addr) continue;
       if (ifa->ifa_addr->sa_family == AF_INET) {
         char bufip[INET_ADDRSTRLEN] = "";
-        struct sockaddr_in *sa = (struct sockaddr_in*)ifa->ifa_addr;
-        inet_ntop(AF_INET, &sa->sin_addr, bufip, sizeof(bufip));
+        struct sockaddr_in sa_local;
+        memset(&sa_local, 0, sizeof(sa_local));
+        memcpy(&sa_local, ifa->ifa_addr, sizeof(sa_local));
+        inet_ntop(AF_INET, &sa_local.sin_addr, bufip, sizeof(bufip));
         if (bufip[0] && strcmp(bufip, "127.0.0.1") != 0) { snprintf(ipaddr, sizeof(ipaddr), "%s", bufip); break; }
       }
     }
@@ -367,11 +389,15 @@ static int h_status(http_request_t *r) {
     }
     /* prefer default route ip if available, else hostname */
     if (def_ip[0] || hostname[0]) {
-      char admin_url_buf[256] = "";
       const char *host_for_admin = def_ip[0] ? def_ip : hostname;
-      if (admin_port == 443) snprintf(admin_url_buf, sizeof(admin_url_buf), "https://%s/", host_for_admin);
-      else snprintf(admin_url_buf, sizeof(admin_url_buf), "https://%s:%d/", host_for_admin, admin_port);
-      APPEND(",\"admin_url\":"); json_append_escaped(&buf, &len, &cap, admin_url_buf);
+      size_t needed = strlen("https://") + strlen(host_for_admin) + 16;
+      char *admin_url_buf = (char*)malloc(needed);
+      if (admin_url_buf) {
+        if (admin_port == 443) snprintf(admin_url_buf, needed, "https://%s/", host_for_admin);
+        else snprintf(admin_url_buf, needed, "https://%s:%d/", host_for_admin, admin_port);
+        APPEND(",\"admin_url\":"); json_append_escaped(&buf, &len, &cap, admin_url_buf);
+        free(admin_url_buf);
+      }
     }
   }
   APPEND("\n}\n");
@@ -516,15 +542,21 @@ static int h_traceroute(http_request_t *r) {
   (void)get_query_param(r, "target", target, sizeof(target));
   if (!target[0]) { send_text(r, "No target provided\n"); return 0; }
   if (!g_has_traceroute || !g_traceroute_path[0]) { send_text(r, "traceroute not available\n"); return 0; }
-  char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -n %s 2>&1", g_traceroute_path, target);
+  /* build command dynamically to avoid compile-time truncation warnings */
+  size_t cmdlen = strlen(g_traceroute_path) + 4 + strlen(target) + 32;
+  char *cmd = (char*)malloc(cmdlen);
+  if (!cmd) { send_text(r, "error allocating memory\n"); return 0; }
+  snprintf(cmd, cmdlen, "%s -n %s 2>&1", g_traceroute_path, target);
   char *out = NULL; size_t n = 0;
   if (util_exec(cmd, &out, &n) == 0 && out) {
     http_send_status(r, 200, "OK");
     http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
     http_write(r, out, n);
     free(out);
+    free(cmd);
     return 0;
   }
+  free(cmd);
   send_text(r, "error running traceroute\n");
   return 0;
 }
