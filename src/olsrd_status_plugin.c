@@ -321,7 +321,20 @@ static int h_status(http_request_t *r) {
   /* detect olsr2 presence by pidof */
   char *pout = NULL; size_t pn = 0; int olsr2_on = 0;
   if (util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout, &pn) == 0 && pout && pn>0) {
-    olsr2_on = 1; free(pout); pout = NULL;
+    olsr2_on = 1; /* keep pout for diagnostics, free after JSON emitted */
+  }
+
+  /* try to fetch olsrd links from local JSON API endpoints if pidof didn't detect process */
+  char *olsr_links_raw = NULL; size_t oln = 0;
+  if (!olsr2_on) {
+    const char *endpoints[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
+    for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
+      char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
+      if (util_exec(cmd, &olsr_links_raw, &oln) == 0 && olsr_links_raw && oln>0) {
+        olsr2_on = 1; break;
+      }
+      if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
+    }
   }
 
   /* Build JSON */
@@ -424,8 +437,45 @@ static int h_status(http_request_t *r) {
     }
   }
 
-  /* links */ APPEND("\"links\":[],");
+  /* links: either from olsrd API or empty array */
+  if (olsr_links_raw && oln>0) {
+    APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
+  } else {
+    APPEND("\"links\":[],");
+  }
   APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
+
+  /* include pidof output for diagnostics when present */
+  if (pout && pn>0) {
+    APPEND(",\"olsrd_pidof\":"); json_append_escaped(&buf, &len, &cap, pout);
+    free(pout); pout = NULL;
+  }
+  if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; }
+
+  /* diagnostics: report which local olsrd endpoints were probed and traceroute info */
+  {
+    APPEND(",\"diagnostics\":{");
+    /* endpoints probed earlier (try same list) */
+    const char *eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
+    APPEND("\"olsrd_endpoints\":[");
+    int first_ep = 1;
+    for (const char **ep = eps; *ep; ++ep) {
+      char cmd[256]; char *tout = NULL; size_t tlen = 0; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
+      int ok = (util_exec(cmd, &tout, &tlen) == 0 && tout && tlen>0) ? 1 : 0;
+      if (!first_ep) APPEND(","); first_ep = 0;
+      APPEND("{\"url\":"); json_append_escaped(&buf,&len,&cap,*ep);
+      APPEND(",\"ok\":%s,\"len\":%zu,\"sample\":", ok?"true":"false", tlen);
+      if (tout && tlen>0) {
+        /* include a short sample */
+        char sample[256]; size_t copy = tlen < sizeof(sample)-1 ? tlen : sizeof(sample)-1; memcpy(sample, tout, copy); sample[copy]=0; json_append_escaped(&buf,&len,&cap,sample);
+      } else json_append_escaped(&buf,&len,&cap,"");
+      APPEND("}"); if (tout) free(tout);
+    }
+    APPEND("]");
+    APPEND(",\"traceroute\":{\"available\":%s,\"path\":", g_has_traceroute?"true":"false"); json_append_escaped(&buf,&len,&cap, g_traceroute_path);
+    APPEND("}");
+    APPEND("}");
+  }
 
   /* include fixed traceroute-to-uplink output (mimic python behavior) */
   if (traceroute_to[0] && g_has_traceroute) {
@@ -713,6 +763,24 @@ static int h_traceroute(http_request_t *r) {
     return 0;
   }
   free(cmd);
+  /* try ICMP-based traceroute as a fallback */
+  {
+    size_t cmdlen2 = strlen(g_traceroute_path) + 8 + strlen(target) + 32;
+    char *cmd2 = malloc(cmdlen2);
+    if (cmd2) {
+      snprintf(cmd2, cmdlen2, "%s -I -n %s 2>&1", g_traceroute_path, target);
+      char *out2 = NULL; size_t n2 = 0;
+      if (util_exec(cmd2, &out2, &n2) == 0 && out2) {
+        http_send_status(r, 200, "OK");
+        http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
+        http_write(r, out2, n2);
+        free(out2);
+        free(cmd2);
+        return 0;
+      }
+      free(cmd2);
+    }
+  }
   send_text(r, "error running traceroute\n");
   return 0;
 }
