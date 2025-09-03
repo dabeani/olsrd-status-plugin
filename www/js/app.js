@@ -32,7 +32,11 @@ function showTab(tabId, show) {
 function populateDevicesTable(devices, airos) {
   var tbody = document.querySelector('#devicesTable tbody');
   tbody.innerHTML = '';
-  if (!devices || !Array.isArray(devices)) return;
+  if (!devices || !Array.isArray(devices) || devices.length === 0) {
+    var tbody = document.querySelector('#devicesTable tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No devices found</td></tr>';
+    return;
+  }
   var warn_frequency = 0;
   devices.forEach(function(device) {
     var tr = document.createElement('tr');
@@ -76,7 +80,11 @@ function populateDevicesTable(devices, airos) {
 function populateOlsrLinksTable(links) {
   var tbody = document.querySelector('#olsrLinksTable tbody');
   if (!tbody) return; tbody.innerHTML = '';
-  if (!links || !Array.isArray(links)) return;
+  if (!links || !Array.isArray(links) || links.length === 0) {
+    var tbody = document.querySelector('#olsrLinksTable tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="text-muted">No links found</td></tr>';
+    return;
+  }
   links.forEach(function(l){
     var tr = document.createElement('tr');
     function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
@@ -96,7 +104,11 @@ function populateOlsrLinksTable(links) {
 function populateNeighborsTable(neighbors) {
   var tbody = document.querySelector('#neighborsTable tbody');
   if (!tbody) return; tbody.innerHTML = '';
-  if (!neighbors || !Array.isArray(neighbors)) return;
+  if (!neighbors || !Array.isArray(neighbors) || neighbors.length === 0) {
+    var tbody = document.querySelector('#neighborsTable tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-muted">No neighbors found</td></tr>';
+    return;
+  }
   neighbors.forEach(function(n){
     var tr = document.createElement('tr');
     function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }

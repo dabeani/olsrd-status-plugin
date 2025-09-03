@@ -306,7 +306,8 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq, sizeof(lq), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq, sizeof(nlq), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost, sizeof(cost), "%.*s", (int)vlen, v);
-      if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
+  if (!first) json_buf_append(&buf, &len, &cap, ",");
+  first = 0;
       json_buf_append(&buf, &len, &cap, "{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf);
       json_buf_append(&buf, &len, &cap, ",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
       json_buf_append(&buf, &len, &cap, ",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
@@ -356,7 +357,8 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
       if (find_json_string_value(obj, "metric", &v, &vlen)) snprintf(metric, sizeof(metric), "%.*s", (int)vlen, v);
   /* lookup hostname (cached): reverse DNS, local nodedb, remote node_db.json */
   if (originator[0]) lookup_hostname_cached(originator, hostname, sizeof(hostname));
-      if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
+  if (!first) json_buf_append(&buf, &len, &cap, ",");
+  first = 0;
       json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap, originator);
       json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap, bindto);
       json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap, lq);
@@ -1127,7 +1129,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
     if (!path_exists(*np)) continue;
     char *nbuf = NULL; size_t nbs = 0;
     if (util_read_file(*np, &nbuf, &nbs) == 0 && nbuf && nbs>0) {
-      char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", ipv4);
+      char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 120, ipv4);
       char *pos = strstr(nbuf, needle);
       if (pos) {
         char *hpos = strstr(pos, "\"hostname\":");
@@ -1141,7 +1143,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
   /* try remote node_db as last resort */
   char *outb = NULL; size_t obn = 0;
   if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &outb, &obn) == 0 && outb && obn>0) {
-    char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", ipv4);
+  char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 120, ipv4);
     char *pos = strstr(outb, needle);
     if (pos) {
       char *hpos = strstr(pos, "\"hostname\":");
