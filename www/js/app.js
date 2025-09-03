@@ -304,27 +304,95 @@ function runTraceroute(){
   if (pre) pre.textContent='Running traceroute...';
   fetch('/traceroute?target='+encodeURIComponent(target),{cache:'no-store'}).then(r=>r.text()).then(t=>{
     if (pre) pre.textContent = t;
-    // Try to parse and populate table
+    // Try to parse and populate table (supports numeric -n output and hostname (ip) formats)
     try {
       var lines = t.split('\n');
       var hops = [];
-      for (var i = 1; i < lines.length; i++) {
+      var lineRegex = /^\s*(\d+)\s+(.*)$/;
+      for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
         if (!line) continue;
-        var parts = line.split(/\s+/);
-        if (parts.length >= 4) {
-          hops.push({
-            hop: parts[0],
-            hostname: parts[1],
-            ip: parts[2].replace(/[()]/g, ''),
-            ping: parts[3]
-          });
+        var m = line.match(lineRegex);
+        if (!m) continue;
+        var hopnum = m[1];
+        var rest = m[2];
+        var ip = '';
+        var hostname = '';
+        var ping = '';
+        // capture ip in parentheses: hostname (ip) ...
+        var paren = rest.match(/\(([^)]+)\)/);
+        if (paren) {
+          ip = paren[1];
+          // hostname is the part before the parentheses
+          hostname = rest.replace(/\([^)]*\)/, '').trim().split(/\s+/)[0] || '';
+        } else {
+          // no parentheses, split tokens
+          var tokens = rest.split(/\s+/);
+          if (tokens.length > 0) {
+            var tok0 = tokens[0];
+            // crude IP detection
+            var isIpv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(tok0);
+            var isIpv6 = tok0.indexOf(':') >= 0;
+            if (isIpv4 || isIpv6) {
+              ip = tok0;
+            } else {
+              hostname = tok0;
+              if (tokens.length > 1) {
+                var maybeIp = tokens[1].replace(/^[()]+|[()]+$/g, '');
+                if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(maybeIp) || maybeIp.indexOf(':') >= 0) ip = maybeIp;
+              }
+            }
+          }
         }
+        // ping: look for number followed by ms
+        var pingMatch = rest.match(/(\d+(?:\.\d+)?)\s*ms/);
+        if (pingMatch) ping = pingMatch[1];
+        else {
+          // fallback: pick last numeric token
+          var numMatch = rest.match(/(\d+(?:\.\d+)?)(?!.*\d)/);
+          if (numMatch) ping = numMatch[1];
+        }
+        hops.push({ hop: hopnum, ip: ip, hostname: hostname, ping: ping });
       }
       if (hops.length > 0) {
         populateTracerouteTable(hops);
+        if (pre) { pre.style.display='none'; }
+      } else {
+        // fallback: try simpler token parsing per-line
+        try {
+          var fhops = [];
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim(); if (!line) continue;
+            var tokens = line.split(/\s+/);
+            if (tokens.length === 0) continue;
+            if (!/^\d+$/.test(tokens[0])) continue;
+            var hnum = tokens[0];
+            var hip = '';
+            var hname = '';
+            var hping = '';
+            if (tokens.length === 2) { hip = tokens[1]; }
+            else if (tokens.length >= 3) {
+              // tokens like: hop host (ip) t ms  OR hop ip t ms OR hop host ip t ms
+              // find token that looks like IP
+              for (var j = 1; j < tokens.length; j++) {
+                var tok = tokens[j].replace(/^[()]+|[()]+$/g, '');
+                if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tok) || tok.indexOf(':')>=0) { hip = tok; }
+              }
+              // hostname is first token after hop that is not the ip
+              for (var j = 1; j < tokens.length; j++) {
+                var tok = tokens[j].replace(/^[()]+|[()]+$/g, '');
+                if (tok && tok !== hip) { hname = tok; break; }
+              }
+              // ping: look for ms
+              var pMatch = line.match(/(\d+(?:\.\d+)?)\s*ms/);
+              if (pMatch) hping = pMatch[1];
+            }
+            fhops.push({ hop: hnum, ip: hip, hostname: hname, ping: hping });
+          }
+          if (fhops.length > 0) { populateTracerouteTable(fhops); if (pre) pre.style.display='none'; }
+        } catch(e) { /* ignore */ }
       }
-    } catch(e) { /* ignore parsing errors */ }
+    } catch (e) { /* ignore parsing errors */ }
   }).catch(e=>{ if (pre) pre.textContent = 'ERR: '+e; });
 }
 
