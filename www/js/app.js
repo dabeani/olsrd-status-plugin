@@ -300,6 +300,19 @@ function runTraceroute(){
   var target = document.getElementById('tr-host').value.trim();
   if(!target) return alert('Enter target for traceroute');
   var pre = document.getElementById('p-traceroute');
+  // add a small visible summary near the hostname so users get immediate feedback
+  var summaryEl = document.getElementById('traceroute-summary');
+  if (!summaryEl) {
+    var hostEl = document.getElementById('hostname');
+    if (hostEl && hostEl.parentNode) {
+      summaryEl = document.createElement('div');
+      summaryEl.id = 'traceroute-summary';
+      summaryEl.style.margin = '6px 0';
+      summaryEl.style.fontSize = '90%';
+      hostEl.parentNode.insertBefore(summaryEl, hostEl.nextSibling);
+    }
+  }
+  if (summaryEl) summaryEl.textContent = 'Traceroute: running ...';
   if (pre) pre.style.display='block';
   if (pre) pre.textContent='Running traceroute...';
   fetch('/traceroute?target='+encodeURIComponent(target),{cache:'no-store'}).then(r=>r.text()).then(t=>{
@@ -357,6 +370,7 @@ function runTraceroute(){
       if (hops.length > 0) {
         populateTracerouteTable(hops);
         if (pre) { pre.style.display='none'; }
+        if (summaryEl) summaryEl.textContent = 'Traceroute: ' + hops.length + ' hop(s)';
       } else {
         // fallback: try simpler token parsing per-line
         try {
@@ -389,8 +403,12 @@ function runTraceroute(){
             }
             fhops.push({ hop: hnum, ip: hip, hostname: hname, ping: hping });
           }
-          if (fhops.length > 0) { populateTracerouteTable(fhops); if (pre) pre.style.display='none'; }
+          if (fhops.length > 0) { populateTracerouteTable(fhops); if (pre) pre.style.display='none'; if (summaryEl) summaryEl.textContent = 'Traceroute: ' + fhops.length + ' hop(s)'; }
         } catch(e) { /* ignore */ }
+        if (summaryEl && (!fhops || fhops.length === 0)) {
+          var one = t.split('\n')[0] || t;
+          summaryEl.textContent = 'Traceroute: no hops parsed. First line: ' + (one.length>200?one.substr(0,200)+'...':one);
+        }
       }
     } catch (e) { /* ignore parsing errors */ }
   }).catch(e=>{ if (pre) pre.textContent = 'ERR: '+e; });

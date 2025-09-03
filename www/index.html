@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web Status</title>
+    <!-- Bootstrap CSS (CDN) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css">
+    <style>
+      body { padding: 20px; }
+      .tab-pane { display: none; }
+      .tab-pane.active { display: block; }
+      pre { background:#f8f8f8; padding:10px; border:1px solid #ddd; }
+      .small-muted { font-size:90%; color:#666; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="page-header">
+        <h1 id="hostname">Hostname</h1>
+        <p class="small-muted">IP: <span id="ip"></span> &nbsp; Uptime: <span id="uptime"></span></p>
+        <p>Default route: <span id="default-route">n/a</span></p>
+      </div>
+
+      <!-- Tabs -->
+      <ul id="mainTabs" class="nav nav-tabs">
+        <li class="active"><a href="#tab-status">Status</a></li>
+        <li><a href="#tab-olsr">OLSR Links</a></li>
+        <li><a href="#tab-connections">Connections</a></li>
+        <li><a href="#tab-versions">Versions</a></li>
+        <li><a href="#tab-json">Raw JSON</a></li>
+        <li><a href="#tab-traceroute">Traceroute</a></li>
+        <li id="tab-admin-link" style="display:none"><a href="#tab-admin">Admin</a></li>
+        <li id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2">OLSR2</a></li>
+      </ul>
+
+      <div class="tab-content" style="margin-top:15px">
+        <!-- Status -->
+        <div id="tab-status" class="tab-pane active">
+          <h3>Devices</h3>
+          <div class="table-responsive">
+            <table id="devicesTable" class="table table-striped table-condensed">
+              <thead>
+                <tr>
+                  <th>Local (IP / HW)</th>
+                  <th>Hostname</th>
+                  <th>Product</th>
+                  <th>Uptime</th>
+                  <th>Mode</th>
+                  <th>ESSID</th>
+                  <th>Firmware</th>
+                  <th>Wireless</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- OLSR Links -->
+        <div id="tab-olsr" class="tab-pane">
+          <h3>OLSR Links</h3>
+          <div class="table-responsive">
+            <table id="olsrLinksTable" class="table table-bordered table-condensed">
+              <thead>
+                <tr>
+                  <th>Intf</th>
+                  <th>Local</th>
+                  <th>Remote</th>
+                  <th>Remote Host</th>
+                  <th>LQ</th>
+                  <th>NLQ</th>
+                  <th>Cost</th>
+                  <th>Routes</th>
+                  <th>Nodes</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Connections -->
+        <div id="tab-connections" class="tab-pane">
+          <h3>Connections <button id="refresh-connections" class="btn btn-xs btn-default">Refresh</button>
+            <span id="connections-status" class="small-muted"></span></h3>
+          <div class="table-responsive">
+            <table id="connectionsTable" class="table table-condensed table-striped">
+              <thead>
+                <tr>
+                  <th data-key="port">Port</th>
+                  <th data-key="bridge">Bridge</th>
+                  <th data-key="macs">MACs</th>
+                  <th data-key="ips">IPs</th>
+                  <th data-key="hostnames">Hostnames</th>
+                  <th data-key="notes">Notes</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Versions -->
+        <div id="tab-versions" class="tab-pane">
+          <h3>Versions <button id="refresh-versions" class="btn btn-xs btn-default">Refresh</button>
+            <span id="versions-status" class="small-muted"></span></h3>
+          <div id="versions-wrap"></div>
+        </div>
+
+        <!-- Raw JSON -->
+        <div id="tab-json" class="tab-pane">
+          <h3>Raw JSON</h3>
+          <pre id="p-json">Loading…</pre>
+        </div>
+
+        <!-- Traceroute -->
+        <div id="tab-traceroute" class="tab-pane">
+          <h3>Traceroute</h3>
+          <div class="form-inline" style="margin-bottom:8px">
+            <input id="tr-host" class="form-control input-sm" placeholder="host or ip" style="width:320px">
+            <button id="tr-run" class="btn btn-sm btn-primary">Run</button>
+          </div>
+          <pre id="p-traceroute" style="display:none;">Traceroute output will appear here</pre>
+          <div class="table-responsive" style="margin-top:8px">
+            <table id="tracerouteTable" class="table table-condensed table-striped">
+              <thead>
+                <tr><th>#</th><th>IP</th><th>Hostname</th><th>Ping</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- OLSR2 (populated when available) -->
+        <div id="tab-olsr2" class="tab-pane">
+          <h3>OLSR2</h3>
+          <pre id="olsr2info"></pre>
+        </div>
+
+        <!-- Admin (link only) -->
+        <div id="tab-admin" class="tab-pane">
+          <h3>Admin</h3>
+          <p><a id="adminLink" href="#" target="_blank">Login</a></p>
+        </div>
+
+      </div>
+
+      <footer style="margin-top:20px" class="small-muted">Served by olsrd-status-plugin</footer>
+    </div>
+
+    <!-- jQuery + Bootstrap JS (CDN) -->
+    <script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js"></script>
+    <!-- App JS -->
+    <script src="/js/app.js"></script>
+  </body>
+</html>

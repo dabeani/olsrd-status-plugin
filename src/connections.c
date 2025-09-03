@@ -148,3 +148,80 @@ int render_connections_plain(char **buf_out, size_t *len_out){
   if (arps) free(arps);
   return 0;
 }
+
+/* Render connections as JSON for consumption by the web UI */
+int render_connections_json(char **buf_out, size_t *len_out) __attribute__((visibility("default")));
+int render_connections_json(char **buf_out, size_t *len_out){
+  char *buf = NULL; size_t cap = 8192; size_t len = 0;
+  buf = (char*)malloc(cap);
+  if (!buf) return -1;
+  #define JAPPEND(fmt,...) do{ \
+    char t[1024]; \
+    int _app_n = snprintf(t, sizeof(t), fmt, ##__VA_ARGS__); \
+    if (_app_n >= (int)sizeof(t)) _app_n = (int)sizeof(t) - 1; \
+    if (_app_n > 0) { \
+      if (len + _app_n + 1 > cap) { \
+        while (cap < len + _app_n + 1) cap *= 2; \
+        char *nb2 = (char*)realloc(buf, cap); \
+        if (!nb2) { free(buf); return -1; } \
+        buf = nb2; \
+      } \
+      memcpy(buf + len, t, (size_t)_app_n); \
+      len += _app_n; \
+      buf[len] = 0; \
+    } \
+  } while(0)
+
+  JAPPEND("{\"ports\":[");
+  char bridges[32][64]; int nb = list_bridges(bridges, 32);
+  struct arp_row *arps = NULL; int na = 0;
+  arps = (struct arp_row*)malloc(sizeof(*arps) * 1024);
+  if (arps) na = load_arp(arps, 1024);
+
+  int first_port = 1;
+  if (nb>0){
+    for (int i = 0; i < nb; i++) {
+      char (*ports)[64] = (char(*)[64])malloc(sizeof(char[64][64]));
+      int np = 0;
+      if (ports) {
+        np = bridge_ports(bridges[i], ports, 64);
+        for (int p = 0; p < np; p++) {
+          /* collect macs and ips for this port */
+          int mac_count = 0; int ip_count = 0;
+          char macs[64][64]; char ips[64][64];
+          for (int a = 0; a < na; a++) {
+            if (arps && strcmp(arps[a].dev, ports[p]) == 0) {
+              /* add mac */
+              int dup = 0; for (int k=0;k<mac_count;k++) if (strcmp(macs[k], arps[a].mac)==0) dup=1;
+              if (!dup) { snprintf(macs[mac_count], sizeof(macs[0]), "%s", arps[a].mac); mac_count++; }
+              /* add ip */
+              int dup2 = 0; for (int k=0;k<ip_count;k++) if (strcmp(ips[k], arps[a].ip)==0) dup2=1;
+              if (!dup2) { snprintf(ips[ip_count], sizeof(ips[0]), "%s", arps[a].ip); ip_count++; }
+            }
+          }
+          if (!first_port) JAPPEND(",");
+          JAPPEND("{\"port\":\"%s\",\"bridge\":\"%s\",\"macs\":[", ports[p], bridges[i]);
+          for (int m=0;m<mac_count;m++){ if (m) JAPPEND(","); JAPPEND("\"%s\"", macs[m]); }
+          JAPPEND("] ,\"ips\":[");
+          for (int m=0;m<ip_count;m++){ if (m) JAPPEND(","); JAPPEND("\"%s\"", ips[m]); }
+          JAPPEND("] ,\"notes\":\"\"}");
+          first_port = 0;
+        }
+      }
+      if (ports) free(ports);
+    }
+  } else {
+    /* no bridges: iterate arp rows and expose ports as device entries */
+    for (int a = 0; a < na; a++) {
+      if (!first_port) JAPPEND(",");
+      JAPPEND("{\"port\":\"%s\",\"bridge\":\"\",\"macs\":[\"%s\"],\"ips\":[\"%s\"],\"notes\":\"\"}", arps[a].dev, arps[a].mac, arps[a].ip);
+      first_port = 0;
+    }
+  }
+
+  JAPPEND("]}\n");
+  *buf_out = buf; *len_out = len;
+  if (arps) free(arps);
+  return 0;
+}
+

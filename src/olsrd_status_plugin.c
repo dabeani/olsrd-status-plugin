@@ -19,692 +19,400 @@
 #include "util.h"
 #include "olsrd_plugin.h"
 
+#include <stdarg.h>
+
+/* JSON buffer helpers used by h_status and other responders */
+static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
+  va_list ap; char t[1024]; va_start(ap, fmt); int n = vsnprintf(t, sizeof(t), fmt, ap); va_end(ap);
+  if (n < 0) return -1;
+  if (n >= (int)sizeof(t)) n = (int)sizeof(t) - 1;
+  if (*lenptr + (size_t)n + 1 > *capptr) {
+    while (*capptr < *lenptr + (size_t)n + 1) *capptr *= 2;
+    char *nb = (char*)realloc(*bufptr, *capptr);
+    if (!nb) return -1;
+    *bufptr = nb;
+  }
+  memcpy(*bufptr + *lenptr, t, (size_t)n);
+  *lenptr += (size_t)n; (*bufptr)[*lenptr] = 0;
+  return 0;
+}
+
+static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, const char *s) {
+  if (!s) { return json_buf_append(bufptr, lenptr, capptr, "\"\""); }
+  if (json_buf_append(bufptr, lenptr, capptr, "\"") < 0) return -1;
+  const unsigned char *p = (const unsigned char*)s;
+  for (; *p; ++p) {
+    unsigned char c = *p;
+    switch (c) {
+      case '"': if (json_buf_append(bufptr, lenptr, capptr, "\\\"") < 0) return -1; break;
+      case '\\': if (json_buf_append(bufptr, lenptr, capptr, "\\\\") < 0) return -1; break;
+      case '\b': if (json_buf_append(bufptr, lenptr, capptr, "\\b") < 0) return -1; break;
+      case '\f': if (json_buf_append(bufptr, lenptr, capptr, "\\f") < 0) return -1; break;
+      case '\n': if (json_buf_append(bufptr, lenptr, capptr, "\\n") < 0) return -1; break;
+      case '\r': if (json_buf_append(bufptr, lenptr, capptr, "\\r") < 0) return -1; break;
+      case '\t': if (json_buf_append(bufptr, lenptr, capptr, "\\t") < 0) return -1; break;
+      default:
+        if (c < 0x20) {
+          if (json_buf_append(bufptr, lenptr, capptr, "\\u%04x", c) < 0) return -1;
+        } else {
+          char t[2] = { (char)c, 0 };
+          if (json_buf_append(bufptr, lenptr, capptr, "%s", t) < 0) return -1;
+        }
+    }
+  }
+  if (json_buf_append(bufptr, lenptr, capptr, "\"") < 0) return -1;
+  return 0;
+}
+
+/* global flags set at init */
+extern int g_is_edgerouter;
+
+
+/* Return first existing path from candidates or NULL */
+static const char *find_first_existing(const char **candidates) {
+  for (const char **p = candidates; p && *p; ++p) if (path_exists(*p)) return *p;
+  return NULL;
+}
+
+/* Build devices JSON from /proc/net/arp as a fallback when ubnt-discover is not available */
+static int devices_from_arp_json(char **out, size_t *outlen) {
+  char line[512]; FILE *f = fopen("/proc/net/arp", "r"); if (!f) return -1;
+  /* skip header */ if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) { fclose(f); return -1; }
+  buf[0]=0; json_buf_append(&buf, &len, &cap, "["); int first = 1;
+  while (fgets(line, sizeof(line), f)) {
+    char ip[64], hw[64], dev[64]; ip[0]=hw[0]=dev[0]=0;
+    if (sscanf(line, "%63s %*s %*s %63s %*s %63s", ip, hw, dev) >= 1) {
+      if (!first) json_buf_append(&buf, &len, &cap, ",");
+      first = 0;
+      /* attempt reverse lookup */
+      char namebuf[256] = "";
+      struct in_addr ina; if (inet_aton(ip, &ina)) {
+        struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
+        if (he && he->h_name) snprintf(namebuf, sizeof(namebuf), "%s", he->h_name);
+      }
+      json_buf_append(&buf, &len, &cap, "{\"ipv4\":\""); json_append_escaped(&buf,&len,&cap, ip);
+      json_buf_append(&buf, &len, &cap, "\",\"hwaddr\":\""); json_append_escaped(&buf,&len,&cap, hw);
+      json_buf_append(&buf, &len, &cap, "\",\"hostname\":\""); json_append_escaped(&buf,&len,&cap, namebuf);
+      json_buf_append(&buf, &len, &cap, "\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\"}");
+    }
+  }
+  fclose(f);
+  json_buf_append(&buf, &len, &cap, "]\n"); *out = buf; *outlen = len; return 0;
+}
+
+/* Try to obtain ubnt-discover output: prefer binary if present, else /tmp/10-all.json, else arp fallback */
+static int ubnt_discover_output(char **out, size_t *outlen) {
+  const char *ubnt_candidates[] = { "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", "/usr/local/sbin/ubnt-discover", "/usr/local/bin/ubnt-discover", "/opt/ubnt/ubnt-discover", NULL };
+  const char *ub = find_first_existing(ubnt_candidates);
+  if (ub) {
+    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -d 150 -V -i none -j", ub);
+    if (util_exec(cmd, out, outlen) == 0 && *out && *outlen>0) return 0;
+  }
+  /* try preexisting dump */
+  if (path_exists("/tmp/10-all.json")) {
+    if (util_read_file("/tmp/10-all.json", out, outlen) == 0 && *out && *outlen>0) return 0;
+  }
+  /* fallback to arp-based device list */
+  if (devices_from_arp_json(out, outlen) == 0) return 0;
+  return -1;
+}
+
+/* Extract a quoted JSON string value for key from a JSON object region.
+ * Searches for '"key"' after 'start' and returns the pointer to the value (not allocated) and length in val_len.
+ * Returns 1 on success, 0 otherwise.
+ */
+static int find_json_string_value(const char *start, const char *key, const char **val, size_t *val_len) {
+  if (!start || !key || !val || !val_len) return 0;
+  char needle[128]; snprintf(needle, sizeof(needle), "\"%s\"", key);
+  const char *p = start;
+  while ((p = strstr(p, needle)) != NULL) {
+    const char *q = p + strlen(needle);
+    /* skip whitespace */ while (*q && (*q==' '||*q=='\t'||*q=='\r'||*q=='\n')) q++;
+    if (*q != ':') { p = q; continue; }
+    q++; while (*q && (*q==' '||*q=='\t'||*q=='\r'||*q=='\n')) q++;
+    if (*q == '"') {
+      q++; const char *vstart = q; const char *r = q;
+      while (*r) {
+        if (*r == '\\' && r[1]) { r += 2; continue; }
+        if (*r == '"') { *val = vstart; *val_len = (size_t)(r - vstart); return 1; }
+        r++;
+      }
+      return 0;
+    } else {
+      /* not a quoted string: capture until comma or closing brace */
+      const char *vstart = q; const char *r = q;
+      while (*r && *r != ',' && *r != '}' && *r != '\n') r++;
+      while (r > vstart && (*(r-1)==' '||*(r-1)=='\t')) r--;
+      *val = vstart; *val_len = (size_t)(r - vstart); return 1;
+    }
+  }
+  return 0;
+}
+
+/* Normalize devices array from ubnt-discover JSON string `ud` into a new allocated JSON array in *outbuf (caller must free). */
+static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen) {
+  if (!ud || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
+  /* simple search for "devices" : [ */
+  const char *p = strstr(ud, "\"devices\"" );
+  if (!p) { /* no devices key */ json_buf_append(&buf, &len, &cap, "[]"); *outbuf=buf; *outlen=len; return 0; }
+  const char *arr = strchr(p, '[');
+  if (!arr) { json_buf_append(&buf,&len,&cap,"[]"); *outbuf=buf; *outlen=len; return 0; }
+  /* iterate objects inside array by scanning braces */
+  const char *q = arr; int depth = 0; const char *end = NULL;
+  while (*q) {
+    if (*q == '[') { depth++; q++; continue; }
+    if (*q == ']') { depth--; if (depth==0) { end = q; break; } q++; continue; }
+    if (*q == '{') {
+      /* parse object from q to matching } */
+      const char *obj_start = q; int od = 0; const char *r = q;
+      while (*r) {
+        if (*r == '{') od++; else if (*r == '}') { od--; if (od==0) { r++; break; } }
+        r++;
+      }
+      if (!r || r<=obj_start) break;
+      /* within obj_start..r extract fields */
+      const char *v; size_t vlen;
+      /* fields to extract: ipv4 (or ip), mac or hwaddr, name/hostname, product, uptime, mode, essid, firmware */
+      char ipv4[64] = ""; char hwaddr[64] = ""; char hostname[256] = ""; char product[128] = ""; char uptime[64] = ""; char mode[64] = ""; char essid[128] = ""; char firmware[128] = "";
+      if (find_json_string_value(obj_start, "ipv4", &v, &vlen) || find_json_string_value(obj_start, "ip", &v, &vlen)) { snprintf(ipv4, sizeof(ipv4), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "mac", &v, &vlen) || find_json_string_value(obj_start, "hwaddr", &v, &vlen)) { snprintf(hwaddr, sizeof(hwaddr), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "name", &v, &vlen) || find_json_string_value(obj_start, "hostname", &v, &vlen)) { snprintf(hostname, sizeof(hostname), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "product", &v, &vlen)) { snprintf(product, sizeof(product), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "uptime", &v, &vlen)) { snprintf(uptime, sizeof(uptime), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "mode", &v, &vlen)) { snprintf(mode, sizeof(mode), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "essid", &v, &vlen)) { snprintf(essid, sizeof(essid), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "firmware", &v, &vlen)) { snprintf(firmware, sizeof(firmware), "%.*s", (int)vlen, v); }
+
+      /* append comma if not first */
+      if (len > 2) json_buf_append(&buf, &len, &cap, ",");
+      /* append normalized object */
+      json_buf_append(&buf, &len, &cap, "{\"ipv4\":"); json_append_escaped(&buf, &len, &cap, ipv4); json_buf_append(&buf,&len,&cap, ",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap, hwaddr);
+      json_buf_append(&buf,&len,&cap, ",\"hostname\":"); json_append_escaped(&buf,&len,&cap, hostname);
+      json_buf_append(&buf,&len,&cap, ",\"product\":"); json_append_escaped(&buf,&len,&cap, product);
+      json_buf_append(&buf,&len,&cap, ",\"uptime\":"); json_append_escaped(&buf,&len,&cap, uptime);
+      json_buf_append(&buf,&len,&cap, ",\"mode\":"); json_append_escaped(&buf,&len,&cap, mode);
+      json_buf_append(&buf,&len,&cap, ",\"essid\":"); json_append_escaped(&buf,&len,&cap, essid);
+      json_buf_append(&buf,&len,&cap, ",\"firmware\":"); json_append_escaped(&buf,&len,&cap, firmware);
+      json_buf_append(&buf,&len,&cap, "}");
+
+      q = r; continue;
+    }
+    q++;
+  }
+  /* wrap with brackets */
+  char *full = malloc(len + 4);
+  if (!full) { free(buf); return -1; }
+  full[0] = '['; if (len>0) memcpy(full+1, buf, len); full[1+len] = ']'; full[2+len] = '\n'; full[3+len]=0;
+  free(buf);
+  *outbuf = full; *outlen = 3 + len; return 0;
+}
+
 /* forward decls for local helpers used before their definitions */
 static void send_text(http_request_t *r, const char *text);
 static void send_json(http_request_t *r, const char *json);
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
 
-extern int render_connections_plain(char **buf_out, size_t *len_out);
-/* plugin-global flags (declared here for use in early functions) */
-extern int g_is_edgerouter;
-extern int g_has_ubnt_discover;
-extern int g_has_traceroute;
-#define PATHLEN 256
-extern char g_ubnt_discover_path[PATHLEN];
-extern char g_traceroute_path[PATHLEN];
-extern char g_olsrd_path[PATHLEN];
+static int h_airos(http_request_t *r);
+static int h_traffic(http_request_t *r);
 
-static int h_connections_json(http_request_t *r) {
-  char *buf = NULL; size_t len = 0;
-  if (render_connections_plain(&buf, &len) != 0 || !buf) {
-    send_json(r, "{\"connections\":[]}");
-    return 0;
-  }
-  fprintf(stderr, "[h_connections_json] render_connections_plain returned len=%zu buf=%p\n", len, (void*)buf);
+/* index.html moved to external asset at www/index.html; served from g_asset_root */
+static int h_status(http_request_t *r) {
+  /* Build a JSON status object used by the frontend (app.js).
+   * Fields provided: hostname, ip, uptime (seconds), devices (empty/default), airosdata (from /tmp/10-all.json),
+   * default_route (ip, dev), links (empty array), olsr2_on (bool).
+   * Behavior adapts to EdgeRouter detection (g_is_edgerouter) and available tools.
+   */
+  char *buf = NULL; size_t cap = 8192, len = 0;
+  buf = (char*)malloc(cap);
+  if (!buf) { send_json(r, "{}\n"); return 0; }
+  #define APPEND(fmt,...) do{ \
+    char _t[1024]; int _n = snprintf(_t, sizeof(_t), fmt, ##__VA_ARGS__); \
+    if (_n >= (int)sizeof(_t)) _n = (int)sizeof(_t) - 1; \
+    if (_n > 0) { \
+      if (len + _n + 1 > cap) { while (cap < len + _n + 1) cap *= 2; char *nb = (char*)realloc(buf, cap); if(!nb){ free(buf); send_json(r, "{}\n"); return 0; } buf = nb; } \
+      memcpy(buf + len, _t, (size_t)_n); len += _n; buf[len]=0; } \
+  } while(0)
 
-  // parse plain output
-  typedef struct {
-    char port[64];
-    char bridge[64];
-    char macs[8][64]; int macs_n;
-    char ips[8][64]; int ips_n;
-  } port_t;
-  const int ports_cap = 512;
-  port_t *ports = (port_t*)malloc(sizeof(port_t) * ports_cap);
-  if (!ports) { if (buf) free(buf); send_json(r, "{\"connections\":[]}"); return 0; }
-  int ports_n = 0;
+  /* use json_append_escaped(...) helper defined above */
 
-  char *line;
-  // duplicate buffer for strtok
-  if (len == 0) {
-    free(buf);
-    send_json(r, "{\"connections\":[]}");
-    return 0;
-  }
-  char *dup = (char*)malloc(len+1);
-  if (!dup) { fprintf(stderr, "[h_connections_json] malloc(dup) failed\n"); free(buf); send_json(r, "{\"connections\":[]}"); return 0; }
-  memcpy(dup, buf, len); dup[len]=0;
-  line = strtok(dup, "\n");
-  int line_no = 0;
-  while (line) {
-    line_no++;
-    while (*line==' ' || *line=='\t') line++;
-    fprintf(stderr, "[h_connections_json] parsing line %d: '%s'\n", line_no, line[0] ? line : "<empty>");
-    if (line[0]=='#') { line = strtok(NULL, "\n"); continue; }
-    if (strncmp(line, ". ", 2)==0) {
-      // . bridge\tport\tmac
-  char br[64]={0}, pt[64]={0}, mac[64]={0};
-      // tokenize by whitespace after prefix
-      char *p = line+2;
-      // read bridge
-  int rc = sscanf(p, "%63s %63s %63s", br, pt, mac);
-  if (rc < 2) { fprintf(stderr, "[h_connections_json] malformed . line: '%s'\n", p); line = strtok(NULL, "\n"); continue; }
-      if (rc >= 2) {
-        // find or add port entry for pt
-        int idx=-1;
-        for(int i=0;i<ports_n;i++) if (strcmp(ports[i].port, pt)==0) { idx=i; break; }
-  if (idx==-1 && ports_n < ports_cap) { idx = ports_n++; snprintf(ports[idx].port, sizeof(ports[idx].port), "%s", pt); ports[idx].macs_n=0; ports[idx].ips_n=0; ports[idx].bridge[0]=0; }
-        if (idx!=-1) {
-          if (br[0]) snprintf(ports[idx].bridge, sizeof(ports[idx].bridge), "%s", br);
-          if (mac[0] && ports[idx].macs_n < 8) snprintf(ports[idx].macs[ports[idx].macs_n++], sizeof(ports[idx].macs[0]), "%s", mac);
-        }
-      }
-    } else if (strncmp(line, "~ ", 2)==0) {
-      // ~ port\tmac\tip
-  char pt[64]={0}, mac[64]={0}, ip[64]={0};
-      char *p = line+2;
-  int rc = sscanf(p, "%63s %63s %63s", pt, mac, ip);
-  if (rc < 2) { fprintf(stderr, "[h_connections_json] malformed ~ line: '%s'\n", p); line = strtok(NULL, "\n"); continue; }
-  if (rc >= 2) {
-        int idx=-1;
-        for(int i=0;i<ports_n;i++) if (strcmp(ports[i].port, pt)==0) { idx=i; break; }
-  if (idx==-1 && ports_n < ports_cap) { idx = ports_n++; snprintf(ports[idx].port, sizeof(ports[idx].port), "%s", pt); ports[idx].macs_n=0; ports[idx].ips_n=0; ports[idx].bridge[0]=0; }
-        if (idx!=-1) {
-          if (mac[0] && ports[idx].macs_n < 8) snprintf(ports[idx].macs[ports[idx].macs_n++], sizeof(ports[idx].macs[0]), "%s", mac);
-          if (ip[0] && ports[idx].ips_n < 8) snprintf(ports[idx].ips[ports[idx].ips_n++], sizeof(ports[idx].ips[0]), "%s", ip);
-        }
+  /* hostname */
+  char hostname[256] = ""; if (gethostname(hostname, sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0;
+
+  /* primary IPv4: pick first non-loopback IPv4 */
+  char ipaddr[128] = "";
+  struct ifaddrs *ifap = NULL, *ifa = NULL;
+  if (getifaddrs(&ifap) == 0) {
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+      if (!ifa->ifa_addr) continue;
+      if (ifa->ifa_addr->sa_family == AF_INET) {
+        char bufip[INET_ADDRSTRLEN] = "";
+        struct sockaddr_in *sa = (struct sockaddr_in*)ifa->ifa_addr;
+        inet_ntop(AF_INET, &sa->sin_addr, bufip, sizeof(bufip));
+        if (bufip[0] && strcmp(bufip, "127.0.0.1") != 0) { snprintf(ipaddr, sizeof(ipaddr), "%s", bufip); break; }
       }
     }
-    line = strtok(NULL, "\n");
+    freeifaddrs(ifap);
   }
 
-  // build JSON
-  size_t cap = 4096; char *out = (char*)malloc(cap); size_t outlen=0;
-  if (!out) { fprintf(stderr, "[h_connections_json] malloc(out) failed\n"); free(dup); if (buf) free(buf); send_json(r, "{\"connections\":[]}"); return 0; }
-  #define APPEND_OUT(fmt,...) do{ char t[1024]; int n = snprintf(t,sizeof(t),fmt,##__VA_ARGS__); if(n<0) n=0; if(n>=(int)sizeof(t)) n = (int)sizeof(t)-1; if(n>0){ if(outlen + n + 1 > cap){ while (cap < outlen + n + 1) cap *= 2; char *tmp = (char*)realloc(out, cap); if(!tmp){ fprintf(stderr,"[h_connections_json] realloc failed\n"); free(out); free(dup); if(buf) free(buf); send_json(r,"{\"connections\":[]}"); return 0; } out = tmp; } memcpy(out+outlen, t, n); outlen += n; out[outlen]=0; } } while(0)
-
-  APPEND_OUT("{\"ports\":[");
-  for(int i=0;i<ports_n;i++){
-    if (i) APPEND_OUT(",");
-    APPEND_OUT("{\"port\":\"%s\"", ports[i].port);
-    if (ports[i].bridge[0]) APPEND_OUT(",\"bridge\":\"%s\"", ports[i].bridge);
-    if (ports[i].macs_n>0){ APPEND_OUT(",\"macs\":["); for(int j=0;j<ports[i].macs_n;j++){ if(j) APPEND_OUT(","); APPEND_OUT("\"%s\"", ports[i].macs[j]); } APPEND_OUT("]"); }
-    if (ports[i].ips_n>0){ APPEND_OUT(",\"ips\":["); for(int j=0;j<ports[i].ips_n;j++){ if(j) APPEND_OUT(","); APPEND_OUT("\"%s\"", ports[i].ips[j]); } APPEND_OUT("]"); }
-    APPEND_OUT("}");
+  /* uptime in seconds (first token of /proc/uptime) */
+  char *upt = NULL; size_t un = 0; long uptime_seconds = 0;
+  if (util_read_file("/proc/uptime", &upt, &un) == 0 && upt && un>0) {
+    uptime_seconds = (long)atof(upt);
+    free(upt); upt = NULL;
   }
-  APPEND_OUT("]}");
 
-  free(dup);
-  if (buf) free(buf);
-  if (ports) free(ports);
-  http_send_status(r, 200, "OK");
-  http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-  http_write(r, out, outlen);
-  free(out);
-  return 0;
-}
+  /* airosdata: include raw JSON from /tmp/10-all.json if present */
+  char *airos_raw = NULL; size_t airos_n = 0;
+  int have_airos = 0;
+  if (util_read_file("/tmp/10-all.json", &airos_raw, &airos_n) == 0 && airos_raw && airos_n > 0) have_airos = 1;
 
-static int h_versions_json(http_request_t *r) {
-  // Native implementation: build JSON object
-  char *json = NULL; size_t cap = 8192; json = (char*)malloc(cap); size_t len = 0;
-  #define APPEND_JSON(fmt,...) do{ int _aj_n = snprintf(NULL,0,fmt,##__VA_ARGS__); if(len + _aj_n + 2 > cap){ cap = (len + _aj_n + 2) * 2; json = (char*)realloc(json, cap); } len += snprintf(json+len, cap-len, fmt, ##__VA_ARGS__); } while(0)
-
-  APPEND_JSON("{");
-  // wizards
-  APPEND_JSON("\"wizards\":{");
-  int firstw = 1;
-  const char *wkdir = "/config/wizard/feature";
-  DIR *d = opendir(wkdir);
-  if (d) {
-    struct dirent *de;
-    while ((de = readdir(d))) {
-      if (de->d_name[0]=='.') continue;
-      char path[512]; snprintf(path, sizeof(path), "%s/%s/wizard-run", wkdir, de->d_name);
-      FILE *f = fopen(path, "r");
-      if (!f) continue;
-      char line[256]; int lines = 0; char vers[128] = "";
-      while (fgets(line, sizeof(line), f) && lines < 20) {
-        lines++;
-        char *p = strstr(line, "version");
-        if (p) {
-          // grab token after 'version'
-          char *tok = strchr(line, ' ');
-          if (tok) {
-            while(*tok && isspace((unsigned char)*tok)) tok++;
-            strncpy(vers, tok, sizeof(vers)-1); vers[sizeof(vers)-1]=0;
-            // trim
-            char *nl = strchr(vers, '\n'); if (nl) *nl=0;
-            break;
-          }
-        }
-      }
-      fclose(f);
-      if (vers[0]) {
-        if (!firstw) APPEND_JSON(",");
-        APPEND_JSON("\"%s\":\"%s\"", de->d_name, vers);
-        firstw = 0;
-      }
-    }
-    closedir(d);
+  /* default route: parse `ip route show default` */
+  char def_ip[64] = ""; char def_dev[64] = "";
+  char *rout = NULL; size_t rn = 0;
+  if (util_exec("/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout && rn>0) {
+    /* sample: default via 78.41.115.1 dev eth0 proto static
+       find 'via' and 'dev' tokens */
+    char *p = strstr(rout, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def_ip)) { strncpy(def_ip, p, L); def_ip[L]=0; } } }
+    p = strstr(rout, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def_dev)) { strncpy(def_dev, p, L); def_dev[L]=0; } else snprintf(def_dev, sizeof(def_dev), "%s", p); } else snprintf(def_dev, sizeof(def_dev), "%s", p); }
+    free(rout); rout = NULL;
   }
-  if (firstw) { APPEND_JSON("\"olsrv1\":\"n/a\""); }
-  APPEND_JSON("},");
 
-  // local_ips (ipv4)
-  char *out=NULL; size_t n=0;
-  char ipv4[128] = "n/a";
-  if (util_exec("/sbin/ip -4 -o addr show", &out, &n)==0 && out) {
-    // parse output like: "<idx>: <if>    <family> <addr>/<mask> ..."
-    char *p = out;
-    char *ln = strtok(p, "\n");
-    while (ln) {
-      char addrfield[128] = "";
-      if (sscanf(ln, "%*s %*s %*s %127s", addrfield) == 1) {
-        char *slash = strchr(addrfield, '/'); if (slash) *slash = '\0';
-        if (addrfield[0] && strncmp(addrfield, "127.", 4) != 0) { snprintf(ipv4, sizeof(ipv4), "%s", addrfield); break; }
-      }
-      ln = strtok(NULL, "\n");
-    }
-    free(out); out=NULL; n=0;
+  /* detect olsr2 presence by pidof */
+  char *pout = NULL; size_t pn = 0; int olsr2_on = 0;
+  if (util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout, &pn) == 0 && pout && pn>0) {
+    olsr2_on = 1; free(pout); pout = NULL;
   }
-  APPEND_JSON("\"local_ips\":{\"ipv4\":\"%s\",\"ipv6\":\"n/a\",\"originator\":\"n/a\"},", ipv4);
 
-  // autoupdate: check files and autoupdate.dat
-  int autoinstalled = 0;
-  struct stat st; if (stat("/etc/cron.daily/autoupdatewizards", &st)==0) autoinstalled = 1;
-  int aa_on=0, aa1_on=0, aa2_on=0, aale_on=0, aaebt_on=0, aabp_on=0;
-  FILE *af = fopen("/config/user-data/autoupdate.dat","r");
-  if (af) {
-    char L[256]; while (fgets(L,sizeof(L),af)){
-      if (strstr(L,"wizard-autoupdate=yes")) aa_on=1;
-      if (strstr(L,"wizard-olsrd_v1=yes")) aa1_on=1;
-      if (strstr(L,"wizard-olsrd_v2=yes")) aa2_on=1;
-      if (strstr(L,"wizard-0xffwsle=yes")) aale_on=1;
-      if (strstr(L,"wizard-ebtables=yes")) aaebt_on=1;
-      if (strstr(L,"wizard-blockPrivate=yes")) aabp_on=1;
-    } fclose(af);
-  }
-  APPEND_JSON("\"autoupdate\":{\"installed\":\"%s\",\"enabled\":\"%s\",\"aa\":\"%s\",\"olsrv1\":\"%s\",\"olsrv2\":\"%s\",\"0xffwsle\":\"%s\",\"ebtables\":\"%s\",\"blockpriv\":\"%s\"},",
-    autoinstalled?"yes":"no", aa_on?"on":"off", aa_on?"on":"off", aa1_on?"on":"off", aa2_on?"on":"off", aale_on?"on":"off", aaebt_on?"on":"off", aabp_on?"on":"off");
+  /* Build JSON */
+  APPEND("{");
+  APPEND("\"hostname\":"); json_append_escaped(&buf, &len, &cap, hostname); APPEND(",");
+  APPEND("\"ip\":"); json_append_escaped(&buf, &len, &cap, ipaddr); APPEND(",");
+  APPEND("\"uptime\":\"%ld\",", uptime_seconds);
 
-  // olsrd4watchdog
-  int watchdog_on = 0;
-  FILE *cf = fopen("/config/user-data/olsrd4.conf","r");
-  if (cf) {
-    char L[256]; while (fgets(L,sizeof(L),cf)){
-      if (strstr(L,"LoadPlugin") && strstr(L,"olsrd_watchdog") && L[0] != '#') { watchdog_on = 1; break; }
-    } fclose(cf);
-  }
-  APPEND_JSON("\"olsrd4watchdog\":{\"state\":\"%s\"},", watchdog_on?"on":"off");
+  /* default_route */
+  APPEND("\"default_route\":{");
+  APPEND("\"ip\":"); json_append_escaped(&buf, &len, &cap, def_ip); APPEND(",");
+  APPEND("\"dev\":"); json_append_escaped(&buf, &len, &cap, def_dev);
+  APPEND("},");
 
-  // linklocals: attempt to build map by reading ip -6 link
-  char *llbuf=NULL; if (util_exec("ip -6 link show", &llbuf, &n)==0 && llbuf) {
-    APPEND_JSON("\"linklocals\":{");
-    char *p = llbuf; char *ln = strtok(p, "\n"); int first=1;
-    while (ln) {
-      if (strstr(ln, "link/ether")) {
-        char ifn[64] = "", mac[64] = "";
-        if (sscanf(ln, "%*d: %63[^:]: %*s link/ether %63s", ifn, mac) >= 1) {
-          if (mac[0]) {
-            for(char *c=mac;*c;c++) *c = toupper((unsigned char)*c);
-            if (!first) APPEND_JSON(","); APPEND_JSON("\"%s\":\"%s\"", ifn, mac); first=0;
-          }
-        }
-      }
-      ln = strtok(NULL, "\n");
-    }
-    APPEND_JSON("},"); free(llbuf); llbuf=NULL; n=0;
+  /* devices: leave empty array for now (can be populated from ubnt-discover later) */
+  APPEND("\"devices\":[] ,");
+
+  /* airosdata: raw JSON if present */
+  if (have_airos) {
+    APPEND("\"airosdata\":");
+    /* ensure airos_raw is valid JSON; insert raw bytes directly */
+    APPEND("%s", airos_raw);
+    APPEND(",");
   } else {
-    APPEND_JSON("\"linklocals\":{},");
+    APPEND("\"airosdata\":{} ,");
   }
 
-  // homes and bootimage placeholder
-  APPEND_JSON("\"homes\":[\"funkfeuer\"],");
-  APPEND_JSON("\"bootimage\":{\"md5\":\"n/a\"}");
+  /* include versions.sh output under "versions" if available */
+  char *vout = NULL; size_t vn = 0;
+  if (path_exists("/config/custom/versions.sh")) {
+    if (util_exec("/config/custom/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
+      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
+    }
+  } else if (path_exists("/usr/share/olsrd-status-plugin/versions.sh")) {
+    if (util_exec("/usr/share/olsrd-status-plugin/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
+      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
+    }
+  } else if (path_exists("./versions.sh")) {
+    if (util_exec("./versions.sh", &vout, &vn) == 0 && vout && vn>0) {
+      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
+    }
+  }
+  /* Try to populate devices from ubnt-discover (or fallback) using helper */
+  {
+    char *ud = NULL; size_t udn = 0;
+    if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
+      char *normalized = NULL; size_t nlen = 0;
+      if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
+        APPEND("\"devices\":");
+        json_buf_append(&buf, &len, &cap, "%s", normalized);
+        APPEND(",");
+        free(normalized);
+      } else {
+        APPEND("\"devices\":[] ,");
+      }
+      free(ud);
+    } else {
+      APPEND("\"devices\":[] ,");
+    }
+  }
 
-  APPEND_JSON("}");
+  /* links */ APPEND("\"links\":[],");
+  APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
 
+  /* optionally include admin_url when running on EdgeRouter */
+  if (g_is_edgerouter) {
+    int admin_port = 443;
+    char *cfg = NULL; size_t cn = 0;
+    if (util_read_file("/config/config.boot", &cfg, &cn) == 0 && cfg && cn > 0) {
+      const char *tok = strstr(cfg, "https-port");
+      if (tok) {
+        /* move past token and find first integer sequence */
+        tok += strlen("https-port");
+        while (*tok && !isdigit((unsigned char)*tok)) tok++;
+        if (isdigit((unsigned char)*tok)) {
+          char *endptr = NULL; long v = strtol(tok, &endptr, 10);
+          if (v > 0 && v < 65536) admin_port = (int)v;
+        }
+      }
+      free(cfg);
+    }
+    /* prefer default route ip if available, else hostname */
+    if (def_ip[0] || hostname[0]) {
+      char admin_url_buf[256] = "";
+      const char *host_for_admin = def_ip[0] ? def_ip : hostname;
+      if (admin_port == 443) snprintf(admin_url_buf, sizeof(admin_url_buf), "https://%s/", host_for_admin);
+      else snprintf(admin_url_buf, sizeof(admin_url_buf), "https://%s:%d/", host_for_admin, admin_port);
+      APPEND(",\"admin_url\":"); json_append_escaped(&buf, &len, &cap, admin_url_buf);
+    }
+  }
+  APPEND("\n}\n");
+
+  /* send and cleanup */
   http_send_status(r, 200, "OK");
   http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-  http_write(r, json, len);
-  free(json);
+  http_write(r, buf, len);
+  free(buf);
+  if (airos_raw) free(airos_raw);
   return 0;
 }
 
 static int h_nodedb(http_request_t *r) {
+  /* Try local custom node db first, then /tmp, then remote fetch. */
   char *out = NULL; size_t n = 0;
-  const char *curl_candidates[] = { "/usr/bin/curl", "/usr/sbin/curl", "/bin/curl", "/usr/local/bin/curl", NULL };
-  const char *url_candidates[] = { "https://ff.cybercomm.at/node_db.json", "http://ff.cybercomm.at/node_db.json", NULL };
-  int success = 0;
-  char cmd[1024];
-  for (const char **cp = curl_candidates; !success && *cp; ++cp) {
-    if (!path_exists(*cp)) continue;
-    for (const char **up = url_candidates; !success && *up; ++up) {
-      snprintf(cmd, sizeof(cmd), "/bin/sh -c '%s -s --connect-timeout 3 %s 2>&1'", *cp, *up);
-      if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
-        /* validate output looks like JSON (object or array) */
-        size_t i=0; while (i < n && isspace((unsigned char)out[i])) i++;
-        if (i < n && (out[i] == '{' || out[i] == '[')) {
-          send_json(r, out);
-          free(out);
-          success = 1;
-          break;
-        } else {
-          /* not JSON: log and continue trying */
-          fprintf(stderr, "[h_nodedb] candidate %s %s returned non-json output (len=%zu)\n", *cp, *up, n);
-          free(out); out = NULL; n = 0;
-        }
-      } else {
-        /* no output, log and continue */
-        fprintf(stderr, "[h_nodedb] candidate %s failed to fetch %s\n", *cp, *up);
-        if (out) { free(out); out = NULL; n = 0; }
-      }
+  const char *local_custom = "/config/custom/node_db.json";
+  const char *tmp_local = "/tmp/node_db.json";
+  if (path_exists(local_custom)) {
+    if (util_read_file(local_custom, &out, &n) == 0 && out && n>0) {
+      http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
     }
   }
-  if (!success) {
-    /* fallback: attempt to build a small nodedb from /etc/hosts to help local mapping */
-    FILE *fh = fopen("/etc/hosts", "r");
-    if (fh) {
-      char line[1024]; char buf[8192]; size_t bl = 0; buf[0]=0;
-      bl += snprintf(buf+bl, sizeof(buf)-bl, "{");
-      int first = 1;
-      while (fgets(line, sizeof(line), fh)) {
-        if (line[0]=='#') continue;
-        char ip[128]={0}, name[256]={0};
-        if (sscanf(line, "%127s %255s", ip, name) == 2) {
-          if (!first) bl += snprintf(buf+bl, sizeof(buf)-bl, ",");
-          bl += snprintf(buf+bl, sizeof(buf)-bl, "\"%s\":{\"name\":\"%s\"}", ip, name);
-          first = 0;
-        }
-      }
-      bl += snprintf(buf+bl, sizeof(buf)-bl, "}");
-      fclose(fh);
-      fprintf(stderr, "[h_nodedb] using /etc/hosts fallback (entries=%d)\n", first?0:1);
-      send_json(r, buf);
-    } else {
-      /* fallback: empty object if remote fetch fails */
-      fprintf(stderr, "[h_nodedb] remote fetch failed, /etc/hosts missing; returning {}\n");
-      send_json(r, "{}");
+  if (path_exists(tmp_local)) {
+    if (util_read_file(tmp_local, &out, &n) == 0 && out && n>0) {
+      http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
     }
   }
+  /* attempt remote fetch via curl */
+  if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &out, &n) == 0 && out && n>0) {
+    http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
+  }
+  send_json(r, "{}\n");
   return 0;
 }
 
-static int h_traceroute(http_request_t *r) {
-  char target[256] = "78.41.115.36"; // default
-  (void)get_query_param(r, "target", target, sizeof(target));
-  
-  // basic sanitization: allow only alnum, dot, dash, underscore, colon
-  char clean[256]; size_t ci=0;
-  for(size_t i=0; target[i] && ci+1<sizeof(clean); i++){
-    char c = target[i];
-    if ((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='.'||c=='-'||c=='_'||c==':') { clean[ci++]=c; }
-    else { /* reject on unexpected char */ }
-  }
-  clean[ci]=0;
-  if (ci==0) { send_text(r, "invalid target\n"); return 0; }
-  char cmd[1024];
-  if (!g_has_traceroute || !g_traceroute_path[0]) { send_text(r, "traceroute not available on this system\n"); return 0; }
-  if (strchr(clean, ':')) snprintf(cmd, sizeof(cmd), "%s -n -w 1 -q 1 -6 %s", g_traceroute_path, clean);
-  else snprintf(cmd, sizeof(cmd), "%s -n -w 1 -q 1 %s", g_traceroute_path, clean);
-  char *out = NULL; size_t n = 0;
-  if (util_exec(cmd, &out, &n)==0 && out) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    http_write(r, out, n); free(out);
-  } else send_text(r, "traceroute failed\n");
-  return 0;
-}
-
-/* status endpoint for frontend: lightweight JSON */
-static int h_status(http_request_t *r) {
-  char hostname[256] = "";
-  if (gethostname(hostname, sizeof(hostname)) != 0) snprintf(hostname, sizeof(hostname), "unknown");
-  char *out = NULL; size_t n = 0;
-  char ipbuf[128] = "";
-    if (util_exec("/sbin/ip -4 -o addr show", &out, &n)==0 && out) {
-      char *p = out; char *ln = strtok(p, "\n");
-      while (ln) {
-        char addrfield[128] = "";
-        if (sscanf(ln, "%*s %*s %*s %127s", addrfield) == 1) {
-          char *slash = strchr(addrfield, '/'); if (slash) *slash='\0';
-          if (addrfield[0] && strncmp(addrfield, "127.", 4) != 0) { snprintf(ipbuf, sizeof(ipbuf), "%s", addrfield); break; }
-        }
-        ln = strtok(NULL, "\n");
-      }
-      free(out); out=NULL; n=0;
-    } else strcpy(ipbuf, "");
-  char uptimebuf[128] = "";
-  if (util_read_file("/proc/uptime", &out, &n)==0 && out && n>0) {
-    /* parse first token (seconds) */
-    char tmp[128] = {0}; size_t L = n < sizeof(tmp)-1 ? n : sizeof(tmp)-1; memcpy(tmp, out, L); tmp[L]=0;
-    char *tok = strtok(tmp, " \t\n");
-    if (tok) {
-      double sec = atof(tok); int days = (int)(sec/86400); int hrs = ((int)sec%86400)/3600; snprintf(uptimebuf,sizeof(uptimebuf), "%dd %dh", days, hrs);
-    }
-    free(out); out=NULL; n=0;
-  }
-  if (uptimebuf[0] == '\0') {
-#if defined(__linux__)
-    struct sysinfo si;
-    if (sysinfo(&si) == 0) {
-      long sec = si.uptime;
-      int days = (int)(sec/86400); int hrs = ((int)sec%86400)/3600;
-      snprintf(uptimebuf, sizeof(uptimebuf), "%dd %dh", days, hrs);
-    } else {
-      snprintf(uptimebuf, sizeof(uptimebuf), "n/a");
-    }
-#else
-    snprintf(uptimebuf, sizeof(uptimebuf), "n/a");
-#endif
-  }
-  // collect OLSR IPv4 links (if available)
-  char *linksbuf = NULL; size_t linksn = 0;
-  int links_count = 0;
-  char links_json[4096]; size_t lpos = 0; links_json[0]=0;
-  /* build gatewaylist/nodelist from routing table (similar to Python reference)
-   * We'll count unique destinations per gateway so the UI can show a routes count.
-   */
-  typedef struct gw_entry_s { char gw[64]; char **dests; int dest_n; int dest_cap; int nodes_n; } gw_entry_t;
-  const int GW_CAP = 128;
-  gw_entry_t *gw = (gw_entry_t*)calloc(GW_CAP, sizeof(gw_entry_t));
-  int gw_n = 0;
-  char *rout_out = NULL; size_t rout_n = 0;
-  if (util_exec("/sbin/ip -4 r | grep -vE 'scope|default' | awk '{print $3,$1,$5}'", &rout_out, &rout_n) == 0 && rout_out && rout_n>0) {
-    char *rp = rout_out; char *rln = strtok(rp, "\n");
-    while (rln) {
-      char gwip[64] = "", dest[64] = "";
-      if (sscanf(rln, "%63s %63s", gwip, dest) >= 1) {
-        if (gwip[0] && dest[0]) {
-          int idx = -1;
-          for (int i=0;i<gw_n;i++) if (strcmp(gw[i].gw, gwip)==0) { idx = i; break; }
-          if (idx == -1 && gw_n < GW_CAP) {
-            idx = gw_n++;
-            snprintf(gw[idx].gw, sizeof(gw[idx].gw), "%s", gwip);
-            gw[idx].dests = NULL; gw[idx].dest_n = 0; gw[idx].dest_cap = 0; gw[idx].nodes_n = 0;
-          }
-          if (idx != -1) {
-            /* ensure unique dests */
-            int found = 0;
-            for (int j=0;j<gw[idx].dest_n;j++) if (strcmp(gw[idx].dests[j], dest)==0) { found = 1; break; }
-            if (!found) {
-              if (gw[idx].dest_n + 1 > gw[idx].dest_cap) {
-                int newcap = gw[idx].dest_cap ? gw[idx].dest_cap * 2 : 4;
-                char **tmp = (char**)realloc(gw[idx].dests, sizeof(char*) * newcap);
-                if (tmp) { gw[idx].dests = tmp; gw[idx].dest_cap = newcap; }
-              }
-              if (gw[idx].dests && gw[idx].dest_n < gw[idx].dest_cap) {
-                gw[idx].dests[gw[idx].dest_n] = strdup(dest);
-                if (gw[idx].dests[gw[idx].dest_n]) gw[idx].dest_n++;
-              }
-            }
-          }
-        }
-      }
-      rln = strtok(NULL, "\n");
-    }
-    free(rout_out); rout_out = NULL; rout_n = 0;
-  }
-  /* try multiple endpoints for the olsrd control http interface; some systems bind to the host IP */
-  const char *link_candidates[] = { "http://127.0.0.1:2006/lin", "http://localhost:2006/lin", NULL };
-  char dyn_url[256] = "";
-  if (ipbuf[0]) snprintf(dyn_url, sizeof(dyn_url), "http://%s:2006/lin", ipbuf);
-  int found_links = 0;
-  char curlcmd[512];
-  for (const char **p = link_candidates; !found_links && *p; ++p) {
-    snprintf(curlcmd, sizeof(curlcmd), "/usr/bin/curl -s --connect-timeout 1 %s", *p);
-    if (util_exec(curlcmd, &linksbuf, &linksn) == 0 && linksbuf && linksn>0) { found_links = 1; break; }
-    if (linksbuf) { free(linksbuf); linksbuf = NULL; linksn = 0; }
-  }
-  if (!found_links && dyn_url[0]) {
-    snprintf(curlcmd, sizeof(curlcmd), "/usr/bin/curl -s --connect-timeout 1 %s", dyn_url);
-    if (util_exec(curlcmd, &linksbuf, &linksn) == 0 && linksbuf && linksn>0) found_links = 1;
-  }
-  if (found_links) {
-    // parse lines, each line expected to be: Intf LocalIP RemoteIP RemoteHostname LQ NLQ Cost [routes nodes]
-    char *p = linksbuf; char *ln = strtok(p, "\n");
-    lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, "\"links\":[");
-    while (ln) {
-      // trim leading spaces
-      while (*ln && isspace((unsigned char)*ln)) ln++;
-      if (*ln) {
-        char *tokens[16]; int pc=0;
-        char *p2 = ln; char *tok2;
-        while (pc < 16 && (tok2 = strsep(&p2, " \t")) != NULL) {
-          if (tok2[0]==0) continue;
-          tokens[pc++] = tok2;
-        }
-          if (pc >= 6) {
-          /* detect whether first token is IP (LocalIP) or an interface name */
-          struct in_addr addrcheck;
-          char intf[64] = ""; char lip[128] = ""; char rip[128] = ""; char rhost[256] = ""; char lq[32] = ""; char nlq[32] = ""; char cost[32] = ""; char routes[64] = ""; char nodes[64] = "";
-          if (inet_pton(AF_INET, tokens[0], &addrcheck) == 1) {
-            /* format: LocalIP RemoteIP Hyst. LQ NLQ Cost [..] */
-            snprintf(lip, sizeof(lip), "%s", tokens[0]);
-            snprintf(rip, sizeof(rip), "%s", tokens[1]);
-            /* Hyst is tokens[2], LQ tokens[3], NLQ tokens[4], Cost tokens[5] */
-            snprintf(lq, sizeof(lq), "%s", tokens[3] ? tokens[3] : "");
-            snprintf(nlq, sizeof(nlq), "%s", tokens[4] ? tokens[4] : "");
-            snprintf(cost, sizeof(cost), "%s", tokens[5] ? tokens[5] : "");
-          } else if (pc >= 7 && inet_pton(AF_INET, tokens[1], &addrcheck) == 1) {
-            /* format variant: Intf LocalIP RemoteIP [RemoteHostname] LQ NLQ Cost [routes nodes]
-             * Be tolerant: strip masks (/32) from IP tokens and trailing ':' from intf.
-             */
-            /* clean intf (strip trailing ':') */
-            snprintf(intf, sizeof(intf), "%s", tokens[0]);
-            size_t ilen = strlen(intf); if (ilen > 0 && intf[ilen-1] == ':') intf[ilen-1] = '\0';
-            /* helper to clean ip-like tokens (remove /mask or trailing comma) */
-            char t1[128] = "", t2[128] = "", t3[128] = "";
-            snprintf(t1, sizeof(t1), "%s", tokens[1]); char *s = strchr(t1, '/'); if (s) *s = '\0';
-            snprintf(t2, sizeof(t2), "%s", tokens[2]); s = strchr(t2, '/'); if (s) *s = '\0';
-            snprintf(lip, sizeof(lip), "%s", t1);
-            snprintf(rip, sizeof(rip), "%s", t2);
-            /* decide whether tokens[3] is a hostname or the LQ value */
-            int cur = 3;
-            if (pc > 3) {
-              snprintf(t3, sizeof(t3), "%s", tokens[3]); char t3c[128]; snprintf(t3c, sizeof(t3c), "%s", t3); s = strchr(t3c, '/'); if (s) *s='\0';
-              /* if tokens[3] is not an IP numeric value, consider it a remote hostname */
-              if (inet_pton(AF_INET, t3c, &addrcheck) != 1) {
-                snprintf(rhost, sizeof(rhost), "%s", tokens[3]); cur = 4;
-              }
-            }
-            /* now map LQ/NLQ/Cost/Routes/Nodes relative to cur */
-            if (pc > cur) snprintf(lq, sizeof(lq), "%s", tokens[cur]);
-            if (pc > cur+1) snprintf(nlq, sizeof(nlq), "%s", tokens[cur+1]);
-            if (pc > cur+2) snprintf(cost, sizeof(cost), "%s", tokens[cur+2]);
-            if (pc > cur+3) snprintf(routes, sizeof(routes), "%s", tokens[cur+3]);
-            if (pc > cur+4) snprintf(nodes, sizeof(nodes), "%s", tokens[cur+4]);
-          } else {
-            ln = strtok(NULL, "\n");
-            continue;
-          }
-          /* fallback: some olsrd builds or configurations append routes/nodes as key=value or inside
-           * bracketed fields at the end of the line. Try to extract them from the original line if
-           * tokens did not yield values. Run this for both token formats.
-           */
-          if (!routes[0] || !nodes[0]) {
-            char *rp = strstr(ln, "routes=");
-            if (!rp) rp = strstr(ln, "routes:");
-            if (rp) {
-              char *sep = strchr(rp, '='); if (!sep) sep = strchr(rp, ':');
-              if (sep) {
-                char *valp = sep + 1;
-                while (*valp && isspace((unsigned char)*valp)) valp++;
-                char valbuf[64] = {0}; int vi = 0;
-                while (*valp && !isspace((unsigned char)*valp) && vi < (int)sizeof(valbuf)-1) valbuf[vi++] = *valp++;
-                if (vi) snprintf(routes, sizeof(routes), "%s", valbuf);
-              }
-            }
-            char *np = strstr(ln, "nodes=");
-            if (!np) np = strstr(ln, "nodes:");
-            if (np) {
-              char *sepn = strchr(np, '='); if (!sepn) sepn = strchr(np, ':');
-              if (sepn) {
-                char *valp = sepn + 1;
-                while (*valp && isspace((unsigned char)*valp)) valp++;
-                char valbuf[64] = {0}; int vi = 0;
-                while (*valp && !isspace((unsigned char)*valp) && vi < (int)sizeof(valbuf)-1) valbuf[vi++] = *valp++;
-                if (vi) snprintf(nodes, sizeof(nodes), "%s", valbuf);
-              }
-            }
-            if ((!routes[0] || !nodes[0]) && (strchr(ln, '[') || strchr(ln, '('))) {
-              char *lb = strchr(ln, '[');
-              char *rb = lb ? strchr(lb, ']') : NULL;
-              if (!lb) { lb = strchr(ln, '('); rb = lb ? strchr(lb, ')') : NULL; }
-              if (lb && rb && rb > lb) {
-                size_t il = (size_t)(rb - lb - 1);
-                if (il > 0 && il < 512) {
-                  char inner[512]; memcpy(inner, lb+1, il); inner[il]=0;
-                  char *pinner = inner; char *tk;
-                  while ((tk = strsep(&pinner, " ,;:\t")) != NULL) {
-                    if (!tk[0]) continue;
-                    /* skip tokens that look like IPs (contain a dot) */
-                    if (strchr(tk, '.')) continue;
-                    if (!routes[0]) {
-                      if (strpbrk(tk, "0123456789")) { snprintf(routes, sizeof(routes), "%s", tk); continue; }
-                    }
-                    if (!nodes[0]) {
-                      if (strpbrk(tk, "0123456789")) { snprintf(nodes, sizeof(nodes), "%s", tk); continue; }
-                    }
-                  }
-                }
-              }
-            }
-
-            /* additional heuristics: look for explicit 'routes='/'routes:' and 'nodes='/'nodes:' with numeric values */
-            if (!routes[0]) {
-              char *rpp = ln;
-              while ((rpp = strstr(rpp, "routes")) != NULL) {
-                char *sep = strchr(rpp, '='); if (!sep) sep = strchr(rpp, ':');
-                if (sep) {
-                  char *v = sep + 1; while (*v && isspace((unsigned char)*v)) v++;
-                  char nb[64] = {0}; int ni = 0; while (*v && (isdigit((unsigned char)*v) || *v==',' ) && ni < (int)sizeof(nb)-1) nb[ni++] = *v++;
-                  if (ni) { snprintf(routes, sizeof(routes), "%s", nb); break; }
-                }
-                rpp += 6; /* skip past 'routes' */
-              }
-            }
-            if (!nodes[0]) {
-              char *npp = ln;
-              while ((npp = strstr(npp, "nodes")) != NULL) {
-                char *sep = strchr(npp, '='); if (!sep) sep = strchr(npp, ':');
-                if (sep) {
-                  char *v = sep + 1; while (*v && isspace((unsigned char)*v)) v++;
-                  char nb[64] = {0}; int ni = 0; while (*v && (isdigit((unsigned char)*v) || *v==',' ) && ni < (int)sizeof(nb)-1) nb[ni++] = *v++;
-                  if (ni) { snprintf(nodes, sizeof(nodes), "%s", nb); break; }
-                }
-                npp += 5; /* skip past 'nodes' */
-              }
-            }
-
-          }
-          /* if remote hostname missing or placeholder '-', attempt a reverse DNS lookup for the remote IP
-           * and if that fails fall back to the remote IP string so the UI shows something useful.
-           */
-          if (( !rhost[0] || strcmp(rhost, "-") == 0 ) && rip[0]) {
-            struct sockaddr_in raddr; memset(&raddr,0,sizeof(raddr)); raddr.sin_family = AF_INET;
-            if (inet_pton(AF_INET, rip, &raddr.sin_addr) == 1) {
-              char rname[256] = "";
-              if (getnameinfo((struct sockaddr*)&raddr, sizeof(raddr), rname, sizeof(rname), NULL, 0, 0) == 0) {
-                snprintf(rhost, sizeof(rhost), "%s", rname);
-              } else {
-                /* fallback to IP string */
-                snprintf(rhost, sizeof(rhost), "%s", rip);
-              }
-            } else {
-              snprintf(rhost, sizeof(rhost), "%s", rip);
-            }
-          }
-          /* ensure lip and rip are valid IPs */
-          if (inet_pton(AF_INET, lip, &addrcheck) != 1) { ln = strtok(NULL, "\n"); continue; }
-          if (inet_pton(AF_INET, rip, &addrcheck) != 1) { ln = strtok(NULL, "\n"); continue; }
-          /* final fallback: ensure remote_host is never empty in output - use rip if no name resolved */
-          if (!rhost[0]) snprintf(rhost, sizeof(rhost), "%s", rip);
-          /* if interface name missing, attempt to map local IP to interface via getifaddrs */
-          if (!intf[0] && lip[0]) {
-            struct ifaddrs *ifap = NULL, *ifa = NULL;
-            if (getifaddrs(&ifap) == 0 && ifap) {
-              for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
-                if (!ifa->ifa_addr) continue;
-                if (ifa->ifa_addr->sa_family == AF_INET) {
-                  struct sockaddr_in sa;
-                  memcpy(&sa, ifa->ifa_addr, sizeof(struct sockaddr_in));
-                  char addrbuf[128] = ""; inet_ntop(AF_INET, &sa.sin_addr, addrbuf, sizeof(addrbuf));
-                  if (addrbuf[0] && strcmp(addrbuf, lip) == 0) { snprintf(intf, sizeof(intf), "%s", ifa->ifa_name); break; }
-                }
-              }
-              freeifaddrs(ifap);
-            }
-            if (intf[0]) fprintf(stderr, "[h_status] mapped local %s -> intf=%s\n", lip, intf);
-          }
-          if (lpos + 512 > sizeof(links_json)) break;
-          /* debug log parsed link fields to aid investigation when remote_host missing */
-          fprintf(stderr, "[h_status] parsed link: intf='%s' local='%s' remote='%s' remote_host='%s' lq='%s' nlq='%s' cost='%s' routes='%s' nodes='%s'\n",
-            intf, lip, rip, rhost, lq, nlq, cost, routes, nodes);
-          if (links_count) lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, ",");
-          /* determine routes/nodes counts from gateway table if not already present */
-          int routes_count = 0; int nodes_count = 0;
-          if (!routes[0] || !nodes[0]) {
-            for (int gi=0; gi<gw_n; gi++) {
-              if (strcmp(gw[gi].gw, rip) == 0) {
-                routes_count = gw[gi].dest_n;
-                nodes_count = gw[gi].nodes_n;
-                break;
-              }
-            }
-          }
-          lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos,
-            "{\"intf\":\"%s\",\"local\":\"%s\",\"remote\":\"%s\",\"remote_host\":\"%s\",\"lq\":\"%s\",\"nlq\":\"%s\",\"cost\":\"%s\"",
-            intf, lip, rip, rhost, lq, nlq, cost);
-          if (routes[0]) lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, ",\"routes\":\"%s\"", routes);
-          else if (routes_count > 0) lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, ",\"routes\":\"%d\"", routes_count);
-          if (nodes[0]) lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, ",\"nodes\":\"%s\"", nodes);
-          else if (nodes_count > 0) lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, ",\"nodes\":\"%d\"", nodes_count);
-          lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, "}");
-          links_count++;
-        }
-      }
-      ln = strtok(NULL, "\n");
-    }
-    lpos += snprintf(links_json + lpos, sizeof(links_json) - lpos, "]");
-    free(linksbuf); linksbuf = NULL; linksn = 0;
-      /* free gateway list */
-      for (int i=0;i<gw_n;i++) {
-        if (gw[i].dests) {
-          for (int j=0;j<gw[i].dest_n;j++) if (gw[i].dests[j]) free(gw[i].dests[j]);
-          free(gw[i].dests);
-        }
-      }
-      free(gw);
-  } else {
-    snprintf(links_json, sizeof(links_json), "\"links\":[]");
-  }
-
-  /* default route: try to get via `ip -4 r get 8.8.8.8` and parse 'via' and 'dev' */
-  char def_ip[64] = ""; char def_dev[64] = ""; char def_host[256] = "";
-  if (util_exec("/sbin/ip -4 r get 8.8.8.8", &out, &n) == 0 && out && n>0) {
-    char *ln = strtok(out, "\n");
-    if (ln) {
-      char *pv = strstr(ln, " via "); if (pv) { pv += 5; sscanf(pv, "%63s", def_ip); }
-      char *pd = strstr(ln, " dev "); if (pd) { pd += 5; sscanf(pd, "%63s", def_dev); }
-    }
-    free(out); out = NULL; n = 0;
-  }
-  if (def_ip[0]) {
-    struct sockaddr_in sa; memset(&sa,0,sizeof(sa)); sa.sin_family = AF_INET; inet_pton(AF_INET, def_ip, &sa.sin_addr);
-    /* write name directly into def_host to avoid an intermediate buffer that
-     * could be larger than def_host and trigger truncation warnings.
-     */
-    if (getnameinfo((struct sockaddr*)&sa, sizeof(sa), def_host, sizeof(def_host), NULL, 0, 0) != 0) def_host[0]=0;
-  }
-
-  /* default_route JSON */
-  char def_json[512];
-  if (def_ip[0]) snprintf(def_json, sizeof(def_json), "\"default_route\":{\"hostname\":\"%s\",\"ip\":\"%s\",\"dev\":\"%s\"}", def_host[0]?def_host:def_ip, def_ip, def_dev);
-  else snprintf(def_json, sizeof(def_json), "\"default_route\":{}");
-
-  // build minimal JSON (include default_route) dynamically to avoid truncation warnings
-  size_t jcap = 4096; char *jbuf = (char*)malloc(jcap);
-  if (!jbuf) { send_json(r, "{}"); return 0; }
-  int needed = snprintf(NULL,0,"{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime\":\"%s\",\"devices\":[],\"airosdata\":{},\"olsr2_on\":false,%s,%s}", hostname, ipbuf, uptimebuf, links_json, def_json);
-  if (needed < 0) { free(jbuf); send_json(r, "{}"); return 0; }
-  if ((size_t)needed + 1 > jcap) { jcap = (size_t)needed + 1; char *tmp = (char*)realloc(jbuf, jcap); if(!tmp){ free(jbuf); send_json(r, "{}"); return 0; } jbuf = tmp; }
-  snprintf(jbuf, jcap, "{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime\":\"%s\",\"devices\":[],\"airosdata\":{},\"olsr2_on\":false,%s,%s}",
-    hostname, ipbuf, uptimebuf, links_json, def_json);
-  send_json(r, jbuf);
-  free(jbuf);
-  return 0;
-}
+/* capabilities endpoint */
+/* forward-declare globals used by capabilities endpoint (defined later) */
+extern int g_is_edgerouter;
+extern int g_has_ubnt_discover;
+extern int g_has_traceroute;
 
 /* capabilities endpoint */
 static int h_capabilities_local(http_request_t *r) {
@@ -720,6 +428,10 @@ static int h_capabilities_local(http_request_t *r) {
 int g_is_edgerouter = 0;
 int g_has_ubnt_discover = 0;
 int g_has_traceroute = 0;
+/* PATHLEN not provided by host headers in this build context; use 512 as a safe default. */
+#ifndef PATHLEN
+#define PATHLEN 512
+#endif
 char g_ubnt_discover_path[PATHLEN] = "";
 char g_traceroute_path[PATHLEN] = "";
 char g_olsrd_path[PATHLEN] = "";
@@ -748,188 +460,74 @@ static int h_connections(http_request_t *r);
 static int h_airos(http_request_t *r);
 static int h_traffic(http_request_t *r);
 
-/* Embedded assets for environments where file access fails */
-static const char embedded_index_html[] =
-"<!doctype html>\n"
-"<html lang=\"de\">\n"
-"<head>\n"
-"  <meta charset=\"utf-8\">\n"
-"  <meta http-equiv=\"x-ua-compatible\" content=\"IE=edge\">\n"
-"  <meta name=\"viewport\" content=\"width=1000, initial-scale=0.5\">\n"
-"  <meta name=\"description\" content=\"\">\n"
-"  <meta name=\"author\" content=\"\">\n"
-"  <title>olsrd status</title>\n"
-"  <link rel=\"stylesheet\" href=\"/css/bootstrap.min.css\">\n"
-"  <style>\n"
-"    body { padding: 20px; }\n"
-"    .badge-env { font-size: 12px; margin-left: 8px; }\n"
-"    pre { max-height: 400px; overflow:auto; background:#111; color:#0f0; padding:12px; }\n"
-"    .tab-content { margin-top: 15px; }\n"
-"    .table { width: 100%; margin-bottom: 20px; }\n"
-"    .table th, .table td { padding: 8px; text-align: left; border: 1px solid #ddd; }\n"
-"    .table th { background-color: #f5f5f5; }\n"
-"    .btn { display: inline-block; padding: 6px 12px; margin-bottom: 0; font-size: 14px; font-weight: normal; line-height: 1.42857143; text-align: center; white-space: nowrap; vertical-align: middle; cursor: pointer; border: 1px solid transparent; border-radius: 4px; }\n"
-"    .btn-primary { color: #fff; background-color: #337ab7; border-color: #2e6da4; }\n"
-"    .btn-default { color: #333; background-color: #fff; border-color: #ccc; }\n"
-"    .form-control { display: block; width: 100%; height: 34px; padding: 6px 12px; font-size: 14px; line-height: 1.42857143; color: #555; background-color: #fff; border: 1px solid #ccc; border-radius: 4px; }\n"
-"    .input-group { position: relative; display: table; border-collapse: separate; }\n"
-"    .input-group-btn { position: relative; font-size: 0; white-space: nowrap; }\n"
-"    .input-group-btn .btn { position: relative; border-radius: 0; }\n"
-"    .input-group .form-control { position: relative; z-index: 2; float: left; width: 100%; margin-bottom: 0; }\n"
-"    .input-group .form-control:focus { z-index: 3; }\n"
-"    .input-group-btn .btn { border-left-width: 0; }\n"
-"    .input-group-btn:first-child .btn { border-right-width: 0; }\n"
-"    .nav-tabs { border-bottom: 1px solid #ddd; }\n"
-"    .nav-tabs > li { float: left; margin-bottom: -1px; }\n"
-"    .nav-tabs > li > a { margin-right: 2px; line-height: 1.42857143; border: 1px solid transparent; border-radius: 4px 4px 0 0; }\n"
-"    .nav-tabs > li.active > a, .nav-tabs > li.active > a:hover, .nav-tabs > li.active > a:focus { color: #555; background-color: #fff; border: 1px solid #ddd; border-bottom-color: transparent; cursor: default; }\n"
-"    .tab-content > .tab-pane { display: none; }\n"
-"    .tab-content > .active { display: block; }\n"
-"    .dl-horizontal dt { float: left; width: 160px; clear: left; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n"
-"    .dl-horizontal dd { margin-left: 180px; }\n"
-"    .panel { margin-bottom: 20px; background-color: #fff; border: 1px solid #ddd; border-radius: 4px; }\n"
-"    .panel-body { padding: 15px; }\n"
-"    .panel-footer { padding: 10px 15px; background-color: #f5f5f5; border-top: 1px solid #ddd; border-bottom-right-radius: 3px; border-bottom-left-radius: 3px; }\n"
-"    .alert { padding: 15px; margin-bottom: 20px; border: 1px solid transparent; border-radius: 4px; }\n"
-"    .alert-warning { color: #8a6d3b; background-color: #fcf8e3; border-color: #faebcc; }\n"
-"  </style>\n"
-"</head>\n"
-"<body>\n"
-"  <div class=\"container\">\n"
-"    <div class=\"row\">\n"
-"      <div class=\"card\">\n"
-"          <ul class=\"nav nav-tabs\" role=\"tablist\" id=\"mainTabs\">\n"
-"          <li role=\"presentation\"><a href=\"#main\" aria-controls=\"main\" role=\"tab\" data-toggle=\"tab\"><span class=\"glyphicon glyphicon-info-sign\" aria-hidden=\"true\"></span> Übersicht</a></li>\n"
-"          <li role=\"presentation\" class=\"active\"><a href=\"#status\" aria-controls=\"status\" role=\"tab\" data-toggle=\"tab\"><span class=\"glyphicon glyphicon-dashboard\" aria-hidden=\"true\"></span> Status</a></li>\n"
-"          <li role=\"presentation\" id=\"tab-olsr2\" style=\"display:none\"><a href=\"#olsr2\" aria-controls=\"olsr2\" role=\"tab\" data-toggle=\"tab\"><span class=\"glyphicon glyphicon-dashboard\" aria-hidden=\"true\"></span> OLSRv2</a></li>\n"
-"          <li role=\"presentation\"><a href=\"#contact\" aria-controls=\"contact\" role=\"tab\" data-toggle=\"tab\"><span class=\"glyphicon glyphicon-user\" aria-hidden=\"true\"></span> Kontakt</a></li>\n"
-"          <li role=\"presentation\" id=\"tab-admin\" style=\"display:none\"><a href=\"#admin\" aria-controls=\"admin\" role=\"tab\" data-toggle=\"tab\"><span class=\"glyphicon glyphicon-user\" aria-hidden=\"true\"></span> Admin Login</a></li>\n"
-"        </ul>\n"
-"        <br>\n"
-"        <div class=\"tab-content\">\n"
-"          <!-- Main TAB -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane\" id=\"main\">\n"
-"            <div class=\"page-header\">\n"
-"              <h1 id=\"hostname\">Loading… <small id=\"ip\"></small></h1>\n"
-"            </div>\n"
-"            <div class=\"panel panel-default\">\n"
-"              <div class=\"panel-body\"><b>WAS?</b></div>\n"
-"              <div class=\"panel-footer\">FunkFeuer ist ein freies, experimentelles Netzwerk in Wien, Graz, der Weststeiermark, in Teilen des Weinviertels (NÖ) und in Bad Ischl. Es wird aufgebaut und betrieben von computerbegeisterten Menschen. Das Projekt verfolgt keine kommerziellen Interessen.</div>\n"
-"            </div>\n"
-"            <div class=\"panel panel-default\">\n"
-"              <div class=\"panel-body\"><b>FREI?</b></div>\n"
-"              <div class=\"panel-footer\">FunkFeuer ist offen für jeden und jede, der/die Interesse hat und bereit ist mitzuarbeiten. Es soll dabei ein nicht reguliertes Netzwerk entstehen, welches das Potential hat, den digitalen Graben zwischen den sozialen Schichten zu Überbrücken und so Infrastruktur und Wissen zur Verfügung zu stellen. Zur Teilnahme an FunkFeuer braucht man einen WLAN Router (gibt\'s ab 60 Euro) oder einen PC, das OLSR Programm, eine IP Adresse von FunkFeuer, etwas Geduld und Motivation. Auf unserer Karte ist eingezeichnet, wo man FunkFeuer schon überall (ungefähr) empfangen kann (bitte beachte, dass manchmal Häuser oder Ähnliches im Weg sind, dann geht\'s nur über Umwege).</div>\n"
-"            </div>\n"
-"          </div>\n"
-"          <!-- Status TAB -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane active\" id=\"status\">\n"
-"            <dl class=\"dl-horizontal\">\n"
-"              <dt>System Uptime <span class=\"glyphicon glyphicon-time\"></span></dt><dd id=\"uptime\">Loading…</dd>\n"
-"              <dt>IPv4 Default-Route <span class=\"glyphicon glyphicon-road\"></span></dt><dd id=\"default-route\">Loading…</dd>\n"
-"              <dt>mgmt Devices <span class=\"glyphicon glyphicon-signal\"></span></dt><dd>\n"
-"                <table class=\"table table-hover table-bordered table-condensed\" id=\"devicesTable\">\n"
-"                  <thead style=\"background-color:#f5f5f5;\">\n"
-"                    <tr>\n"
-"                      <th>Local IP</th>\n"
-"                      <th>Hostname</th>\n"
-"                      <th>Product</th>\n"
-"                      <th>Uptime</th>\n"
-"                      <th>Mode</th>\n"
-"                      <th>ESSID</th>\n"
-"                      <th>Firmware</th>\n"
-"                      <th>Wireless</th>\n"
-"                    </tr>\n"
-"                  </thead>\n"
-"                  <tbody></tbody>\n"
-"                </table>\n"
-"              </dd>\n"
-"              <dt>IPv4 OLSR-Links <span class=\"glyphicon glyphicon-link\"></span></dt>\n"
-"              <dd>\n"
-"                <div id=\"olsr-links-wrap\">\n"
-"                  <table class=\"table table-hover table-bordered table-condensed\" id=\"olsrLinksTable\">\n"
-"                    <thead style=\"background-color:#f5f5f5;\"><tr><th>Intf</th><th>Local IP</th><th>Remote IP</th><th>Remote Hostname</th><th>LQ</th><th>NLQ</th><th>Cost</th><th>routes</th><th>nodes</th></tr></thead>\n"
-"                    <tbody></tbody>\n"
-"                  </table>\n"
-"                </div>\n"
-"              </dd>\n"
-"              <dt>Trace to UPLINK <span class=\"glyphicon glyphicon-stats\"></span></dt><dd>\n"
-"                <table class=\"table table-hover table-bordered table-condensed\" id=\"tracerouteTable\">\n"
-"                  <thead style=\"background-color:#f5f5f5;\">\n"
-"                    <tr><th>#</th><th>IP Address</th><th>Hostname</th><th>Ping</th></tr>\n"
-"                  </thead>\n"
-"                  <tbody></tbody>\n"
-"                </table>\n"
-"              </dd>\n"
-"            </dl>\n"
-"          </div>\n"
-"          <!-- OLSRv2 TAB (hidden unless detected) -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane\" id=\"olsr2\">\n"
-"            <pre id=\"olsr2info\">Loading…</pre>\n"
-"          </div>\n"
-"          <!-- Contact TAB -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane\" id=\"contact\">\n"
-"            <div class=\"panel panel-default\">\n"
-"              <div class=\"panel-body\">Kontakt: <a href=\"mailto:office@funkfeuer.at\">office@funkfeuer.at</a></div>\n"
-"            </div>\n"
-"          </div>\n"
-"          <!-- Connections TAB -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane\" id=\"connections\">\n"
-"            <div class=\"row\" style=\"margin-bottom:8px\">\n"
-"              <div class=\"col-xs-8\">\n"
-"                <button id=\"refresh-connections\" class=\"btn btn-default btn-sm\">Refresh</button>\n"
-"                <span id=\"connections-status\" style=\"margin-left:12px\"></span>\n"
-"              </div>\n"
-"              <div class=\"col-xs-4 text-right\">\n"
-"                <div class=\"input-group input-group-sm\" style=\"width:260px; display:inline-block\">\n"
-"                  <input id=\"tr-host\" type=\"text\" class=\"form-control\" placeholder=\"Traceroute target (ip or host)\">\n"
-"                  <span class=\"input-group-btn\"><button id=\"tr-run\" class=\"btn btn-primary\">Trace</button></span>\n"
-"                </div>\n"
-"              </div>\n"
-"            </div>\n"
-"            <div id=\"connections-wrap\">\n"
-"              <table class=\"table table-hover table-bordered table-condensed\" id=\"connectionsTable\">\n"
-"                <thead style=\"background-color:#f5f5f5;\">\n"
-"                  <tr>\n"
-"                    <th data-key=\"port\">Port</th>\n"
-"                    <th data-key=\"bridge\">Bridge</th>\n"
-"                    <th data-key=\"macs\">MACs</th>\n"
-"                    <th data-key=\"ips\">IPs</th>\n"
-"                    <th data-key=\"hostname\">Hostname</th>\n"
-"                    <th data-key=\"notes\">Notes</th>\n"
-"                  </tr>\n"
-"                </thead>\n"
-"                <tbody></tbody>\n"
-"              </table>\n"
-"            </div>\n"
-"            <pre id=\"p-traceroute\" style=\"display:none; background:#111; color:#0f0; padding:12px; max-height:360px; overflow:auto\"></pre>\n"
-"          </div>\n"
-"          <!-- Versions TAB -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane\" id=\"versions\">\n"
-"            <div class=\"row\" style=\"margin-bottom:8px\">\n"
-"              <div class=\"col-xs-6\">\n"
-"                <button id=\"refresh-versions\" class=\"btn btn-default btn-sm\">Refresh</button>\n"
-"                <span id=\"versions-status\" style=\"margin-left:12px\"></span>\n"
-"              </div>\n"
-"            </div>\n"
-"            <div id=\"versions-wrap\">\n"
-"              <!-- friendly panel rendered by JS -->\n"
-"            </div>\n"
-"          </div>\n"
-"          <!-- Admin TAB (hidden unless detected) -->\n"
-"          <div role=\"tabpanel\" class=\"tab-pane\" id=\"admin\">\n"
-"            <div class=\"panel panel-default\">\n"
-"              <div class=\"panel-body\">Admin Login: <a id=\"adminLink\" href=\"#\">Loading…</a></div>\n"
-"            </div>\n"
-"          </div>\n"
-"        </div>\n"
-"      </div>\n"
-"    </div>\n"
-"  </div>\n"
-"  <script src=\"/js/jquery.min.js\"></script>\n"
-"  <script src=\"/js/bootstrap.min.js\"></script>\n"
-"  <script src=\"/js/app.js\"></script>\n"
-"</body>\n"
-"</html>\n";
+/* embedded index.html removed; assets are served from g_asset_root/www (see www/index.html) */
+
+/* Stubs for JSON/async handlers referenced during http server registration. */
+/* connections.json: return JSON produced by render_connections_json */
+static int h_connections_json(http_request_t *r) {
+  char *out = NULL; size_t n = 0;
+  if (render_connections_json(&out, &n) == 0 && out) {
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    http_write(r, out, n);
+    free(out);
+    return 0;
+  }
+  send_json(r, "{}\n");
+  return 0;
+}
+
+/* versions.json: run versions.sh (custom or packaged) and return JSON output */
+static int h_versions_json(http_request_t *r) {
+  char *out = NULL; size_t n = 0;
+  const char *custom = "/config/custom/versions.sh";
+  const char *packaged = "/usr/share/olsrd-status-plugin/versions.sh";
+  if (path_exists(custom)) {
+    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s", custom);
+    if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+      http_send_status(r, 200, "OK");
+      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+      http_write(r, out, n); free(out); return 0;
+    }
+  }
+  if (path_exists(packaged)) {
+    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s", packaged);
+    if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+      http_send_status(r, 200, "OK");
+      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+      http_write(r, out, n); free(out); return 0;
+    }
+  }
+  /* fallback: run versions.sh from repo root if present (development) */
+  if (path_exists("./versions.sh")) {
+    if (util_exec("./versions.sh", &out, &n) == 0 && out && n>0) {
+      http_send_status(r, 200, "OK");
+      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+      http_write(r, out, n); free(out); return 0;
+    }
+  }
+  send_json(r, "{}\n");
+  return 0;
+}
+
+/* traceroute: run traceroute binary if available and return stdout as plain text */
+static int h_traceroute(http_request_t *r) {
+  char target[256] = "";
+  (void)get_query_param(r, "target", target, sizeof(target));
+  if (!target[0]) { send_text(r, "No target provided\n"); return 0; }
+  if (!g_has_traceroute || !g_traceroute_path[0]) { send_text(r, "traceroute not available\n"); return 0; }
+  char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -n %s 2>&1", g_traceroute_path, target);
+  char *out = NULL; size_t n = 0;
+  if (util_exec(cmd, &out, &n) == 0 && out) {
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
+    http_write(r, out, n);
+    free(out);
+    return 0;
+  }
+  send_text(r, "error running traceroute\n");
+  return 0;
+}
 
 
 
@@ -1014,8 +612,8 @@ void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, 
 int olsrd_plugin_init(void) {
   log_asset_permissions();
   /* detect availability of optional external tools without failing startup */
-  const char *ubnt_candidates[] = { "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", NULL };
-  const char *tracer_candidates[] = { "/usr/sbin/traceroute", "/bin/traceroute", "/usr/bin/traceroute", NULL };
+  const char *ubnt_candidates[] = { "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", "/usr/local/sbin/ubnt-discover", "/usr/local/bin/ubnt-discover", "/opt/ubnt/ubnt-discover", NULL };
+  const char *tracer_candidates[] = { "/usr/sbin/traceroute", "/bin/traceroute", "/usr/bin/traceroute", "/usr/local/bin/traceroute", NULL };
   const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
   for (const char **p = ubnt_candidates; *p; ++p) { if (path_exists(*p)) { g_has_ubnt_discover = 1; snprintf(g_ubnt_discover_path, sizeof(g_ubnt_discover_path), "%s", *p); break; } }
   for (const char **p = tracer_candidates; *p; ++p) { if (path_exists(*p)) { g_has_traceroute = 1; snprintf(g_traceroute_path, sizeof(g_traceroute_path), "%s", *p); break; } }
@@ -1034,6 +632,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/txtinfo",  &h_txtinfo);
   http_server_register_handler("/jsoninfo", &h_jsoninfo);
   http_server_register_handler("/olsrd",    &h_olsrd);
+  http_server_register_handler("/olsr2",    &h_olsrd);
   http_server_register_handler("/discover", &h_discover);
   http_server_register_handler("/js/app.js", &h_embedded_appjs);
   http_server_register_handler("/js/jquery.min.js", &h_emb_jquery);
@@ -1074,14 +673,11 @@ static int get_query_param(http_request_t *r, const char *key, char *out, size_t
 }
 
 static int h_embedded_index(http_request_t *r) {
-  http_send_status(r, 200, "OK");
-  http_printf(r, "Content-Type: text/html; charset=utf-8\r\n\r\n");
-  http_write(r, embedded_index_html, sizeof(embedded_index_html)-1);
-  return 0;
+  return http_send_file(r, g_asset_root, "index.html", NULL);
 }
 
 static int h_root(http_request_t *r) {
-  /* Always serve embedded index.html so "/" matches the packaged index exactly */
+  /* Serve index.html from asset root (www/index.html) */
   return h_embedded_index(r);
 }
 

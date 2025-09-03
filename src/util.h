@@ -8,4 +8,5 @@ int util_file_exists(const char *path);
 int path_exists(const char *p);
 int env_is_edgerouter(void);
 int render_connections_plain(char **buf_out, size_t *len_out);
+int render_connections_json(char **buf_out, size_t *len_out);
 #endif
