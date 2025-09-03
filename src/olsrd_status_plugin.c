@@ -488,6 +488,19 @@ static int h_status(http_request_t *r) {
       if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
     }
   }
+  /* additionally try to fetch neighbors, routes and topology JSON for inclusion in /status */
+  char *olsr_neighbors_raw = NULL; size_t olnn = 0;
+  char *olsr_routes_raw = NULL; size_t olr = 0;
+  char *olsr_topology_raw = NULL; size_t olt = 0;
+  if (!olsr_neighbors_raw) {
+    if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn) != 0) { if (olsr_neighbors_raw) { free(olsr_neighbors_raw); olsr_neighbors_raw = NULL; olnn = 0; } }
+  }
+  if (!olsr_routes_raw) {
+    if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr) != 0) { if (olsr_routes_raw) { free(olsr_routes_raw); olsr_routes_raw = NULL; olr = 0; } }
+  }
+  if (!olsr_topology_raw) {
+    if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt) != 0) { if (olsr_topology_raw) { free(olsr_topology_raw); olsr_topology_raw = NULL; olt = 0; } }
+  }
 
   /* Build JSON */
   APPEND("{");
@@ -620,6 +633,11 @@ static int h_status(http_request_t *r) {
     APPEND("\"neighbors\":[],");
   }
   APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
+
+  /* include raw olsr JSON for neighbors/routes/topology when available to mimic python script */
+  if (olsr_neighbors_raw && olnn>0) { APPEND(",\"olsr_neighbors_raw\":%s", olsr_neighbors_raw); }
+  if (olsr_routes_raw && olr>0) { APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw); }
+  if (olsr_topology_raw && olt>0) { APPEND(",\"olsr_topology_raw\":%s", olsr_topology_raw); }
 
   /* include pidof output for diagnostics when present */
   if (pout && pn>0) {
