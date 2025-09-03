@@ -1164,6 +1164,7 @@ int olsrd_plugin_init(void) {
     return 1;
   }
   http_server_register_handler("/",         &h_root);
+  http_server_register_handler("/index.html", &h_root);
   http_server_register_handler("/ipv4",     &h_ipv4);
   http_server_register_handler("/ipv6",     &h_ipv6);
   http_server_register_handler("/status",   &h_status);
