@@ -97,7 +97,10 @@ function updateUI(data) {
   setText('hostname', data.hostname || 'Unknown');
   setText('ip', data.ip || '');
   setText('uptime', data.uptime || '');
+  setText('dl-uptime', data.uptime || '');
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
+  try { setText('main-host', data.hostname || ''); } catch(e) {}
+  try { populateNavHost(data.hostname || '', data.ip || ''); } catch(e) {}
   // render default route if available (hostname link + ip link + device)
   try {
     if (data.default_route && (data.default_route.ip || data.default_route.dev || data.default_route.hostname)) {
@@ -110,6 +113,7 @@ function updateUI(data) {
       var html = parts.join(' ');
       if (dev) html += ' via ' + dev;
       setHTML('default-route', html);
+      setHTML('dl-default-route', html);
     } else {
       setText('default-route', 'n/a');
     }
@@ -134,6 +138,13 @@ function detectPlatformAndLoad() {
   fetch('/capabilities', {cache: 'no-store'})
     .then(r => r.json())
     .then(caps => {
+      // show/hide traceroute tab
+      try {
+        var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
+        if (trTab) trTab.parentElement.style.display = (caps.traceroute? '': 'none');
+        var adminTabLink = document.getElementById('tab-admin-link');
+        if (adminTabLink) adminTabLink.style.display = (caps.show_admin_link? '' : 'none');
+      } catch(e){}
       var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsr2info: '', admin: null };
       fetch('/status', {cache: 'no-store'})
         .then(r => r.json())
@@ -158,6 +169,13 @@ function detectPlatformAndLoad() {
           if (status.admin_url) {
             data.admin = { url: status.admin_url };
             updateUI(data);
+            setLoginLink(status.admin_url);
+          }
+          // older code used status.admin_url; also support status.admin.url
+          if (status.admin && status.admin.url) {
+            data.admin = { url: status.admin.url };
+            updateUI(data);
+            setLoginLink(status.admin.url);
           }
           var nodedb = {};
           fetch('/nodedb.json',{cache:'no-store'}).then(r=>r.json()).then(nb=>{ nodedb = nb || {}; }).catch(()=>{ nodedb = {}; });
@@ -225,6 +243,23 @@ document.addEventListener('DOMContentLoaded', function() {
   detectPlatformAndLoad();
 });
 
+// Populate dynamic nav entries (host + login) after status load
+function populateNavHost(host, ip) {
+  var el = document.getElementById('nav-host');
+  if (!el) return;
+  el.innerHTML = ip + ' - ' + host;
+}
+
+function setLoginLink(url, port) {
+  var nav = document.getElementById('nav-login');
+  var link = document.getElementById('nav-login-link');
+  if (!nav || !link) return;
+  if (!url) { nav.style.display = 'none'; return; }
+  // if port provided, include it
+  link.href = url;
+  nav.style.display = '';
+}
+
 function renderConnectionsTable(c, nodedb) {
   var tbody = document.querySelector('#connectionsTable tbody');
   tbody.innerHTML = '';
@@ -250,12 +285,19 @@ function renderVersionsPanel(v) {
   var wrap = document.getElementById('versions-wrap'); if(!wrap) return; wrap.innerHTML='';
   if(!v) { wrap.textContent = 'No versions data'; return; }
   var dl = document.createElement('dl'); dl.className='dl-horizontal';
-  function add(k,label){ var dt=document.createElement('dt'); dt.textContent=label||k; var dd=document.createElement('dd'); dd.textContent=(v[k]!==undefined?v[k]:'-'); dl.appendChild(dt); dl.appendChild(dd); }
-  add('hostname','Hostname');
-  add('firmware','Firmware');
-  add('kernel','Kernel');
-  add('model','Model');
-  add('autoupdate','AutoUpdate');
+  function add(k,label){ var dt=document.createElement('dt'); dt.textContent=label||k; var dd=document.createElement('dd');
+    var val = v[k];
+    if (val === undefined) dd.textContent = '-';
+    else if (typeof val === 'object') dd.textContent = JSON.stringify(val);
+    else dd.textContent = String(val);
+    dl.appendChild(dt); dl.appendChild(dd); }
+
+  // preferred ordering to match bmk-webstatus.py output when present
+  var preferred = ['hostname','firmware','kernel','model','autoupdate','wizards','local_ips'];
+  var used = {};
+  preferred.forEach(function(k){ if (v[k] !== undefined) { add(k, k==='local_ips' ? 'Local IPs' : (k==='wizards' ? 'Wizards' : (k==='autoupdate' ? 'AutoUpdate' : k.charAt(0).toUpperCase()+k.slice(1)))); used[k]=1; } });
+  // add remaining keys
+  Object.keys(v).sort().forEach(function(k){ if (!used[k]) add(k); });
   var pre = document.createElement('pre'); pre.style.maxHeight='240px'; pre.style.overflow='auto'; pre.textContent = JSON.stringify(v,null,2);
   wrap.appendChild(dl); wrap.appendChild(pre);
 }

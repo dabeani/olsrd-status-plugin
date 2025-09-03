@@ -21,6 +21,13 @@
 
 #include <stdarg.h>
 
+/* helper: return 1 if buffer contains any non-whitespace byte */
+static int buffer_has_content(const char *b, size_t n) {
+  if (!b || n == 0) return 0;
+  for (size_t i = 0; i < n; i++) if (!isspace((unsigned char)b[i])) return 1;
+  return 0;
+}
+
 /* JSON buffer helpers used by h_status and other responders */
 static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
   va_list ap; char *t = NULL; int n;
@@ -317,9 +324,19 @@ static int h_status(http_request_t *r) {
   APPEND("\"uptime\":\"%ld\",", uptime_seconds);
 
   /* default_route */
+  /* attempt reverse DNS for default route IP to provide a hostname for the gateway */
+  char def_hostname[256] = "";
+  if (def_ip[0]) {
+    struct in_addr ina;
+    if (inet_aton(def_ip, &ina)) {
+      struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
+      if (he && he->h_name) snprintf(def_hostname, sizeof(def_hostname), "%s", he->h_name);
+    }
+  }
   APPEND("\"default_route\":{");
   APPEND("\"ip\":"); json_append_escaped(&buf, &len, &cap, def_ip); APPEND(",");
-  APPEND("\"dev\":"); json_append_escaped(&buf, &len, &cap, def_dev);
+  APPEND("\"dev\":"); json_append_escaped(&buf, &len, &cap, def_dev); APPEND(",");
+  APPEND("\"hostname\":"); json_append_escaped(&buf, &len, &cap, def_hostname);
   APPEND("},");
 
   /* devices: leave empty array for now (can be populated from ubnt-discover later) */
@@ -374,7 +391,10 @@ static int h_status(http_request_t *r) {
             }
           }
         }
-        if (!nl) break; line = nl + 1;
+        if (!nl) {
+          break;
+        }
+        line = nl + 1;
       }
       free(s);
     }
@@ -403,55 +423,61 @@ static int h_status(http_request_t *r) {
 
   /* include fixed traceroute-to-uplink output (mimic python behavior) */
   if (traceroute_to[0] && g_has_traceroute) {
-    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -4 -w 1 -q 1 %s", g_traceroute_path[0]?g_traceroute_path:"traceroute", traceroute_to);
-    char *tout = NULL; size_t t_n = 0;
-    if (util_exec(cmd, &tout, &t_n) == 0 && tout && t_n>0) {
-      /* parse lines into simple objects */
-      APPEND(",\"trace_target\":"); json_append_escaped(&buf,&len,&cap,traceroute_to);
-      APPEND(",\"trace_to_uplink\":[");
-      char *p = tout; char *line; int first = 1;
-      while ((line = strsep(&p, "\n")) != NULL) {
-        if (!line || !*line) continue;
-        /* skip header line starting with 'traceroute to' */
-        if (strstr(line, "traceroute to") == line) continue;
-        /* tokenize */
-        char *copy = strdup(line);
-        char *tok = NULL; char *save = NULL; int idx = 0;
-        char hop[16] = ""; char ip[64] = ""; char host[256] = ""; char ping[64] = "";
-        tok = strtok_r(copy, " \t", &save);
-        while (tok) {
-          if (idx == 0) { snprintf(hop, sizeof(hop), "%s", tok); }
-          else if (idx == 1) {
-            /* could be hostname or ip */
-            if (tok[0] == '(') {
-              /* unexpected, skip */
+    const char *trpath = (g_traceroute_path[0]) ? g_traceroute_path : "traceroute";
+    size_t cmdlen = strlen(trpath) + strlen(traceroute_to) + 64;
+    char *cmd = (char*)malloc(cmdlen);
+    if (cmd) {
+      snprintf(cmd, cmdlen, "%s -4 -w 1 -q 1 %s", trpath, traceroute_to);
+      char *tout = NULL; size_t t_n = 0;
+      if (util_exec(cmd, &tout, &t_n) == 0 && tout && t_n>0) {
+        /* parse lines into simple objects */
+        APPEND(",\"trace_target\":"); json_append_escaped(&buf,&len,&cap,traceroute_to);
+        APPEND(",\"trace_to_uplink\":[");
+        char *p = tout; char *line; int first = 1;
+        while ((line = strsep(&p, "\n")) != NULL) {
+          if (!line || !*line) continue;
+          /* skip header line starting with 'traceroute to' */
+          if (strstr(line, "traceroute to") == line) continue;
+          /* tokenize */
+          char *copy = strdup(line);
+          char *tok = NULL; char *save = NULL; int idx = 0;
+          char hop[16] = ""; char ip[64] = ""; char host[256] = ""; char ping[64] = "";
+          tok = strtok_r(copy, " \t", &save);
+          while (tok) {
+            if (idx == 0) { snprintf(hop, sizeof(hop), "%s", tok); }
+            else if (idx == 1) {
+              /* could be hostname or ip */
+              if (tok[0] == '(') {
+                /* unexpected, skip */
+              } else {
+                /* store as ip for now */
+                snprintf(ip, sizeof(ip), "%s", tok);
+              }
+            } else if (idx == 2) {
+              /* maybe ip in parentheses or first ping */
+              if (tok[0] == '(') {
+                /* strip parentheses */
+                char *endp = strchr(tok, ')');
+                if (endp) { *endp = 0; snprintf(host, sizeof(host), "%s", tok+1); }
+              } else if (!ping[0]) {
+                snprintf(ping, sizeof(ping), "%s", tok);
+              }
             } else {
-              /* store as ip for now */
-              snprintf(ip, sizeof(ip), "%s", tok);
+              if (!ping[0] && strchr(tok, 'm')) { snprintf(ping, sizeof(ping), "%s", tok); }
             }
-          } else if (idx == 2) {
-            /* maybe ip in parentheses or first ping */
-            if (tok[0] == '(') {
-              /* strip parentheses */
-              char *endp = strchr(tok, ')');
-              if (endp) { *endp = 0; snprintf(host, sizeof(host), "%s", tok+1); }
-            } else if (!ping[0]) {
-              snprintf(ping, sizeof(ping), "%s", tok);
-            }
-          } else {
-            if (!ping[0] && strchr(tok, 'm')) { snprintf(ping, sizeof(ping), "%s", tok); }
+            idx++; tok = strtok_r(NULL, " \t", &save);
           }
-          idx++; tok = strtok_r(NULL, " \t", &save);
+          free(copy);
+          if (!first) APPEND(","); first = 0;
+          APPEND("{\"hop\":%s,\"ip\":", hop); json_append_escaped(&buf,&len,&cap, ip);
+          APPEND(",\"host\":"); json_append_escaped(&buf,&len,&cap, host);
+          APPEND(",\"ping\":"); json_append_escaped(&buf,&len,&cap, ping);
+          APPEND("}");
         }
-        free(copy);
-        if (!first) APPEND(","); first = 0;
-        APPEND("{\"hop\":%s,\"ip\":", hop); json_append_escaped(&buf,&len,&cap, ip);
-        APPEND(",\"host\":"); json_append_escaped(&buf,&len,&cap, host);
-        APPEND(",\"ping\":"); json_append_escaped(&buf,&len,&cap, ping);
-        APPEND("}");
+        APPEND("]");
+        free(tout);
       }
-      APPEND("]");
-      free(tout);
+      free(cmd);
     }
   }
 
@@ -502,17 +528,24 @@ static int h_nodedb(http_request_t *r) {
   const char *local_custom = "/config/custom/node_db.json";
   const char *tmp_local = "/tmp/node_db.json";
   if (path_exists(local_custom)) {
-    if (util_read_file(local_custom, &out, &n) == 0 && out && n>0) {
+    if (util_read_file(local_custom, &out, &n) == 0 && out && buffer_has_content(out, n)) {
       http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
     }
+    if (out) { free(out); out = NULL; n = 0; }
   }
   if (path_exists(tmp_local)) {
-    if (util_read_file(tmp_local, &out, &n) == 0 && out && n>0) {
+    if (util_read_file(tmp_local, &out, &n) == 0 && out && buffer_has_content(out, n)) {
       http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
     }
+    if (out) { free(out); out = NULL; n = 0; }
   }
   /* attempt remote fetch via curl */
-  if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &out, &n) == 0 && out && n>0) {
+  if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &out, &n) == 0 && out && buffer_has_content(out, n)) {
+    http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
+  }
+  if (out) { free(out); out = NULL; n = 0; }
+  /* try arp-based fallback */
+  if (devices_from_arp_json(&out, &n) == 0 && out && n>0) {
     http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
   }
   send_json(r, "{}\n");
@@ -530,8 +563,36 @@ static int h_capabilities_local(http_request_t *r) {
   int airos = path_exists("/tmp/10-all.json");
   int discover = g_has_ubnt_discover ? 1 : 0;
   int tracer = g_has_traceroute ? 1 : 0;
-  char buf[256]; snprintf(buf, sizeof(buf), "{\"is_edgerouter\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s}",
-    g_is_edgerouter?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false");
+  /* also expose show_link_to_adminlogin if set in settings.inc */
+  int show_admin = 0;
+  {
+    char *s = NULL; size_t sn = 0;
+    if (util_read_file("/config/custom/www/settings.inc", &s, &sn) == 0 && s && sn>0) {
+      /* find the line containing show_link_to_adminlogin and parse its value */
+      const char *p = s; const char *end = s + sn;
+      while (p && p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        size_t linelen = nl ? (size_t)(nl - p) : (size_t)(end - p);
+        if (linelen > 0 && memmem(p, linelen, "show_link_to_adminlogin", strlen("show_link_to_adminlogin"))) {
+          const char *eq = memchr(p, '=', linelen);
+          if (eq) {
+            const char *v = eq + 1; size_t vlen = (size_t)(p + linelen - v);
+            /* trim whitespace and quotes/semicolons */
+            while (vlen && (v[vlen-1]=='\n' || v[vlen-1]=='\r' || v[vlen-1]==' ' || v[vlen-1]=='\'' || v[vlen-1]=='"' || v[vlen-1]==';')) vlen--;
+            while (vlen && (*v==' ' || *v=='\'' || *v=='"')) { v++; vlen--; }
+            if (vlen > 0) {
+              char tmp[32]={0}; size_t copy = vlen < sizeof(tmp)-1 ? vlen : sizeof(tmp)-1; memcpy(tmp, v, copy); tmp[copy]=0;
+              if (atoi(tmp) != 0) show_admin = 1;
+            }
+          }
+        }
+        if (!nl) break; p = nl + 1;
+      }
+      free(s);
+    }
+  }
+  char buf[320]; snprintf(buf, sizeof(buf), "{\"is_edgerouter\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s,\"show_admin_link\":%s}",
+    g_is_edgerouter?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false", show_admin?"true":"false");
   send_json(r, buf);
   return 0;
 }
@@ -595,27 +656,30 @@ static int h_versions_json(http_request_t *r) {
   const char *packaged = "/usr/share/olsrd-status-plugin/versions.sh";
   if (path_exists(custom)) {
     char cmd[512]; snprintf(cmd, sizeof(cmd), "%s", custom);
-    if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+  if (util_exec(cmd, &out, &n) == 0 && out && buffer_has_content(out, n)) {
       http_send_status(r, 200, "OK");
       http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
       http_write(r, out, n); free(out); return 0;
     }
+  if (out) { free(out); out = NULL; n = 0; }
   }
   if (path_exists(packaged)) {
     char cmd[512]; snprintf(cmd, sizeof(cmd), "%s", packaged);
-    if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+  if (util_exec(cmd, &out, &n) == 0 && out && buffer_has_content(out, n)) {
       http_send_status(r, 200, "OK");
       http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
       http_write(r, out, n); free(out); return 0;
     }
+  if (out) { free(out); out = NULL; n = 0; }
   }
   /* fallback: run versions.sh from repo root if present (development) */
   if (path_exists("./versions.sh")) {
-    if (util_exec("./versions.sh", &out, &n) == 0 && out && n>0) {
+  if (util_exec("./versions.sh", &out, &n) == 0 && out && buffer_has_content(out, n)) {
       http_send_status(r, 200, "OK");
       http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
       http_write(r, out, n); free(out); return 0;
     }
+  if (out) { free(out); out = NULL; n = 0; }
   }
   send_json(r, "{}\n");
   return 0;

@@ -25,6 +25,10 @@ int util_exec(const char *cmd, char **out, size_t *outlen) {
     len += n;
   }
   pclose(fp);
+  /* null-terminate the returned buffer for safety */
+  char *nb = (char*)realloc(buf, len + 1);
+  if (nb) buf = nb;
+  buf[len] = '\0';
   *out = buf;
   *outlen = len;
   return 0;
@@ -38,9 +42,13 @@ int util_read_file(const char *path, char **out, size_t *outlen) {
   long sz = ftell(f);
   fseek(f, 0, SEEK_SET);
   if (sz < 0) { fclose(f); return -1; }
-  char *buf = (char*)malloc((size_t)sz);
+  /* allocate one extra byte for a terminating NUL to make the buffer string-safe */
+  char *buf = (char*)malloc((size_t)sz + 1);
   if (!buf) { fclose(f); return -1; }
-  if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) { free(buf); fclose(f); return -1; }
+  if (sz > 0) {
+    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) { free(buf); fclose(f); return -1; }
+  }
+  buf[(size_t)sz] = '\0';
   fclose(f);
   *out = buf;
   *outlen = (size_t)sz;

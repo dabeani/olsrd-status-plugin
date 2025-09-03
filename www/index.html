@@ -7,11 +7,15 @@
     <!-- Bootstrap CSS (CDN) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css">
     <style>
-      body { padding: 20px; }
-      .tab-pane { display: none; }
-      .tab-pane.active { display: block; }
-      pre { background:#f8f8f8; padding:10px; border:1px solid #ddd; }
-      .small-muted { font-size:90%; color:#666; }
+  body { padding: 20px; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+  pre { background:#f8f8f8; padding:10px; border:1px solid #ddd; }
+  .small-muted { font-size:90%; color:#666; }
+  .dl-horizontal dt { width:200px; }
+  .page-header h1 { margin-bottom:6px; }
+  .table-condensed th, .table-condensed td { padding:6px; }
+  .table-hover > tbody > tr:hover { background-color:#f5f5f5; }
     </style>
   </head>
   <body>
@@ -19,27 +23,31 @@
       <div class="page-header">
         <h1 id="hostname">Hostname</h1>
         <p class="small-muted">IP: <span id="ip"></span> &nbsp; Uptime: <span id="uptime"></span></p>
-        <p>Default route: <span id="default-route">n/a</span></p>
       </div>
 
-      <!-- Tabs -->
+      <!-- Tabs (matching bmk-webstatus.py ordering and labels) -->
       <ul id="mainTabs" class="nav nav-tabs">
-        <li class="active"><a href="#tab-status">Status</a></li>
-        <li><a href="#tab-olsr">OLSR Links</a></li>
-        <li><a href="#tab-connections">Connections</a></li>
-        <li><a href="#tab-versions">Versions</a></li>
-        <li><a href="#tab-json">Raw JSON</a></li>
-        <li><a href="#tab-traceroute">Traceroute</a></li>
-        <li id="tab-admin-link" style="display:none"><a href="#tab-admin">Admin</a></li>
-        <li id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2">OLSR2</a></li>
+        <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
+        <li role="presentation" class="active"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status</a></li>
+        <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
+        <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
+        <li id="nav-host" style="float:right; padding:8px 12px;"></li>
+        <li id="nav-login" style="float:right; display:none; padding:6px 12px;"><a id="nav-login-link" href="#" target="_blank"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Login</a></li>
       </ul>
 
       <div class="tab-content" style="margin-top:15px">
         <!-- Status -->
         <div id="tab-status" class="tab-pane active">
-          <h3>Devices</h3>
+          <dl class="dl-horizontal">
+            <dt>System Uptime <span class="glyphicon glyphicon-time" aria-hidden="true"></span></dt>
+            <dd><span id="dl-uptime">-</span></dd>
+            <dt>IPv4 Default-Route <span class="glyphicon glyphicon-transfer" aria-hidden="true"></span></dt>
+            <dd><span id="dl-default-route"><span id="default-route">n/a</span></span></dd>
+            <dt>mgmt Devices <span class="glyphicon glyphicon-signal" aria-hidden="true"></span></dt>
+            <dd>
+          </dl>
           <div class="table-responsive">
-            <table id="devicesTable" class="table table-striped table-condensed">
+            <table id="devicesTable" class="table table-hover table-bordered table-condensed">
               <thead>
                 <tr>
                   <th>Local (IP / HW)</th>
@@ -55,6 +63,27 @@
               <tbody></tbody>
             </table>
           </div>
+        </div>
+
+        <!-- Main / Willkommen -->
+        <div id="tab-main" class="tab-pane">
+          <div class="page-header">
+            <h1>Willkommen auf <span id="main-host"> </span></h1>
+          </div>
+          <div class="panel panel-default">
+            <div class="panel-body"><b>WAS?</b></div>
+            <div class="panel-footer">FunkFeuer ist ein freies, experimentelles Netzwerk in Wien, Graz, der Weststeiermark, in Teilen des Weinviertels (N&Ouml;) und in Bad Ischl. Es wird aufgebaut und betrieben von computerbegeisterten Menschen. Das Projekt verfolgt keine kommerziellen Interessen.</div>
+          </div>
+          <div class="panel panel-default">
+            <div class="panel-body"><b>FREI?</b></div>
+            <div class="panel-footer">FunkFeuer ist offen f&uuml;r jeden und jede, der/die Interesse hat und bereit ist mitzuarbeiten. Es soll dabei ein nicht reguliertes Netzwerk entstehen, welches das Potential hat, den digitalen Graben zwischen den sozialen Schichten zu &Uuml;berbr&uuml;cken und so Infrastruktur und Wissen zur Verf&uuml;gung zu stellen. Zur Teilnahme an FunkFeuer braucht man einen WLAN Router (gibt's ab 60 Euro) oder einen PC, das OLSR Programm, eine IP Adresse von FunkFeuer, etwas Geduld und Motivation. Auf unserer Karte ist eingezeichnet, wo man FunkFeuer schon &Uuml;berall (ungef&auml;r) empfangen kann (bitte beachte, dass manchmal H&auml;user oder &Auml;hnliches im Weg sind, dann geht's nur &uuml;ber Umwege).</div>
+          </div>
+        </div>
+
+        <!-- Contact -->
+        <div id="tab-contact" class="tab-pane">
+          <h3>Kontakt</h3>
+          <p>Kontaktinformationen...</p>
         </div>
 
         <!-- OLSR Links -->
