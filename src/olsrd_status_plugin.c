@@ -106,6 +106,7 @@ static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, co
 extern int g_is_edgerouter;
 extern int g_has_traceroute;
 extern char g_traceroute_path[];
+static int g_is_linux_container = 0;
 
 
 /* Return first existing path from candidates or NULL */
@@ -458,7 +459,7 @@ static int h_status(http_request_t *r) {
   /* default route: parse `ip route show default` */
   char def_ip[64] = ""; char def_dev[64] = "";
   char *rout = NULL; size_t rn = 0;
-  if (util_exec("/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout && rn>0) {
+  if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout && rn>0) {
     /* sample: default via 78.41.115.1 dev eth0 proto static
        find 'via' and 'dev' tokens */
     char *p = strstr(rout, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def_ip)) { strncpy(def_ip, p, L); def_ip[L]=0; } } }
@@ -543,18 +544,26 @@ static int h_status(http_request_t *r) {
 
   /* include versions.sh output under "versions" if available */
   char *vout = NULL; size_t vn = 0;
+  int versions_loaded = 0;
+  
+  /* Try EdgeRouter path first */
   if (path_exists("/config/custom/versions.sh")) {
     if (util_exec("/config/custom/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
+      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
     }
   } else if (path_exists("/usr/share/olsrd-status-plugin/versions.sh")) {
     if (util_exec("/usr/share/olsrd-status-plugin/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
+      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
     }
   } else if (path_exists("./versions.sh")) {
     if (util_exec("./versions.sh", &vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL;
+      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
     }
+  }
+  
+  if (!versions_loaded) {
+    /* Provide basic fallback versions for Linux container */
+    APPEND("\"versions\":{\"olsrd\":\"unknown\",\"system\":\"linux-container\"},");
   }
   /* attempt to read traceroute_to from settings.inc (same path as python reference) */
     /* attempt to read traceroute_to from settings.inc (same path as python reference)
@@ -868,8 +877,8 @@ static int h_capabilities_local(http_request_t *r) {
       free(s);
     }
   }
-  char buf[320]; snprintf(buf, sizeof(buf), "{\"is_edgerouter\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s,\"show_admin_link\":%s}",
-    g_is_edgerouter?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false", show_admin?"true":"false");
+  char buf[320]; snprintf(buf, sizeof(buf), "{\"is_edgerouter\":%s,\"is_linux_container\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s,\"show_admin_link\":%s}",
+    g_is_edgerouter?"true":"false", g_is_linux_container?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false", show_admin?"true":"false");
   send_json(r, buf);
   return 0;
 }
@@ -887,6 +896,7 @@ char g_olsrd_path[PATHLEN] = "";
 #include "util.h"
 #include "olsrd_plugin.h"
 int env_is_edgerouter(void);
+int env_is_linux_container(void);
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1236,6 +1246,10 @@ int olsrd_plugin_init(void) {
   for (const char **p = tracer_candidates; *p; ++p) { if (path_exists(*p)) { g_has_traceroute = 1; snprintf(g_traceroute_path, sizeof(g_traceroute_path), "%s", *p); break; } }
   for (const char **p = olsrd_candidates; *p; ++p) { if (path_exists(*p)) { snprintf(g_olsrd_path, sizeof(g_olsrd_path), "%s", *p); break; } }
   g_is_edgerouter = env_is_edgerouter();
+  g_is_linux_container = env_is_linux_container();
+  
+  fprintf(stderr, "[status-plugin] environment detection: edgerouter=%s, linux_container=%s\n", 
+          g_is_edgerouter ? "yes" : "no", g_is_linux_container ? "yes" : "no");
 
   /* Try to detect local www directory for development */
   if (!path_exists(g_asset_root) || !path_exists(g_asset_root)) {
@@ -1314,7 +1328,7 @@ static int h_root(http_request_t *r) {
 
 static int h_ipv4(http_request_t *r) {
   char *out=NULL; size_t n=0;
-  const char *cmd = "/sbin/ip -4 a && echo && /sbin/ip -4 neigh && echo && /usr/sbin/brctl show";
+  const char *cmd = "/sbin/ip -4 a 2>/dev/null || /usr/sbin/ip -4 a 2>/dev/null || ip -4 a 2>/dev/null && echo && /sbin/ip -4 neigh 2>/dev/null || /usr/sbin/ip -4 neigh 2>/dev/null || ip -4 neigh 2>/dev/null && echo && /usr/sbin/brctl show 2>/dev/null || /sbin/brctl show 2>/dev/null || brctl show 2>/dev/null";
   if (util_exec(cmd, &out, &n)==0 && out) {
     http_send_status(r, 200, "OK");
     http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
@@ -1325,7 +1339,7 @@ static int h_ipv4(http_request_t *r) {
 }
 static int h_ipv6(http_request_t *r) {
   char *out=NULL; size_t n=0;
-  const char *cmd = "/sbin/ip -6 a && echo && /sbin/ip -6 neigh && echo && /usr/sbin/brctl show";
+  const char *cmd = "/sbin/ip -6 a 2>/dev/null || /usr/sbin/ip -6 a 2>/dev/null || ip -6 a 2>/dev/null && echo && /sbin/ip -6 neigh 2>/dev/null || /usr/sbin/ip -6 neigh 2>/dev/null || ip -6 neigh 2>/dev/null && echo && /usr/sbin/brctl show 2>/dev/null || /sbin/brctl show 2>/dev/null || brctl show 2>/dev/null";
   if (util_exec(cmd, &out, &n)==0 && out) {
     http_send_status(r, 200, "OK");
     http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
@@ -1483,6 +1497,21 @@ static int h_connections(http_request_t *r) {
 
   // Fallback to custom external script for compatibility
   if (util_exec("/config/custom/connections.sh", &out, &n) == 0 && out && n > 0) {
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
+    http_write(r, out, n);
+    free(out);
+    return 0;
+  }
+  // Try Linux container paths
+  if (util_exec("/usr/share/olsrd-status-plugin/connections.sh", &out, &n) == 0 && out && n > 0) {
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
+    http_write(r, out, n);
+    free(out);
+    return 0;
+  }
+  if (util_exec("./connections.sh", &out, &n) == 0 && out && n > 0) {
     http_send_status(r, 200, "OK");
     http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
     http_write(r, out, n);

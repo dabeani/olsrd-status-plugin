@@ -8,6 +8,7 @@ The build must be completely free of warnings and errors.
 All backend data sources (ubnt-discover, OLSRd API, ARP, etc.) must be detected and used; fallback logic must work.
 If anything is missing, broken, or not shown in the UI, I must diagnose and fix it, including guiding you through system setup if needed.
 I must keep going until everything works and matches the reference, without asking what to do next.
+scripts like versions.sh or connections should be implemented into the sourcecode of the plugin and not in a separate script which leads to issues!
 
 important:
 the bmk-webstatus.py script is running usually on ubiquiti edgerouters, therefore it needs to be converted to a linux (busybox/alpine) container which is not related to ubiquiti. there need to be a autodetect funtionality which recognize if its ubiquiti edgerouter (for parameters), or if its a linux container. 
