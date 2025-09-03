@@ -151,7 +151,7 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
  * Searches for '"key"' after 'start' and returns the pointer to the value (not allocated) and length in val_len.
  * Returns 1 on success, 0 otherwise.
  */
-static int find_json_string_value(const char *start, const char *key, const char **val, size_t *val_len) {
+static int find_json_string_value(const char *start, const char *key, char **val, size_t *val_len) {
   if (!start || !key || !val || !val_len) return 0;
   char needle[128]; snprintf(needle, sizeof(needle), "\"%s\"", key);
   const char *p = start;
@@ -164,7 +164,7 @@ static int find_json_string_value(const char *start, const char *key, const char
       q++; const char *vstart = q; const char *r = q;
       while (*r) {
         if (*r == '\\' && r[1]) { r += 2; continue; }
-        if (*r == '"') { *val = vstart; *val_len = (size_t)(r - vstart); return 1; }
+        if (*r == '"') { *val = (char*)vstart; *val_len = (size_t)(r - vstart); return 1; }
         r++;
       }
       return 0;
@@ -173,11 +173,14 @@ static int find_json_string_value(const char *start, const char *key, const char
       const char *vstart = q; const char *r = q;
       while (*r && *r != ',' && *r != '}' && *r != '\n') r++;
       while (r > vstart && (*(r-1)==' '||*(r-1)=='\t')) r--;
-      *val = vstart; *val_len = (size_t)(r - vstart); return 1;
+      *val = (char*)vstart; *val_len = (size_t)(r - vstart); return 1;
     }
   }
   return 0;
 }
+
+/* forward declaration for cached hostname lookup (defined later) */
+static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
 
 /* Normalize devices array from ubnt-discover JSON string `ud` into a new allocated JSON array in *outbuf (caller must free). */
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen) {
@@ -203,7 +206,7 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
       }
       if (!r || r<=obj_start) break;
       /* within obj_start..r extract fields */
-      const char *v; size_t vlen;
+  char *v; size_t vlen;
       /* fields to extract: ipv4 (or ip), mac or hwaddr, name/hostname, product, uptime, mode, essid, firmware */
       char ipv4[64] = ""; char hwaddr[64] = ""; char hostname[256] = ""; char product[128] = ""; char uptime[64] = ""; char mode[64] = ""; char essid[128] = ""; char firmware[128] = "";
       if (find_json_string_value(obj_start, "ipv4", &v, &vlen) || find_json_string_value(obj_start, "ip", &v, &vlen)) { snprintf(ipv4, sizeof(ipv4), "%.*s", (int)vlen, v); }
@@ -260,7 +263,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
       if (!r || r<=obj) break;
       /* extract fields */
-      const char *v; size_t vlen;
+  char *v; size_t vlen;
       char intf[64] = ""; char local[64] = ""; char remote[64] = ""; char remote_host[256] = ""; char lq[32] = ""; char nlq[32] = ""; char cost[32] = "";
       if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen)) snprintf(intf, sizeof(intf), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "localIP", &v, &vlen)) snprintf(local, sizeof(local), "%.*s", (int)vlen, v);
@@ -316,7 +319,7 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
       const char *obj = q; int od = 0; const char *r = q;
       while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
       if (!r || r<=obj) break;
-      const char *v; size_t vlen;
+  char *v; size_t vlen;
       char originator[128] = ""; char bindto[64] = ""; char lq[32] = ""; char nlq[32] = ""; char cost[32] = ""; char metric[32] = ""; char hostname[256] = "";
       if (find_json_string_value(obj, "neighbor_originator", &v, &vlen) || find_json_string_value(obj, "originator", &v, &vlen)) snprintf(originator, sizeof(originator), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "link_bindto", &v, &vlen) || find_json_string_value(obj, "link_bindto", &v, &vlen)) snprintf(bindto, sizeof(bindto), "%.*s", (int)vlen, v);
@@ -324,57 +327,8 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen) || find_json_string_value(obj, "nlq", &v, &vlen)) snprintf(nlq, sizeof(nlq), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "linkCost", &v, &vlen) || find_json_string_value(obj, "cost", &v, &vlen)) snprintf(cost, sizeof(cost), "%.*s", (int)vlen, v);
       if (find_json_string_value(obj, "metric", &v, &vlen)) snprintf(metric, sizeof(metric), "%.*s", (int)vlen, v);
-      /* try to resolve originator to hostname */
-      if (originator[0]) {
-        struct in_addr ina; if (inet_aton(originator, &ina)) {
-          struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
-          if (he && he->h_name) snprintf(hostname, sizeof(hostname), "%s", he->h_name);
-        }
-      }
-      /* fallback: consult local nodedb.json for a friendly name */
-      if (!hostname[0]) {
-        /* try a lightweight search in possible nodedb locations */
-        const char *ndpaths[] = { "/config/custom/node_db.json", "/tmp/node_db.json", NULL };
-        char *nbuf = NULL; size_t nbs = 0; int found = 0;
-        for (const char **np = ndpaths; !found && *np; ++np) {
-          if (path_exists(*np)) {
-            if (util_read_file(*np, &nbuf, &nbs) == 0 && nbuf && nbs>0) {
-              /* search for "ipv4":"<originator>" and then find hostname near it */
-              char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", originator);
-              char *pos = strstr(nbuf, needle);
-              if (pos) {
-                /* look forward for hostname field */
-                char *hpos = strstr(pos, "\"hostname\":");
-                if (hpos) {
-                  const char *v; size_t vlen;
-                  if (find_json_string_value(hpos, "hostname", &v, &vlen)) {
-                    size_t copy = vlen < sizeof(hostname)-1 ? vlen : sizeof(hostname)-1;
-                    memcpy(hostname, v, copy); hostname[copy]=0; found = 1;
-                  }
-                }
-              }
-              free(nbuf); nbuf = NULL; nbs = 0;
-            }
-          }
-        }
-        if (!found) {
-          /* try remote fetch as last resort (short timeout) */
-          char *out = NULL; size_t on = 0;
-          if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &out, &on) == 0 && out && on>0) {
-            char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", originator);
-            char *pos = strstr(out, needle);
-            if (pos) {
-              const char *v; size_t vlen;
-              char *hpos = strstr(pos, "\"hostname\":");
-              if (hpos && find_json_string_value(hpos, "hostname", &v, &vlen)) {
-                size_t copy = vlen < sizeof(hostname)-1 ? vlen : sizeof(hostname)-1;
-                memcpy(hostname, v, copy); hostname[copy]=0; found = 1;
-              }
-            }
-          }
-          if (out) free(out);
-        }
-      }
+  /* lookup hostname (cached): reverse DNS, local nodedb, remote node_db.json */
+  if (originator[0]) lookup_hostname_cached(originator, hostname, sizeof(hostname));
       if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
       json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap, originator);
       json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap, bindto);
@@ -870,6 +824,7 @@ int env_is_edgerouter(void);
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <time.h>
 
 static char   g_bind[64] = "0.0.0.0";
 static int    g_port = 11080;
@@ -1056,6 +1011,84 @@ static void send_json(http_request_t *r, const char *json) {
 
 int olsrd_plugin_interface_version(void) {
   return 5;
+}
+
+/* Simple TTL cache for hostname lookups & nodedb lookups to avoid repeated blocking I/O
+ * Very small fixed-size cache with linear probing; entries expire after CACHE_TTL seconds.
+ */
+#define CACHE_SIZE 128
+#define CACHE_TTL 60
+struct kv_cache_entry { char key[128]; char val[256]; time_t ts; };
+static struct kv_cache_entry g_host_cache[CACHE_SIZE];
+
+static void cache_set(struct kv_cache_entry *cache, const char *key, const char *val) {
+  if (!key || !val) return;
+  unsigned long h = 1469598103934665603UL;
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  int idx = (int)(h % CACHE_SIZE);
+  snprintf(cache[idx].key, sizeof(cache[idx].key), "%s", key);
+  snprintf(cache[idx].val, sizeof(cache[idx].val), "%s", val);
+  cache[idx].ts = time(NULL);
+}
+
+static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, size_t outlen) {
+  if (!key || !out) return 0;
+  unsigned long h = 1469598103934665603UL;
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  int idx = (int)(h % CACHE_SIZE);
+  if (cache[idx].key[0] == 0) return 0;
+  if (strcmp(cache[idx].key, key) != 0) return 0;
+  if (difftime(time(NULL), cache[idx].ts) > CACHE_TTL) return 0;
+  snprintf(out, outlen, "%s", cache[idx].val);
+  return 1;
+}
+
+/* lookup hostname for an ipv4 string using cache, gethostbyaddr and nodedb files/remote as fallback */
+static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
+  if (!ipv4 || !out) return;
+  out[0]=0;
+  if (cache_get(g_host_cache, ipv4, out, outlen)) return;
+  /* try reverse DNS */
+  struct in_addr ina; if (inet_aton(ipv4, &ina)) {
+    struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
+    if (he && he->h_name) {
+      snprintf(out, outlen, "%s", he->h_name);
+      cache_set(g_host_cache, ipv4, out);
+      return;
+    }
+  }
+  /* try local nodedb files */
+  const char *ndpaths[] = { "/config/custom/node_db.json", "/tmp/node_db.json", NULL };
+  for (const char **np = ndpaths; *np; ++np) {
+    if (!path_exists(*np)) continue;
+    char *nbuf = NULL; size_t nbs = 0;
+    if (util_read_file(*np, &nbuf, &nbs) == 0 && nbuf && nbs>0) {
+      char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", ipv4);
+      char *pos = strstr(nbuf, needle);
+      if (pos) {
+        char *hpos = strstr(pos, "\"hostname\":");
+        if (hpos && find_json_string_value(hpos, "hostname", &pos, &nbs)) {
+          size_t copy = nbs < outlen-1 ? nbs : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); free(nbuf); return;
+        }
+      }
+      free(nbuf);
+    }
+  }
+  /* try remote node_db as last resort */
+  char *outb = NULL; size_t obn = 0;
+  if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &outb, &obn) == 0 && outb && obn>0) {
+    char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", ipv4);
+    char *pos = strstr(outb, needle);
+    if (pos) {
+      char *hpos = strstr(pos, "\"hostname\":");
+      if (hpos && find_json_string_value(hpos, "hostname", &pos, &obn)) {
+        size_t copy = obn < outlen-1 ? obn : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); free(outb); return;
+      }
+    }
+  }
+  if (outb) free(outb);
+  /* nothing found */
+  out[0]=0;
 }
 
 static int set_str_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
