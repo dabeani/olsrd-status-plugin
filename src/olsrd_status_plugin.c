@@ -331,6 +331,50 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
           if (he && he->h_name) snprintf(hostname, sizeof(hostname), "%s", he->h_name);
         }
       }
+      /* fallback: consult local nodedb.json for a friendly name */
+      if (!hostname[0]) {
+        /* try a lightweight search in possible nodedb locations */
+        const char *ndpaths[] = { "/config/custom/node_db.json", "/tmp/node_db.json", NULL };
+        char *nbuf = NULL; size_t nbs = 0; int found = 0;
+        for (const char **np = ndpaths; !found && *np; ++np) {
+          if (path_exists(*np)) {
+            if (util_read_file(*np, &nbuf, &nbs) == 0 && nbuf && nbs>0) {
+              /* search for "ipv4":"<originator>" and then find hostname near it */
+              char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", originator);
+              char *pos = strstr(nbuf, needle);
+              if (pos) {
+                /* look forward for hostname field */
+                char *hpos = strstr(pos, "\"hostname\":");
+                if (hpos) {
+                  const char *v; size_t vlen;
+                  if (find_json_string_value(hpos, "hostname", &v, &vlen)) {
+                    size_t copy = vlen < sizeof(hostname)-1 ? vlen : sizeof(hostname)-1;
+                    memcpy(hostname, v, copy); hostname[copy]=0; found = 1;
+                  }
+                }
+              }
+              free(nbuf); nbuf = NULL; nbs = 0;
+            }
+          }
+        }
+        if (!found) {
+          /* try remote fetch as last resort (short timeout) */
+          char *out = NULL; size_t on = 0;
+          if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &out, &on) == 0 && out && on>0) {
+            char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%s\"", originator);
+            char *pos = strstr(out, needle);
+            if (pos) {
+              const char *v; size_t vlen;
+              char *hpos = strstr(pos, "\"hostname\":");
+              if (hpos && find_json_string_value(hpos, "hostname", &v, &vlen)) {
+                size_t copy = vlen < sizeof(hostname)-1 ? vlen : sizeof(hostname)-1;
+                memcpy(hostname, v, copy); hostname[copy]=0; found = 1;
+              }
+            }
+          }
+          if (out) free(out);
+        }
+      }
       if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
       json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap, originator);
       json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap, bindto);
@@ -526,6 +570,7 @@ static int h_status(http_request_t *r) {
       free(s);
     }
   }
+  /* fallback: if traceroute_to not set, use default route IP (filled later) - placeholder handled below */
   /* Try to populate devices from ubnt-discover (or fallback) using helper */
   {
     char *ud = NULL; size_t udn = 0;
@@ -609,6 +654,10 @@ static int h_status(http_request_t *r) {
   }
 
   /* include fixed traceroute-to-uplink output (mimic python behavior) */
+  if (!traceroute_to[0]) {
+    /* if not explicitly configured, use default route IP as traceroute target */
+    if (def_ip[0]) snprintf(traceroute_to, sizeof(traceroute_to), "%s", def_ip);
+  }
   if (traceroute_to[0] && g_has_traceroute) {
     const char *trpath = (g_traceroute_path[0]) ? g_traceroute_path : "traceroute";
     size_t cmdlen = strlen(trpath) + strlen(traceroute_to) + 64;
@@ -923,6 +972,23 @@ static int h_embedded_appjs(http_request_t *r) {
   return http_send_file(r, g_asset_root, "js/app.js", NULL);
 }
 
+/* Simple proxy for selected OLSRd JSON queries (whitelist q values). */
+static int h_olsrd_json(http_request_t *r) {
+  char q[64] = "links";
+  (void)get_query_param(r, "q", q, sizeof(q));
+  /* whitelist */
+  const char *allowed[] = { "version","all","runtime","startup","neighbors","links","routes","hna","mid","topology","interfaces","2hop","sgw","pudposition","plugins","neighbours","gateways", NULL };
+  int ok = 0;
+  for (const char **p = allowed; *p; ++p) if (strcmp(*p, q) == 0) { ok = 1; break; }
+  if (!ok) { send_json(r, "{}\n"); return 0; }
+  char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/%s", q);
+  char *out = NULL; size_t n = 0;
+  if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+    send_json(r, out); free(out); return 0;
+  }
+  send_json(r, "{}\n"); return 0;
+}
+
 static int h_emb_jquery(http_request_t *r) {
   return http_send_file(r, g_asset_root, "js/jquery.min.js", NULL);
 }
@@ -1016,6 +1082,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/ipv4",     &h_ipv4);
   http_server_register_handler("/ipv6",     &h_ipv6);
   http_server_register_handler("/status",   &h_status);
+  http_server_register_handler("/olsrd.json", &h_olsrd_json);
   http_server_register_handler("/capabilities", &h_capabilities_local);
   http_server_register_handler("/txtinfo",  &h_txtinfo);
   http_server_register_handler("/jsoninfo", &h_jsoninfo);
