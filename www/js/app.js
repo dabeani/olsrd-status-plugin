@@ -1,17 +1,188 @@
+// JSON polyfill for older browsers
+if (!window.JSON) {
+  window.JSON = {
+    parse: function(s) {
+      return eval('(' + s + ')');
+    },
+    stringify: function(obj) {
+      var t = typeof obj;
+      if (t !== "object" || obj === null) {
+        if (t === "string") return '"' + obj + '"';
+        return String(obj);
+      }
+      var json = [];
+      var arr = (obj && obj.constructor === Array);
+      for (var k in obj) {
+        if (obj.hasOwnProperty(k)) {
+          json.push((arr ? "" : '"' + k + '":') + window.JSON.stringify(obj[k]));
+        }
+      }
+      return (arr ? "[" : "{") + json.join(",") + (arr ? "]" : "}");
+    }
+  };
+}
+
+// Object.keys polyfill for older browsers
+if (!Object.keys) {
+  Object.keys = function(obj) {
+    var keys = [];
+    for (var key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        keys.push(key);
+      }
+    }
+    return keys;
+  };
+}
+
+// Array.isArray polyfill for older browsers
+if (!Array.isArray) {
+  Array.isArray = function(arg) {
+    return Object.prototype.toString.call(arg) === '[object Array]';
+  };
+}
+
+// Promise polyfill for older browsers
+if (!window.Promise) {
+  window.Promise = function(executor) {
+    var self = this;
+    self.status = 'pending';
+    self.value = undefined;
+    self.reason = undefined;
+    self.onFulfilled = [];
+    self.onRejected = [];
+    
+    function resolve(value) {
+      if (self.status === 'pending') {
+        self.status = 'fulfilled';
+        self.value = value;
+        self.onFulfilled.forEach(function(fn) { fn(value); });
+      }
+    }
+    
+    function reject(reason) {
+      if (self.status === 'pending') {
+        self.status = 'rejected';
+        self.reason = reason;
+        self.onRejected.forEach(function(fn) { fn(reason); });
+      }
+    }
+    
+    try {
+      executor(resolve, reject);
+    } catch (e) {
+      reject(e);
+    }
+  };
+  
+  window.Promise.prototype.then = function(onFulfilled, onRejected) {
+    var self = this;
+    return new window.Promise(function(resolve, reject) {
+      function handleFulfilled(value) {
+        try {
+          if (typeof onFulfilled === 'function') {
+            var result = onFulfilled(value);
+            if (result && typeof result.then === 'function') {
+              result.then(resolve, reject);
+            } else {
+              resolve(result);
+            }
+          } else {
+            resolve(value);
+          }
+        } catch (e) {
+          reject(e);
+        }
+      }
+      
+      function handleRejected(reason) {
+        try {
+          if (typeof onRejected === 'function') {
+            var result = onRejected(reason);
+            if (result && typeof result.then === 'function') {
+              result.then(resolve, reject);
+            } else {
+              resolve(result);
+            }
+          } else {
+            reject(reason);
+          }
+        } catch (e) {
+          reject(e);
+        }
+      }
+      
+      if (self.status === 'fulfilled') {
+        handleFulfilled(self.value);
+      } else if (self.status === 'rejected') {
+        handleRejected(self.reason);
+      } else {
+        self.onFulfilled.push(handleFulfilled);
+        self.onRejected.push(handleRejected);
+      }
+    });
+  };
+  
+  window.Promise.prototype.catch = function(onRejected) {
+    return this.then(null, onRejected);
+  };
+  
+  window.Promise.resolve = function(value) {
+    return new window.Promise(function(resolve) { resolve(value); });
+  };
+  
+  window.Promise.reject = function(reason) {
+    return new window.Promise(function(resolve, reject) { reject(reason); });
+  };
+}
+
+// Fetch polyfill for older browsers
+if (!window.fetch) {
+  window.fetch = function(url, options) {
+    return new Promise(function(resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open(options && options.method || 'GET', url, true);
+      if (options && options.headers) {
+        for (var header in options.headers) {
+          xhr.setRequestHeader(header, options.headers[header]);
+        }
+      }
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+          var response = {
+            ok: xhr.status >= 200 && xhr.status < 300,
+            status: xhr.status,
+            statusText: xhr.statusText,
+            text: function() { return Promise.resolve(xhr.responseText); },
+            json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); }
+          };
+          if (response.ok) {
+            resolve(response);
+          } else {
+            reject(new Error('HTTP ' + xhr.status));
+          }
+        }
+      };
+      xhr.onerror = function() { reject(new Error('Network error')); };
+      xhr.send(options && options.body);
+    });
+  };
+}
+
 window.refreshTab = function(id, url) {
   var el = document.getElementById(id);
   if (el) el.textContent = 'Loading…';
   if (id === 'p-json') {
-    fetch(url, {cache:"no-store"}).then(r=>r.text()).then(t=>{
+    fetch(url, {cache:"no-store"}).then(function(r){ return r.text(); }).then(function(t){
       try{ el.textContent = JSON.stringify(JSON.parse(t), null, 2); }
       catch(e){ el.textContent = t; }
-    }).catch(e=>{ el.textContent = "ERR: "+e; });
+    }).catch(function(e){ el.textContent = "ERR: "+e; });
     return;
   }
-  fetch(url, {cache:"no-store"}).then(r=>{
-    if(!r.ok) return r.text().then(t=>{ el.textContent="HTTP "+r.status+"\n"+t; });
-    return r.text().then(t=>{ el.textContent = t; });
-  }).catch(e=>{ el.textContent = "ERR: "+e; });
+  fetch(url, {cache:"no-store"}).then(function(r){
+    if(!r.ok) return r.text().then(function(t){ el.textContent="HTTP "+r.status+"\n"+t; });
+    return r.text().then(function(t){ el.textContent = t; });
+  }).catch(function(e){ el.textContent = "ERR: "+e; });
 };
 
 function setText(id, text) {
@@ -167,8 +338,8 @@ function updateUI(data) {
 
 function detectPlatformAndLoad() {
   fetch('/capabilities', {cache: 'no-store'})
-    .then(r => r.json())
-    .then(caps => {
+    .then(function(r) { return r.json(); })
+    .then(function(caps) {
       // show/hide traceroute tab
       try {
         var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
@@ -178,8 +349,8 @@ function detectPlatformAndLoad() {
       } catch(e){}
       var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsr2info: '', admin: null };
       fetch('/status', {cache: 'no-store'})
-        .then(r => r.json())
-        .then(status => {
+        .then(function(r) { return r.json(); })
+        .then(function(status) {
           data.hostname = status.hostname || '';
           data.ip = status.ip || '';
           data.uptime = status.uptime || '';
@@ -191,8 +362,8 @@ function detectPlatformAndLoad() {
           if (status.olsr2_on) {
             data.olsr2_on = true;
             fetch('/olsr2', {cache: 'no-store'})
-              .then(r => r.text())
-              .then(t => { data.olsr2info = t; updateUI(data); try { if (data.links && data.links.length) populateOlsrLinksTable(data.links); } catch(e){} });
+              .then(function(r) { return r.text(); })
+              .then(function(t) { data.olsr2info = t; updateUI(data); try { if (data.links && data.links.length) populateOlsrLinksTable(data.links); } catch(e){} });
           } else {
             updateUI(data);
             try {
@@ -226,21 +397,21 @@ function detectPlatformAndLoad() {
             setLoginLink(status.admin.url);
           }
           var nodedb = {};
-          fetch('/nodedb.json',{cache:'no-store'}).then(r=>r.json()).then(nb=>{ nodedb = nb || {}; }).catch(()=>{ nodedb = {}; });
+          fetch('/nodedb.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ nodedb = nb || {}; }).catch(function(){ nodedb = {}; });
           function loadConnections() {
             var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = 'Loading...';
-            fetch('/connections.json',{cache:'no-store'}).then(r=>r.json()).then(c=>{
+            fetch('/connections.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(c){
               renderConnectionsTable(c, nodedb);
               if(statusEl) statusEl.textContent = '';
-            }).catch(e=>{ var el=document.getElementById('connections-status'); if(el) el.textContent='ERR: '+e; });
+            }).catch(function(e){ var el=document.getElementById('connections-status'); if(el) el.textContent='ERR: '+e; });
           }
           loadConnections();
           function loadVersions() {
             var statusEl = document.getElementById('versions-status'); if(statusEl) statusEl.textContent = 'Loading...';
-            fetch('/versions.json',{cache:'no-store'}).then(r=>r.json()).then(v=>{
+            fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){
               renderVersionsPanel(v);
               if(statusEl) statusEl.textContent = '';
-            }).catch(e=>{ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
+            }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
           }
           loadVersions();
           document.getElementById('tr-run').addEventListener('click', function(){ runTraceroute(); });
@@ -418,7 +589,7 @@ function runTraceroute(){
   if (summaryEl) summaryEl.textContent = 'Traceroute: running ...';
   if (pre) pre.style.display='block';
   if (pre) pre.textContent='Running traceroute...';
-  fetch('/traceroute?target='+encodeURIComponent(target),{cache:'no-store'}).then(r=>r.text()).then(t=>{
+  fetch('/traceroute?target='+encodeURIComponent(target),{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){
     if (pre) pre.textContent = t;
     // Try to parse and populate table (supports numeric -n output and hostname (ip) formats)
     try {
@@ -514,6 +685,6 @@ function runTraceroute(){
         }
       }
     } catch (e) { /* ignore parsing errors */ }
-  }).catch(e=>{ if (pre) pre.textContent = 'ERR: '+e; });
+  }).catch(function(e){ if (pre) pre.textContent = 'ERR: '+e; });
 }
 
