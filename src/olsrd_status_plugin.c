@@ -28,6 +28,17 @@ static int buffer_has_content(const char *b, size_t n) {
   return 0;
 }
 
+/* Format uptime in a human-friendly short form to match bmk-webstatus.py semantics.
+ * Examples: "30sek", "5min", "3h", "2d"
+ */
+static void format_duration(long s, char *out, size_t outlen) {
+  if (!out || outlen == 0) return;
+  if (s <= 120) snprintf(out, outlen, "%ldsek", s);
+  else if (s <= 120 * 60) snprintf(out, outlen, "%ldmin", s / 60);
+  else if (s <= 50 * 60 * 60) snprintf(out, outlen, "%ldh", s / 3600);
+  else snprintf(out, outlen, "%ldd", s / 86400);
+}
+
 /* JSON buffer helpers used by h_status and other responders */
 static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
   va_list ap; char *t = NULL; int n;
@@ -216,7 +227,20 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj_start, "mac", &v, &vlen) || find_json_string_value(obj_start, "hwaddr", &v, &vlen)) { snprintf(hwaddr, sizeof(hwaddr), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "name", &v, &vlen) || find_json_string_value(obj_start, "hostname", &v, &vlen)) { snprintf(hostname, sizeof(hostname), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "product", &v, &vlen)) { snprintf(product, sizeof(product), "%.*s", (int)vlen, v); }
-      if (find_json_string_value(obj_start, "uptime", &v, &vlen)) { snprintf(uptime, sizeof(uptime), "%.*s", (int)vlen, v); }
+      if (find_json_string_value(obj_start, "uptime", &v, &vlen)) {
+        /* Try to parse uptime as seconds and format it; fallback to raw string if not numeric */
+        long ut = 0; char *endptr = NULL;
+        if (vlen > 0) {
+          char tmp[64] = ""; size_t copy = vlen < sizeof(tmp)-1 ? vlen : sizeof(tmp)-1; memcpy(tmp, v, copy); tmp[copy]=0;
+          ut = strtol(tmp, &endptr, 10);
+          if (endptr && *endptr == 0 && ut > 0) {
+            char formatted[32] = ""; format_duration(ut, formatted, sizeof(formatted));
+            snprintf(uptime, sizeof(uptime), "%s", formatted);
+          } else {
+            snprintf(uptime, sizeof(uptime), "%.*s", (int)vlen, v);
+          }
+        }
+      }
       if (find_json_string_value(obj_start, "mode", &v, &vlen)) { snprintf(mode, sizeof(mode), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "essid", &v, &vlen)) { snprintf(essid, sizeof(essid), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "firmware", &v, &vlen)) { snprintf(firmware, sizeof(firmware), "%.*s", (int)vlen, v); }
@@ -509,7 +533,13 @@ static int h_status(http_request_t *r) {
     }
   }
   /* attempt to read traceroute_to from settings.inc (same path as python reference) */
-  char traceroute_to[256] = "";
+    /* attempt to read traceroute_to from settings.inc (same path as python reference)
+     * Default to the Python script's traceroute target if not configured.
+     */
+    char traceroute_to[256] = "78.41.115.36";
+  /* human readable uptime string, prefer python-like format */
+  char uptime_str[64] = ""; format_duration(uptime_seconds, uptime_str, sizeof(uptime_str));
+  APPEND("\"uptime_str\":"); json_append_escaped(&buf, &len, &cap, uptime_str); APPEND(",");
   {
     char *s=NULL; size_t sn=0;
     if (util_read_file("/config/custom/www/settings.inc", &s, &sn) == 0 && s && sn>0) {

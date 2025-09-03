@@ -114,8 +114,9 @@ function populateNeighborsTable(neighbors) {
 function updateUI(data) {
   setText('hostname', data.hostname || 'Unknown');
   setText('ip', data.ip || '');
-  setText('uptime', data.uptime || '');
-  setText('dl-uptime', data.uptime || '');
+  // prefer human-friendly uptime string if provided by backend
+  setText('uptime', data.uptime_str || data.uptime || '');
+  setText('dl-uptime', data.uptime_str || data.uptime || '');
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
   try { setText('main-host', data.hostname || ''); } catch(e) {}
   try { populateNavHost(data.hostname || '', data.ip || ''); } catch(e) {}
