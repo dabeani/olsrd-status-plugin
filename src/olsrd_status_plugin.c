@@ -412,80 +412,64 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   if (s >= 0) {
     struct sockaddr_in dst; memset(&dst,0,sizeof(dst)); dst.sin_family=AF_INET; dst.sin_port=htons(10001); dst.sin_addr.s_addr=inet_addr("255.255.255.255");
     if (ubnt_discover_send(s,&dst)==0) {
-      /* resend probe once mid-way to catch late responders */
-      /* collect for up to 600 ms */
-      struct ubnt_kv kv[32];
+      struct ubnt_kv kv[64];
       struct timeval start, now; gettimeofday(&start,NULL);
-      size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf){ close(s); goto after_internal; } buf[0]=0;
-      json_buf_append(&buf,&len,&cap,"["); int first=1; char ip[64];
-      char seen_ips[64][64]; int seen_count = 0;
+      /* aggregation container */
+      struct agg_dev { char ip[64]; char hostname[256]; char hw[64]; char product[128]; char uptime[64]; char mode[64]; char essid[128]; char firmware[128]; int have_hostname,have_hw,have_product,have_uptime,have_mode,have_essid,have_firmware,have_fwversion; char fwversion_val[128]; } devices[64];
+      int dev_count = 0;
       for(;;){
         size_t kvn = sizeof(kv)/sizeof(kv[0]);
+        char ip[64]="";
         int n = ubnt_discover_recv(s, ip, sizeof(ip), kv, &kvn);
-        if (n > 0) {
-          /* skip if ip already seen */
-          int dup = 0; for(int si=0; si<seen_count; ++si){ if(strcmp(seen_ips[si], ip)==0){ dup=1; break; } }
-          if (dup) {
-            /* already recorded this device */
-            goto next_iter_discover;
-          }
-          if (seen_count < (int)(sizeof(seen_ips)/sizeof(seen_ips[0]))) {
-            snprintf(seen_ips[seen_count], sizeof(seen_ips[seen_count]), "%s", ip);
-            seen_count++;
-          }
-          if (!first) {
-            json_buf_append(&buf,&len,&cap,",");
-          }
-          first = 0;
-          json_buf_append(&buf,&len,&cap,"{");
-          /* ensure ipv4 field present */
-          json_buf_append(&buf,&len,&cap,"\"ipv4\":"); json_append_escaped(&buf,&len,&cap, ip);
-          int have_hostname=0, have_hw=0, have_fwversion=0, have_firmware=0, have_product=0, have_uptime=0, have_mode=0, have_essid=0;
-          char fwversion_val[128]="";
-          for(size_t i=0;i<kvn;i++){
-            if(strcmp(kv[i].key,"ipv4")==0) continue; /* already added */
-            json_buf_append(&buf,&len,&cap,",");
-            json_buf_append(&buf,&len,&cap,"\""); json_buf_append(&buf,&len,&cap,"%s", kv[i].key); json_buf_append(&buf,&len,&cap,"\":");
-            json_append_escaped(&buf,&len,&cap, kv[i].value);
-            if(strcmp(kv[i].key,"hostname")==0) have_hostname=1; else if(strcmp(kv[i].key,"hwaddr")==0) have_hw=1; else if(strcmp(kv[i].key,"fwversion")==0){ have_fwversion=1; snprintf(fwversion_val,sizeof(fwversion_val),"%s",kv[i].value);} else if(strcmp(kv[i].key,"firmware")==0) have_firmware=1; else if(strcmp(kv[i].key,"product")==0) have_product=1; else if(strcmp(kv[i].key,"uptime")==0) have_uptime=1; else if(strcmp(kv[i].key,"mode")==0) have_mode=1; else if(strcmp(kv[i].key,"essid")==0) have_essid=1;
-          }
-          /* ARP enrichment if hostname or hwaddr missing */
-          if ((!have_hw || !have_hostname) && ip[0]) {
-            char arp_mac[64]=""; char arp_host[256]="";
-            arp_enrich_ip(ip, arp_mac, sizeof(arp_mac), arp_host, sizeof(arp_host));
-            if (!have_hw && arp_mac[0]) { json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap, arp_mac); have_hw=1; }
-            if (!have_hostname && arp_host[0]) { json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap, arp_host); have_hostname=1; }
-          }
-          /* normalized fields expected: hwaddr, hostname, product, uptime, mode, essid, firmware */
-          if(!have_hw) json_buf_append(&buf,&len,&cap,",\"hwaddr\":\"\"");
-          if(!have_hostname) json_buf_append(&buf,&len,&cap,",\"hostname\":\"\"");
-          if(!have_product) json_buf_append(&buf,&len,&cap,",\"product\":\"\"");
-          if(!have_uptime) json_buf_append(&buf,&len,&cap,",\"uptime\":\"\"");
-          if(!have_mode) json_buf_append(&buf,&len,&cap,",\"mode\":\"\"");
-          if(!have_essid) json_buf_append(&buf,&len,&cap,",\"essid\":\"\"");
-          if(!have_firmware){
-            if(have_fwversion && fwversion_val[0]){
-              json_buf_append(&buf,&len,&cap,",\"firmware\":"); json_append_escaped(&buf,&len,&cap,fwversion_val);
-            } else {
-              json_buf_append(&buf,&len,&cap,",\"firmware\":\"\"");
+        if (n > 0 && ip[0]) {
+          /* find or create device slot */
+          int idx=-1; for(int di=0; di<dev_count; ++di){ if(strcmp(devices[di].ip, ip)==0){ idx=di; break; } }
+          if(idx<0 && dev_count < (int)(sizeof(devices)/sizeof(devices[0]))){ idx = dev_count++; memset(&devices[idx],0,sizeof(devices[idx])); snprintf(devices[idx].ip,sizeof(devices[idx].ip),"%s",ip); }
+          if(idx>=0){
+            for(size_t i=0;i<kvn;i++){
+              if(strcmp(kv[i].key,"hostname")==0){ if(!devices[idx].have_hostname){ snprintf(devices[idx].hostname,sizeof(devices[idx].hostname),"%s",kv[i].value); devices[idx].have_hostname=1; } }
+              else if(strcmp(kv[i].key,"hwaddr")==0){ if(!devices[idx].have_hw){ snprintf(devices[idx].hw,sizeof(devices[idx].hw),"%s",kv[i].value); devices[idx].have_hw=1; } }
+              else if(strcmp(kv[i].key,"product")==0){ if(!devices[idx].have_product){ snprintf(devices[idx].product,sizeof(devices[idx].product),"%s",kv[i].value); devices[idx].have_product=1; } }
+              else if(strcmp(kv[i].key,"uptime")==0){ if(!devices[idx].have_uptime){ snprintf(devices[idx].uptime,sizeof(devices[idx].uptime),"%s",kv[i].value); devices[idx].have_uptime=1; } }
+              else if(strcmp(kv[i].key,"mode")==0){ if(!devices[idx].have_mode){ snprintf(devices[idx].mode,sizeof(devices[idx].mode),"%s",kv[i].value); devices[idx].have_mode=1; } }
+              else if(strcmp(kv[i].key,"essid")==0){ if(!devices[idx].have_essid){ snprintf(devices[idx].essid,sizeof(devices[idx].essid),"%s",kv[i].value); devices[idx].have_essid=1; } }
+              else if(strcmp(kv[i].key,"firmware")==0){ if(!devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; } }
+              else if(strcmp(kv[i].key,"fwversion")==0){ if(!devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; } devices[idx].have_fwversion=1; }
             }
           }
-          /* Add enrichment placeholders for signal and rates (filled via external airosdata correlation on client) */
-          json_buf_append(&buf,&len,&cap,",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"");
-          json_buf_append(&buf,&len,&cap,"}");
         }
-  next_iter_discover:
         gettimeofday(&now,NULL);
         long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
-        if (ms > 300) { /* fire a second probe once */ ubnt_discover_send(s,&dst); }
-        if (ms > 600) break;
+        if (ms > 300) { ubnt_discover_send(s,&dst); }
+        if (ms > 800) break; /* slightly longer to catch second wave */
         usleep(20000);
       }
-      json_buf_append(&buf,&len,&cap,"]\n");
       close(s);
-      if(len>2){ *out = buf; *outlen = len; fprintf(stderr,"[status-plugin] internal broadcast discovery produced %zu bytes\n", len); return 0; }
-      free(buf);
-    } else { close(s); }
+      /* ARP enrich missing host/mac */
+      for(int di=0; di<dev_count; ++di){
+        if((!devices[di].have_hostname || !devices[di].have_hw) && devices[di].ip[0]){
+          char arp_mac[64]=""; char arp_host[256]=""; arp_enrich_ip(devices[di].ip, arp_mac, sizeof(arp_mac), arp_host, sizeof(arp_host));
+          if(!devices[di].have_hw && arp_mac[0]){ snprintf(devices[di].hw,sizeof(devices[di].hw),"%s",arp_mac); devices[di].have_hw=1; }
+          if(!devices[di].have_hostname && arp_host[0]){ snprintf(devices[di].hostname,sizeof(devices[di].hostname),"%s",arp_host); devices[di].have_hostname=1; }
+        }
+      }
+      /* build JSON */
+      size_t cap=4096; size_t len=0; char *buf = malloc(cap); if(!buf) goto after_internal; buf[0]=0; json_buf_append(&buf,&len,&cap,"[");
+      for(int di=0; di<dev_count; ++di){ if(di) json_buf_append(&buf,&len,&cap,",");
+        json_buf_append(&buf,&len,&cap,"{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,devices[di].ip);
+        json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,devices[di].hw);
+        json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,devices[di].hostname);
+        json_buf_append(&buf,&len,&cap,",\"product\":"); json_append_escaped(&buf,&len,&cap,devices[di].product);
+        json_buf_append(&buf,&len,&cap,",\"uptime\":"); json_append_escaped(&buf,&len,&cap,devices[di].uptime);
+        json_buf_append(&buf,&len,&cap,",\"mode\":"); json_append_escaped(&buf,&len,&cap,devices[di].mode);
+        json_buf_append(&buf,&len,&cap,",\"essid\":"); json_append_escaped(&buf,&len,&cap,devices[di].essid);
+        json_buf_append(&buf,&len,&cap,",\"firmware\":"); json_append_escaped(&buf,&len,&cap,devices[di].firmware);
+        json_buf_append(&buf,&len,&cap,",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"}");
+      }
+      json_buf_append(&buf,&len,&cap,"]\n");
+      *out = buf; *outlen = len; fprintf(stderr,"[status-plugin] internal broadcast discovery merged %d devices (%zu bytes)\n", dev_count, len); return 0;
+    }
+    close(s);
   }
 after_internal:
   /* fallback to arp-based device list */
