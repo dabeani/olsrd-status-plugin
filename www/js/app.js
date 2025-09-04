@@ -293,6 +293,9 @@ function populateOlsrLinksTable(links) {
   }
   links.forEach(function(l){
     var tr = document.createElement('tr');
+    if (l.is_default) {
+      tr.style.backgroundColor = '#fff8d5'; /* soft yellow */
+    }
     function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
     tr.appendChild(td(l.intf));
     tr.appendChild(td(l.local));
@@ -306,11 +309,53 @@ function populateOlsrLinksTable(links) {
     tr.appendChild(td(l.lq));
     tr.appendChild(td(l.nlq));
     tr.appendChild(td(l.cost));
-    tr.appendChild(td(l.routes || ''));
+    var routesCell = td(l.routes || '');
+    if (l.routes && parseInt(l.routes,10) > 0) {
+      routesCell.style.cursor='pointer'; routesCell.title='Click to view routes via this neighbor';
+      routesCell.addEventListener('click', function(){ showRoutesFor(l.remote); });
+    }
+    tr.appendChild(routesCell);
     tr.appendChild(td(l.nodes || ''));
     tbody.appendChild(tr);
   });
 }
+
+// Cache for parsed routes from status payload
+var _rawRoutesCache = null;
+function ensureRawRoutes(statusObj) {
+  if (_rawRoutesCache) return _rawRoutesCache;
+  if (statusObj && statusObj.olsr_routes_raw && typeof statusObj.olsr_routes_raw === 'object') {
+    _rawRoutesCache = statusObj.olsr_routes_raw; return _rawRoutesCache;
+  }
+  return null;
+}
+
+function showRoutesFor(remoteIp) {
+  var modal = document.getElementById('route-modal');
+  if (!modal) return;
+  var body = document.getElementById('route-modal-body');
+  var title = document.getElementById('route-modal-title');
+  if (title) title.textContent = 'Routes via ' + remoteIp;
+  body.textContent = 'Loading...';
+  // Use lightweight dedicated endpoint
+  fetch('/olsr/routes?via=' + encodeURIComponent(remoteIp), {cache:'no-store'})
+    .then(function(r){ return r.json ? r.json() : r; })
+    .then(function(obj){
+      if (!obj || !obj.routes || !Array.isArray(obj.routes) || !obj.routes.length) {
+        body.textContent = 'No routes found for ' + remoteIp; return;
+      }
+      body.textContent = obj.routes.join('\n');
+    })
+    .catch(function(){ body.textContent='Error loading routes'; });
+  modal.style.display='block';
+}
+
+window.addEventListener('load', function(){
+  var c = document.getElementById('route-modal-close');
+  if (c) c.addEventListener('click', function(){ var m=document.getElementById('route-modal'); if (m) m.style.display='none'; });
+  var m = document.getElementById('route-modal');
+  if (m) m.addEventListener('click', function(e){ if (e.target === m) m.style.display='none'; });
+});
 
 function populateNeighborsTable(neighbors) {
   var tbody = document.querySelector('#neighborsTable tbody');
@@ -402,7 +447,15 @@ function detectPlatformAndLoad() {
         if (adminTabLink) adminTabLink.style.display = (caps.show_admin_link? '' : 'none');
       } catch(e){}
       var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsr2info: '', admin: null };
-      fetch('/status', {cache: 'no-store'})
+      // Fetch summary first for fast paint
+      fetch('/status/summary',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
+        if (s.hostname) data.hostname = s.hostname;
+        if (s.ip) data.ip = s.ip;
+        if (s.uptime_linux) { data.uptime_linux = s.uptime_linux; }
+        updateUI(data);
+      }).catch(function(){});
+  // Fetch remaining heavier status in background (full status still used for deep data)
+  fetch('/status/lite', {cache: 'no-store'})
         .then(function(r) { return r.text(); })
         .then(function(statusText) {
           var status = safeParse('status', statusText);
@@ -508,6 +561,22 @@ function detectPlatformAndLoad() {
     } catch(e2) {}
   }
 }
+
+// Lazy load OLSR links when OLSR tab clicked first time
+var _olsrLoaded = false;
+window.addEventListener('load', function(){
+  var mt = document.getElementById('mainTabs');
+  if (!mt) return;
+  mt.addEventListener('click', function(e){
+    var a = e.target.closest('a'); if(!a) return;
+    if (a.getAttribute('href') === '#tab-olsr' && !_olsrLoaded) {
+      fetch('/olsr/links',{cache:'no-store'}).then(function(r){return r.json();}).then(function(o){
+        if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }
+        _olsrLoaded = true;
+      }).catch(function(){});
+    }
+  });
+});
 
 // console polyfill for older browsers
 if (!window.console) {

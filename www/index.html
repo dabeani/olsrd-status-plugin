@@ -158,6 +158,17 @@
           </div>
         </div>
 
+        <!-- Simple Modal for Route Details -->
+        <div id="route-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:2000; overflow:auto;">
+          <div style="background:#fff; margin:40px auto; padding:15px 20px; max-width:800px; border:1px solid #ccc; border-radius:4px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h4 id="route-modal-title" style="margin:0;">Routes</h4>
+              <button id="route-modal-close" type="button" class="btn btn-xs btn-default">Close</button>
+            </div>
+            <div id="route-modal-body" style="margin-top:10px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
+          </div>
+        </div>
+
         <!-- Versions -->
         <div id="tab-versions" class="tab-pane">
           <h3>Versions <button id="refresh-versions" class="btn btn-xs btn-default">Refresh</button>
