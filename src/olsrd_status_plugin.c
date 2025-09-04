@@ -494,7 +494,20 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
   /* simple search for "devices" : [ */
   const char *p = strstr(ud, "\"devices\"" );
-  if (!p) { /* no devices key */ json_buf_append(&buf, &len, &cap, "[]"); *outbuf=buf; *outlen=len; return 0; }
+  if (!p) {
+    /* No explicit "devices" key. If the payload itself is a JSON array (internal broadcast output), passthrough. */
+    const char *s = ud; while (*s && isspace((unsigned char)*s)) s++;
+    if (*s == '[') {
+      size_t l = strlen(s);
+      char *copy = malloc(l + 1);
+      if (!copy) { free(buf); return -1; }
+      memcpy(copy, s, l + 1);
+      free(buf);
+      *outbuf = copy; *outlen = l; return 0;
+    }
+    /* Otherwise return empty array */
+    json_buf_append(&buf, &len, &cap, "[]"); *outbuf=buf; *outlen=len; return 0;
+  }
   const char *arr = strchr(p, '[');
   if (!arr) { json_buf_append(&buf,&len,&cap,"[]"); *outbuf=buf; *outlen=len; return 0; }
   /* iterate objects inside array by scanning braces */
@@ -1012,22 +1025,36 @@ static int h_status(http_request_t *r) {
           }
           /* Tokenize manually */
           char *save=NULL; char *tok=strtok_r(norm," ",&save); int idx=0; char seen_paren_ip=0; char raw_ip_paren[64]=""; char raw_host[256]=""; 
+          char prev_tok[64]="";
           while(tok){
             if(idx==0){ snprintf(hop,sizeof(hop),"%s",tok); }
             else if(idx==1){
-              if(tok[0]=='('){ /* rare ordering */ }
+              if(tok[0]=='('){ /* rare ordering, will handle later */ }
               else if(strcmp(tok,"*")==0){ snprintf(ip,sizeof(ip),"*"); }
               else { snprintf(raw_host,sizeof(raw_host),"%s",tok); }
             } else {
               if(tok[0]=='('){
                 char *endp=strchr(tok,')'); if(endp){ *endp=0; snprintf(raw_ip_paren,sizeof(raw_ip_paren),"%s",tok+1); seen_paren_ip=1; }
-              } else if(strchr(tok,'m') && !ping[0]) { /* latency token contains ms */
-                /* extract number+ms */
-                snprintf(ping,sizeof(ping),"%s",tok);
+              }
+              /* latency extraction: accept forms '12.3ms' OR '12.3' followed by token 'ms' */
+              if(!ping[0]) {
+                size_t L = strlen(tok);
+                if(L>2 && tok[L-2]=='m' && tok[L-1]=='s') {
+                  char num[32]; size_t cpy = (L-2) < sizeof(num)-1 ? (L-2) : sizeof(num)-1; memcpy(num,tok,cpy); num[cpy]=0;
+                  int ok=1; for(size_t xi=0; xi<cpy; ++xi){ if(!(isdigit((unsigned char)num[xi]) || num[xi]=='.')) { ok=0; break; } }
+                  if(ok && cpy>0) snprintf(ping,sizeof(ping),"%s",num);
+                } else if(strcmp(tok,"ms")==0 && prev_tok[0]) {
+                  int ok=1; for(size_t xi=0; prev_tok[xi]; ++xi){ if(!(isdigit((unsigned char)prev_tok[xi]) || prev_tok[xi]=='.')) { ok=0; break; } }
+                  if(ok) snprintf(ping,sizeof(ping),"%s",prev_tok);
+                }
               }
             }
+            /* remember token for next iteration */
+            snprintf(prev_tok,sizeof(prev_tok),"%s",tok);
             tok=strtok_r(NULL," ",&save); idx++;
           }
+          /* If ping captured originally with trailing ms (legacy), ensure we didn't store literal 'ms' */
+          if(strcmp(ping,"ms")==0) ping[0]=0;
           if(seen_paren_ip){
             snprintf(ip,sizeof(ip),"%s",raw_ip_paren);
             snprintf(host,sizeof(host),"%s",raw_host);
