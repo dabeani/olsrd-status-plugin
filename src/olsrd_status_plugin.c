@@ -2082,7 +2082,8 @@ static int h_connections_json(http_request_t *r) {
   }
   /* fallback: synthesize empty structure */
   send_json(r,"{\"ports\":[]}\n");
-  if(out) free(out); return 0;
+  if(out) free(out);
+  return 0;
 }
 
 static int h_versions_json(http_request_t *r) {
