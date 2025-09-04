@@ -33,10 +33,36 @@ static int buffer_has_content(const char *b, size_t n) {
  */
 static void format_duration(long s, char *out, size_t outlen) {
   if (!out || outlen == 0) return;
-  if (s <= 120) snprintf(out, outlen, "%ldsek", s);
-  else if (s <= 120 * 60) snprintf(out, outlen, "%ldmin", s / 60);
-  else if (s <= 50 * 60 * 60) snprintf(out, outlen, "%ldh", s / 3600);
-  else snprintf(out, outlen, "%ldd", s / 86400);
+  if (s < 0) s = 0;
+  /* Preserve short form (legacy) when very small, else humanize similar to uptime's DDd HH:MM */
+  if (s < 60) { snprintf(out, outlen, "%lds", s); return; }
+  long days = s / 86400; long rem = s % 86400; long hrs = rem / 3600; rem %= 3600; long mins = rem / 60;
+  if (days > 0) snprintf(out, outlen, "%ldd %02ld:%02ldh", days, hrs, mins);
+  else if (hrs > 0) snprintf(out, outlen, "%ld:%02ldh", hrs, mins);
+  else snprintf(out, outlen, "%ldmin", mins);
+}
+
+/* Produce a Linux uptime(1)-like line with load averages: "up 2 days, 03:14, load average: 0.15, 0.08, 0.01" */
+static void format_uptime_linux(long seconds, char *out, size_t outlen) {
+  if (!out || outlen==0) return; out[0]=0;
+  long days = seconds / 86400; long rem = seconds % 86400; long hrs = rem / 3600; rem %= 3600; long mins = rem / 60;
+  char dur[128]; dur[0]=0;
+  if (days > 0) {
+    snprintf(dur, sizeof(dur), "up %ld day%s, %02ld:%02ld", days, days==1?"":"s", hrs, mins);
+  } else if (hrs > 0) {
+    snprintf(dur, sizeof(dur), "up %ld:%02ld", hrs, mins);
+  } else {
+    snprintf(dur, sizeof(dur), "up %ld min", mins);
+  }
+  double loads[3] = {0,0,0};
+#if defined(__linux__)
+  FILE *lf = fopen("/proc/loadavg", "r");
+  if (lf) {
+    if (fscanf(lf, "%lf %lf %lf", &loads[0], &loads[1], &loads[2]) != 3) { loads[0]=loads[1]=loads[2]=0; }
+    fclose(lf);
+  }
+#endif
+  snprintf(out, outlen, "%s, load average: %.2f, %.2f, %.2f", dur, loads[0], loads[1], loads[2]);
 }
 
 /* JSON buffer helpers used by h_status and other responders */
@@ -296,6 +322,19 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   const char *q = arr; int depth = 0;
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
   json_buf_append(&buf, &len, &cap, "["); int first = 1;
+  /* Pre-scan for routes and topology arrays to derive route/node counts per remoteIP */
+  const char *routes_section = strstr(raw, "\"routes\"");
+  const char *topology_section = strstr(raw, "\"topology\"");
+  /* helper inline (cannot nest function in portable C) */
+  #define COUNT_IP(sectionPtr, ipStr, outVar) do { \
+    int _cnt = 0; \
+    if ((sectionPtr) && (ipStr)[0]) { \
+      const char *_p = (sectionPtr); \
+      char _needle[128]; snprintf(_needle, sizeof(_needle), "\"%s\"", (ipStr)); \
+      while ((_p = strstr(_p, _needle)) != NULL) { _cnt++; _p += strlen(_needle); } \
+    } \
+    (outVar) = _cnt; \
+  } while(0)
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
     if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
@@ -329,7 +368,13 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf, &len, &cap, ",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
       json_buf_append(&buf, &len, &cap, ",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
       json_buf_append(&buf, &len, &cap, ",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
-      json_buf_append(&buf, &len, &cap, ",\"routes\":\"\",\"nodes\":\"\"}");
+  /* derive simple counts */
+  int routes_cnt = 0; int nodes_cnt = 0; COUNT_IP(routes_section, remote, routes_cnt); COUNT_IP(topology_section, remote, nodes_cnt);
+  char routes_s[32]; snprintf(routes_s, sizeof(routes_s), "%d", routes_cnt);
+  char nodes_s[32]; snprintf(nodes_s, sizeof(nodes_s), "%d", nodes_cnt);
+  json_buf_append(&buf, &len, &cap, ",\"routes\":"); json_append_escaped(&buf,&len,&cap,routes_s);
+  json_buf_append(&buf, &len, &cap, ",\"nodes\":"); json_append_escaped(&buf,&len,&cap,nodes_s);
+  json_buf_append(&buf, &len, &cap, "}");
       q = r; continue;
     }
     q++; 
@@ -590,7 +635,9 @@ static int h_status(http_request_t *r) {
     char traceroute_to[256] = "78.41.115.36";
   /* human readable uptime string, prefer python-like format */
   char uptime_str[64] = ""; format_duration(uptime_seconds, uptime_str, sizeof(uptime_str));
+  char uptime_linux[160] = ""; format_uptime_linux(uptime_seconds, uptime_linux, sizeof(uptime_linux));
   APPEND("\"uptime_str\":"); json_append_escaped(&buf, &len, &cap, uptime_str); APPEND(",");
+  APPEND("\"uptime_linux\":"); json_append_escaped(&buf, &len, &cap, uptime_linux); APPEND(",");
   {
     char *s=NULL; size_t sn=0;
     if (util_read_file("/config/custom/www/settings.inc", &s, &sn) == 0 && s && sn>0) {
@@ -987,7 +1034,12 @@ static int h_versions_json(http_request_t *r) {
     }
   if (out) { free(out); out = NULL; n = 0; }
   }
-  send_json(r, "{}\n");
+  /* final fallback: synthesize minimal versions payload */
+  {
+    char host[256]=""; gethostname(host,sizeof(host)); host[sizeof(host)-1]=0;
+    char synthesized[512]; snprintf(synthesized,sizeof(synthesized),"{\"olsrd_status_plugin\":\"%s\",\"host\":\"%s\"}", "1.0", host);
+    send_json(r, synthesized);
+  }
   return 0;
 }
 

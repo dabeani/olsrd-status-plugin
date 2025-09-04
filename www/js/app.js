@@ -297,7 +297,12 @@ function populateOlsrLinksTable(links) {
     tr.appendChild(td(l.intf));
     tr.appendChild(td(l.local));
     tr.appendChild(td(l.remote));
-    tr.appendChild(td(l.remote_host));
+    if (l.remote_host) {
+      var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
+      tr.appendChild(td(linkHtml));
+    } else {
+      tr.appendChild(td(l.remote_host));
+    }
     tr.appendChild(td(l.lq));
     tr.appendChild(td(l.nlq));
     tr.appendChild(td(l.cost));
@@ -334,8 +339,8 @@ function updateUI(data) {
   setText('hostname', data.hostname || 'Unknown');
   setText('ip', data.ip || '');
   // prefer human-friendly uptime string if provided by backend
-  setText('uptime', data.uptime_str || data.uptime || '');
-  setText('dl-uptime', data.uptime_str || data.uptime || '');
+  setText('uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
+  setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
   try { setText('main-host', data.hostname || ''); } catch(e) {}
   try { populateNavHost(data.hostname || '', data.ip || ''); } catch(e) {}
@@ -359,9 +364,11 @@ function updateUI(data) {
   populateDevicesTable(data.devices, data.airos);
   if (data.olsr2_on) {
     showTab('tab-olsr2', true);
+    var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='';
     setText('olsr2info', data.olsr2info || '');
   } else {
     showTab('tab-olsr2', false);
+    var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='none';
   }
   if (data.admin && data.admin.url) {
     showTab('tab-admin', true);
@@ -426,11 +433,11 @@ function detectPlatformAndLoad() {
                 if (linkTab) linkTab.parentElement.style.display = 'none';
               }
               // Neighbors
-              if (status.neighbors && Array.isArray(status.neighbors) && status.neighbors.length) {
-                var nTab = document.querySelector('#mainTabs a[href="#tab-neighbors"]'); if (nTab) nTab.parentElement.style.display = '';
+              if (status.olsr2_on && status.neighbors && Array.isArray(status.neighbors) && status.neighbors.length) {
+                var nLi = document.getElementById('tab-olsrd2-links'); if (nLi) nLi.style.display='';
                 populateNeighborsTable(status.neighbors);
               } else {
-                var nTab = document.querySelector('#mainTabs a[href="#tab-neighbors"]'); if (nTab) nTab.parentElement.style.display = 'none';
+                var nLi = document.getElementById('tab-olsrd2-links'); if (nLi) nLi.style.display='none';
               }
             } catch(e){}
           }
