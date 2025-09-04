@@ -506,13 +506,21 @@ function detectPlatformAndLoad() {
             setLoginLink(status.admin.url);
           }
           var nodedb = {};
-          fetch('/nodedb.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ nodedb = nb || {}; }).catch(function(){ nodedb = {}; });
-          function loadConnections() {
-            var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = 'Loading...';
+          var nodedbReady = false;
+          function tryRenderConnections() {
+            if (!nodedbReady) return; // wait until nodedb loaded once
             fetch('/connections.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(c){
               renderConnectionsTable(c, nodedb);
-              if(statusEl) statusEl.textContent = '';
+              var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = '';
             }).catch(function(e){ var el=document.getElementById('connections-status'); if(el) el.textContent='ERR: '+e; });
+          }
+          // load nodedb first then connections
+          fetch('/nodedb.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ nodedb = nb || {}; nodedbReady = true; tryRenderConnections(); }).catch(function(){ nodedb = {}; nodedbReady = true; tryRenderConnections(); });
+          function loadConnections() {
+            // force refresh after nodedb already loaded
+            if (!nodedbReady) return; // will auto-run when ready
+            var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = 'Loading...';
+            tryRenderConnections();
           }
           loadConnections();
           function loadVersions() {
