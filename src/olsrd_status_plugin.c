@@ -484,8 +484,7 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
             }
         }
         gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
-        if (ms > 300) { ubnt_discover_send(s,&dst); }
-        if (ms > 800) break; usleep(20000);
+  if (ms > 300) { ubnt_discover_send(s,&dst); }
   if (ms > 800) break;
   usleep(20000);
       }
@@ -664,9 +663,6 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
       if(find_json_string_value(obj,"linkCost",&v,&vlen) || find_json_string_value(obj,"cost",&v,&vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"metric",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
       if(originator[0]) lookup_hostname_cached(originator, hostname, sizeof(hostname));
-      if(!first) json_buf_append(&buf,&len,&cap,","); first=0;
-  if(!first) json_buf_append(&buf,&len,&cap,",");
-  first=0;
   if(!first) json_buf_append(&buf,&len,&cap,",");
   first=0;
       json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap,originator);
