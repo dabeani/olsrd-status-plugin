@@ -375,9 +375,18 @@ function updateUI(data) {
 
 function detectPlatformAndLoad() {
   try {
+  // helper safe JSON parser
+  function safeParse(label, text) {
+    try { return JSON.parse(text); }
+    catch(e) {
+      try { console.error(label + ' JSON parse failed', e, text.slice(0,400)); } catch(_e) {}
+      return null;
+    }
+  }
   fetch('/capabilities', {cache: 'no-store'})
-    .then(function(r) { return r.json(); })
-    .then(function(caps) {
+    .then(function(r) { return r.text(); })
+    .then(function(capText) {
+      var caps = safeParse('capabilities', capText) || {};
       // show/hide traceroute tab
       try {
         var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
@@ -387,8 +396,10 @@ function detectPlatformAndLoad() {
       } catch(e){}
       var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsr2info: '', admin: null };
       fetch('/status', {cache: 'no-store'})
-        .then(function(r) { return r.json(); })
-        .then(function(status) {
+        .then(function(r) { return r.text(); })
+        .then(function(statusText) {
+          var status = safeParse('status', statusText);
+          if (!status) return; // abort if irreparable
           data.hostname = status.hostname || '';
           data.ip = status.ip || '';
           data.uptime = status.uptime || '';

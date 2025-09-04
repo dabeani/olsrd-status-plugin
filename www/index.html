@@ -29,8 +29,15 @@
       <ul id="mainTabs" class="nav nav-tabs">
         <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
         <li role="presentation" class="active"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status</a></li>
+        <li role="presentation"><a href="#tab-olsr"><span class="glyphicon glyphicon-random" aria-hidden="true"></span> OLSR Links</a></li>
+        <li role="presentation"><a href="#tab-neighbors"><span class="glyphicon glyphicon-link" aria-hidden="true"></span> Neighbors</a></li>
+        <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
+        <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
+        <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
+        <li role="presentation"><a href="#tab-json"><span class="glyphicon glyphicon-file" aria-hidden="true"></span> Raw JSON</a></li>
         <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
         <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
+        <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
         <li id="nav-host" style="float:right; padding:8px 12px;"></li>
         <li id="nav-login" style="float:right; display:none; padding:6px 12px;"><a id="nav-login-link" href="#" target="_blank"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Login</a></li>
       </ul>
@@ -44,7 +51,7 @@
             <dt>IPv4 Default-Route <span class="glyphicon glyphicon-transfer" aria-hidden="true"></span></dt>
             <dd><span id="dl-default-route"><span id="default-route">n/a</span></span></dd>
             <dt>mgmt Devices <span class="glyphicon glyphicon-signal" aria-hidden="true"></span></dt>
-            <dd>
+            <dd>&nbsp;</dd>
           </dl>
           <div class="table-responsive">
             <table id="devicesTable" class="table table-hover table-bordered table-condensed">
