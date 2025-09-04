@@ -406,13 +406,31 @@ static int h_status(http_request_t *r) {
   char *buf = NULL; size_t cap = 8192, len = 0;
   buf = (char*)malloc(cap);
   if (!buf) { send_json(r, "{}\n"); return 0; }
-  #define APPEND(fmt,...) do{ \
-    char _t[1024]; int _n = snprintf(_t, sizeof(_t), fmt, ##__VA_ARGS__); \
-    if (_n >= (int)sizeof(_t)) _n = (int)sizeof(_t) - 1; \
-    if (_n > 0) { \
-      if (len + _n + 1 > cap) { while (cap < len + _n + 1) cap *= 2; char *nb = (char*)realloc(buf, cap); if(!nb){ free(buf); send_json(r, "{}\n"); return 0; } buf = nb; } \
-      memcpy(buf + len, _t, (size_t)_n); len += _n; buf[len]=0; } \
-  } while(0)
+  /* NOTE: Previous implementation used a fixed 1KB stack buffer and truncated
+   * any formatted output >1023 bytes, corrupting large embedded JSON blobs
+   * (airosdata, olsr_neighbors_raw, routes, topology, etc.) leading to
+   * frontend JSON parse errors ("Expected ':' after property name ...").
+   * This version allocates an appropriately sized temporary string using
+   * asprintf/vasprintf semantics, eliminating silent truncation.
+   */
+  #define APPEND(fmt,...) do { \
+    char *_tmp_alloc = NULL; \
+    int _app_n = asprintf(&_tmp_alloc, fmt, ##__VA_ARGS__); \
+    if (_app_n < 0 || !_tmp_alloc) { \
+      if (_tmp_alloc) free(_tmp_alloc); \
+      free(buf); send_json(r, "{}\n"); return 0; \
+    } \
+    if (len + (size_t)_app_n + 1 > cap) { \
+      while (cap < len + (size_t)_app_n + 1) cap *= 2; \
+      char *nb = (char*)realloc(buf, cap); \
+      if (!nb) { free(_tmp_alloc); free(buf); send_json(r, "{}\n"); return 0; } \
+      buf = nb; \
+    } \
+    memcpy(buf + len, _tmp_alloc, (size_t)_app_n); \
+    len += (size_t)_app_n; \
+    buf[len] = 0; \
+    free(_tmp_alloc); \
+  } while (0)
 
   /* use json_append_escaped(...) helper defined above */
 
