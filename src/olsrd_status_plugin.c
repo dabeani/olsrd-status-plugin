@@ -215,10 +215,20 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
       while (*p && od>0) { if (*p=='{') od++; else if (*p=='}') od--; p++; }
       const char *end = p;
       if (end>obj) {
-        char *v; size_t vlen; char lh[64] = "";
-        if (find_json_string_value(obj,"lastHopIP",&v,&vlen))
+        char *v; size_t vlen; char lh[128] = "";
+        /* Accept several possible key spellings – different olsrd/olsrd2 builds expose different field names */
+        if (find_json_string_value(obj,"lastHopIP",&v,&vlen) ||
+            find_json_string_value(obj,"lastHopIp",&v,&vlen) ||
+            find_json_string_value(obj,"lastHopIpAddress",&v,&vlen) ||
+            find_json_string_value(obj,"lastHop",&v,&vlen) ||
+            find_json_string_value(obj,"via",&v,&vlen)) {
           snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v);
-        if (lh[0] && strcmp(lh,ip)==0) cnt++;
+        }
+        if (lh[0]) {
+          /* Some APIs include netmask (1.2.3.4/32) – trim at slash for comparison */
+          char cmp[128]; snprintf(cmp,sizeof(cmp),"%s",lh); char *slash=strchr(cmp,'/'); if(slash) *slash='\0';
+          if (strcmp(cmp,ip)==0) cnt++;
+        }
       }
       continue;
     }
@@ -496,6 +506,8 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   }
   /* Fallback: if no topology info available (common on some builds) reuse routes count */
   if (nodes_cnt == 0 && routes_cnt > 0 && (!topology_section || !*topology_section)) nodes_cnt = routes_cnt;
+  /* Broader fallback: if topology present but did not yield matches (field name variation), still approximate with routes */
+  if (nodes_cnt == 0 && routes_cnt > 0) nodes_cnt = routes_cnt;
   /* Build short summary strings (similar to sample output showing number preceding details, e.g., "473") */
   char routes_s[16]; snprintf(routes_s, sizeof(routes_s), "%d", routes_cnt);
   char nodes_s[16]; snprintf(nodes_s, sizeof(nodes_s), "%d", nodes_cnt);

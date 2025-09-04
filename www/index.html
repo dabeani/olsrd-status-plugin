@@ -158,13 +158,37 @@
         </div>
 
         <!-- Simple Modal for Route Details -->
-        <div id="route-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:2000; overflow:auto;">
-          <div style="background:#fff; margin:40px auto; padding:15px 20px; max-width:800px; border:1px solid #ccc; border-radius:4px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <h4 id="route-modal-title" style="margin:0;">Routes</h4>
-              <button id="route-modal-close" type="button" class="btn btn-xs btn-default">Close</button>
+        <div id="route-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; overflow:auto;">
+          <div style="background:#fff; margin:50px auto; padding:18px 22px 20px; max-width:900px; border:1px solid #bbb; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+            <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <h4 id="route-modal-title" style="margin:0; font-weight:600;">Routes</h4>
+                <span id="route-modal-count" class="label label-primary" style="display:none"></span>
+              </div>
+              <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                <input id="route-filter" type="text" class="form-control input-sm" placeholder="Filter (prefix, dev, metric)" style="width:220px;">
+                <button id="route-copy" type="button" class="btn btn-xs btn-default" title="Copy visible routes"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button>
+                <button id="route-modal-close" type="button" class="btn btn-xs btn-default">Close</button>
+              </div>
             </div>
-            <div id="route-modal-body" style="margin-top:10px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
+            <div style="border:1px solid #ddd; border-radius:4px; max-height:420px; overflow:auto;">
+              <table id="route-modal-table" class="table table-condensed table-striped" style="margin:0; font-size:12px;">
+                <thead style="position:sticky; top:0; background:#fafafa;">
+                  <tr>
+                    <th style="width:45%;">Destination</th>
+                    <th style="width:20%;">Device</th>
+                    <th style="width:15%;">Metric</th>
+                    <th style="width:20%;">Raw</th>
+                  </tr>
+                </thead>
+                <tbody id="route-modal-tbody"><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody>
+              </table>
+            </div>
+            <div style="margin-top:8px; font-size:11px; color:#666; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+              <div>Click a column header to sort (coming soon) • Filter supports simple substring match.</div>
+              <div><button id="route-raw-toggle" class="btn btn-link btn-xs" style="padding:0">Show raw text</button></div>
+            </div>
+            <pre id="route-modal-body" style="display:none; margin-top:10px; font-family:monospace; font-size:11px; max-height:320px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px;"></pre>
           </div>
         </div>
 

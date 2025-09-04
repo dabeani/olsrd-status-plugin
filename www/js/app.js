@@ -333,37 +333,90 @@ function ensureRawRoutes(statusObj) {
 function showRoutesFor(remoteIp) {
   var modal = document.getElementById('route-modal');
   if (!modal) return;
-  var body = document.getElementById('route-modal-body');
+  var bodyPre = document.getElementById('route-modal-body');
   var title = document.getElementById('route-modal-title');
+  var countBadge = document.getElementById('route-modal-count');
+  var tbody = document.getElementById('route-modal-tbody');
+  var filterInput = document.getElementById('route-filter');
+  var copyBtn = document.getElementById('route-copy');
+  var rawToggle = document.getElementById('route-raw-toggle');
   if (title) title.textContent = 'Routes via ' + remoteIp;
-  body.textContent = 'Loading...';
-  // Use lightweight dedicated endpoint
+  if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
+  if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Loading...</td></tr>';
+  if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
+  var allRoutes = [];
+  function renderTable(arr){
+    if (!tbody) return;
+    if (!arr.length) { tbody.innerHTML='<tr><td colspan="4" class="text-muted">No matching routes</td></tr>'; return; }
+    var html='';
+    for (var i=0;i<arr.length;i++) {
+      var r = arr[i];
+      html += '<tr>'+
+        '<td style="font-family:monospace">'+ r.destination +'</td>'+
+        '<td>'+ (r.device||'') +'</td>'+
+        '<td>'+ (r.metric||'') +'</td>'+
+        '<td style="font-family:monospace; color:#666">'+ r.raw +'</td>'+
+      '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+  function applyFilter(){
+    var q = (filterInput && filterInput.value || '').trim().toLowerCase();
+    if (!q) { renderTable(allRoutes); return; }
+    var f = allRoutes.filter(function(r){ return r.raw.toLowerCase().indexOf(q)>=0; });
+    renderTable(f);
+  }
+  if (filterInput) {
+    filterInput.oninput = function(){ applyFilter(); };
+  }
+  if (copyBtn) {
+    copyBtn.onclick = function(){
+      try {
+        var visible = [];
+        var q = (filterInput && filterInput.value || '').trim().toLowerCase();
+        for (var i=0;i<allRoutes.length;i++) {
+          if (!q || allRoutes[i].raw.toLowerCase().indexOf(q)>=0) visible.push(allRoutes[i].raw);
+        }
+        var txt = visible.join('\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt);
+          copyBtn.classList.add('btn-success');
+          setTimeout(function(){ copyBtn.classList.remove('btn-success'); }, 900);
+        } else {
+          var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        }
+      } catch(e) {}
+    };
+  }
+  if (rawToggle) {
+    rawToggle.onclick = function(e){ e.preventDefault(); if(!bodyPre) return; if(bodyPre.style.display==='none'){ bodyPre.style.display='block'; rawToggle.textContent='Hide raw text'; } else { bodyPre.style.display='none'; rawToggle.textContent='Show raw text'; } };
+  }
   fetch('/olsr/routes?via=' + encodeURIComponent(remoteIp), {cache:'no-store'})
     .then(function(r){ return r.json ? r.json() : r; })
     .then(function(obj){
-      // Accept both legacy (array) and new object format { via, routes:[], count }
       var routesArr = [];
-      if (Array.isArray(obj)) {
-        routesArr = obj;
-      } else if (obj && Array.isArray(obj.routes)) {
-        routesArr = obj.routes;
-      }
-      if (!routesArr.length) {
-        body.textContent = 'No routes found for ' + remoteIp; return;
-      }
-      // Clean potential stray double quotes from older malformed outputs
-      routesArr = routesArr.map(function(s){
-        if (typeof s !== 'string') return '';
-        var t = s.replace(/^"+|"+$/g,'').replace(/\\"/g,'"').trim();
+      if (Array.isArray(obj)) routesArr = obj; else if (obj && Array.isArray(obj.routes)) routesArr = obj.routes;
+      // Normalize raw strings and parse into structured fields: destination, device, metric
+      routesArr = routesArr.map(function(line){
+        if (typeof line !== 'string') return '';
+        var t = line.replace(/^"+|"+$/g,'').replace(/\\"/g,'"').trim();
         return t;
       }).filter(function(s){ return s.length; });
-      var header = '';
-      if (obj && !Array.isArray(obj) && typeof obj.count === 'number') {
-        header = 'Via ' + (obj.via || remoteIp) + ' (' + obj.count + ' routes)\n\n';
+      allRoutes = routesArr.map(function(line){
+        var parts = line.split(/\s+/);
+        var destination = parts[0] || line;
+        var device = parts.length>1 ? parts[1] : '';
+        var metric = parts.length>2 ? parts[2] : '';
+        return { destination: destination, device: device, metric: metric, raw: line };
+      });
+      if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = (obj && typeof obj.count==='number'? obj.count : allRoutes.length); }
+      renderTable(allRoutes);
+      if (bodyPre) {
+        var header=''; if (obj && !Array.isArray(obj) && typeof obj.count==='number') header='Via '+(obj.via||remoteIp)+' ('+obj.count+' routes)\n\n';
+        bodyPre.textContent = header + routesArr.join('\n');
       }
-      body.textContent = header + routesArr.join('\n');
     })
-    .catch(function(){ body.textContent='Error loading routes'; });
+    .catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="4" class="text-danger">Error loading routes</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading routes'; });
   modal.style.display='block';
 }
 
