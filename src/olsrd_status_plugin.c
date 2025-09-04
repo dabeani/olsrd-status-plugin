@@ -237,6 +237,63 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
   return cnt;
 }
 
+/* Improved unique-destination counting: counts distinct destination nodes reachable via given last hop. */
+static int count_unique_nodes_for_ip(const char *section, const char *ip) {
+  if (!section || !ip || !ip[0]) return 0;
+  const char *arr = strchr(section,'[');
+  if (!arr) return 0;
+  const char *p = arr; int depth = 0;
+  /* dynamic array of unique destinations */
+  size_t cap = 64; size_t used = 0; char **uniq = malloc(cap * sizeof(char*)); if(!uniq) return 0;
+  while (*p) {
+    if (*p == '[') { depth++; p++; continue; }
+    if (*p == ']') { depth--; if (depth==0) break; p++; continue; }
+    if (*p == '{') {
+      const char *obj = p; int od = 1; p++;
+      while (*p && od>0) { if (*p=='{') od++; else if (*p=='}') od--; p++; }
+      const char *end = p;
+      if (end>obj) {
+        char *v; size_t vlen; char lh[128]="";
+        if (find_json_string_value(obj,"lastHopIP",&v,&vlen) ||
+            find_json_string_value(obj,"lastHopIp",&v,&vlen) ||
+            find_json_string_value(obj,"lastHopIpAddress",&v,&vlen) ||
+            find_json_string_value(obj,"lastHop",&v,&vlen) ||
+            find_json_string_value(obj,"via",&v,&vlen)) {
+          snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v);
+        }
+        if (lh[0]) { char *slash=strchr(lh,'/'); if(slash) *slash='\0'; }
+        if (lh[0] && strcmp(lh,ip)==0) {
+          /* extract destination keys */
+          char dest[128]="";
+          if (find_json_string_value(obj,"destination",&v,&vlen) ||
+              find_json_string_value(obj,"destinationIPNet",&v,&vlen) ||
+              find_json_string_value(obj,"destinationIP",&v,&vlen) ||
+              find_json_string_value(obj,"dst",&v,&vlen) ||
+              find_json_string_value(obj,"originator",&v,&vlen) ||
+              find_json_string_value(obj,"originatorIP",&v,&vlen)) {
+            snprintf(dest,sizeof(dest),"%.*s",(int)vlen,v);
+          }
+          if (dest[0]) {
+            /* normalize dest (trim mask for uniqueness) */
+            char norm[128]; snprintf(norm,sizeof(norm),"%s",dest); char *s=strchr(norm,'/'); if(s) *s='\0';
+            int exists = 0; for(size_t i=0;i<used;i++){ if(strcmp(uniq[i],norm)==0){ exists=1; break; } }
+            if(!exists){
+              if (used==cap) { size_t ncap = cap*2; char **nb = realloc(uniq, ncap*sizeof(char*)); if(!nb) break; uniq=nb; cap=ncap; }
+              uniq[used] = strdup(norm); if(uniq[used]) used++;
+            }
+          }
+        }
+      }
+      continue;
+    }
+    p++;
+  }
+  int result = (int)used;
+  for(size_t i=0;i<used;i++) free(uniq[i]);
+  free(uniq);
+  return result;
+}
+
 /* global flags set at init */
 extern int g_is_edgerouter;
 extern int g_has_traceroute;
@@ -500,7 +557,11 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
     fprintf(stderr, "[status-plugin] debug: no routes section when processing remote %s\n", remote);
   }
   if (topology_section) {
-    nodes_cnt = count_nodes_for_ip(topology_section, remote);
+    nodes_cnt = count_unique_nodes_for_ip(topology_section, remote);
+    if (nodes_cnt == 0) {
+      /* fall back to simple occurrence count */
+      nodes_cnt = count_nodes_for_ip(topology_section, remote);
+    }
   } else {
     fprintf(stderr, "[status-plugin] debug: no topology section when processing remote %s\n", remote);
   }
@@ -1042,6 +1103,30 @@ done:
   if (routes_raw) free(routes_raw);
   if (norm_links) free(norm_links);
   if (norm_neighbors) free(norm_neighbors);
+  return 0;
+}
+
+/* --- Debug raw OLSR data: /olsr/raw (NOT for production; helps diagnose node counting) --- */
+static int h_olsr_raw(http_request_t *r) {
+  char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+  for(const char **ep=eps_links; *ep && !links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&links_raw,&ln)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
+  char *routes_raw=NULL; size_t rr=0; const char *eps_routes[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
+  for(const char **ep=eps_routes; *ep && !routes_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&routes_raw,&rr)==0 && routes_raw && rr>0) break; if(routes_raw){ free(routes_raw); routes_raw=NULL; rr=0; } }
+  char *topology_raw=NULL; size_t trn=0; const char *eps_topo[]={"http://127.0.0.1:9090/topology","http://127.0.0.1:2006/topology","http://127.0.0.1:8123/topology",NULL};
+  for(const char **ep=eps_topo; *ep && !topology_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&topology_raw,&trn)==0 && topology_raw && trn>0) break; if(topology_raw){ free(topology_raw); topology_raw=NULL; trn=0; } }
+  char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{\"err\":\"oom\"}\n"); goto done; } buf[0]=0;
+  #define APP_RAW(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); if(buf){ free(buf);} send_json(r,"{\"err\":\"oom\"}\n"); goto done;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{\"err\":\"oom\"}\n"); goto done;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_t);}while(0)
+  APP_RAW("{");
+  APP_RAW("\"links_raw\":"); if(links_raw) json_append_escaped(&buf,&len,&cap, links_raw); else APP_RAW("\"\""); APP_RAW(",");
+  APP_RAW("\"routes_raw\":"); if(routes_raw) json_append_escaped(&buf,&len,&cap, routes_raw); else APP_RAW("\"\""); APP_RAW(",");
+  APP_RAW("\"topology_raw\":"); if(topology_raw) json_append_escaped(&buf,&len,&cap, topology_raw); else APP_RAW("\"\"");
+  APP_RAW("}\n");
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len);
+  free(buf);
+done:
+  if(links_raw) free(links_raw);
+  if(routes_raw) free(routes_raw);
+  if(topology_raw) free(topology_raw);
   return 0;
 }
 
@@ -1606,6 +1691,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/lite", &h_status_lite);
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
+  http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
   http_server_register_handler("/olsrd.json", &h_olsrd_json);
   http_server_register_handler("/capabilities", &h_capabilities_local);
   http_server_register_handler("/txtinfo",  &h_txtinfo);
