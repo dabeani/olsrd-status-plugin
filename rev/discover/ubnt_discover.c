@@ -70,14 +70,6 @@ static const char *tag_name(uint8_t t, int *is_str, int *is_ipv4, int *is_mac, i
     return NULL;
 }
 
-static int is_printable_string(const uint8_t *p, size_t n) {
-    if (n==0) return 0;
-    for (size_t i=0;i<n;i++) {
-        if (p[i]==0) return i>0; // allow C-string terminated
-        if (!isprint((unsigned char)p[i])) return 0;
-    }
-    return 1;
-}
 
 void ubnt_hexdump(const void *buf, size_t len) {
     const unsigned char *p = (const unsigned char*)buf;

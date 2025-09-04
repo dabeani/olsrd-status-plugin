@@ -15,10 +15,12 @@
 # include <sys/sysinfo.h>
 #endif
 #include <time.h>
+#include <sys/time.h>
 
 #include "httpd.h"
 #include "util.h"
 #include "olsrd_plugin.h"
+#include "ubnt_discover.h"
 
 #include <stdarg.h>
 
@@ -334,8 +336,17 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
   json_buf_append(&buf, &len, &cap, "]\n"); *out = buf; *outlen = len; return 0;
 }
 
-/* Try to obtain ubnt-discover output: prefer binary if present, else /tmp/10-all.json, else arp fallback */
+/* Try to obtain ubnt-discover output: prefer binary if present, else /tmp/10-all.json, then internal broadcast, else arp fallback */
 static int ubnt_discover_output(char **out, size_t *outlen) {
+  /* Simple in-memory cache to avoid broadcasting too often */
+  static char *cache_buf = NULL; static size_t cache_len = 0; static time_t cache_time = 0; const int CACHE_TTL = 30; /* seconds */
+  time_t now_ts = time(NULL);
+  if (cache_buf && cache_len > 0 && (now_ts - cache_time) < CACHE_TTL) {
+    char *dup = malloc(cache_len + 1);
+    if (dup) {
+      memcpy(dup, cache_buf, cache_len); dup[cache_len] = 0; *out = dup; *outlen = cache_len; return 0;
+    }
+  }
   const char *ubnt_candidates[] = { "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", "/usr/local/sbin/ubnt-discover", "/usr/local/bin/ubnt-discover", "/opt/ubnt/ubnt-discover", NULL };
   const char *ub = find_first_existing(ubnt_candidates);
   if (ub) {
@@ -357,9 +368,70 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   } else {
     fprintf(stderr, "[status-plugin] /tmp/10-all.json not found\n");
   }
+  /* Try internal broadcast discovery (rev/discover) */
+  fprintf(stderr, "[status-plugin] attempting internal UBNT broadcast discovery\n");
+  int s = ubnt_open_broadcast_socket(0);
+  if (s >= 0) {
+    struct sockaddr_in dst; memset(&dst,0,sizeof(dst)); dst.sin_family=AF_INET; dst.sin_port=htons(10001); dst.sin_addr.s_addr=inet_addr("255.255.255.255");
+    if (ubnt_discover_send(s,&dst)==0) {
+      /* resend probe once mid-way to catch late responders */
+      /* collect for up to 600 ms */
+      struct ubnt_kv kv[32];
+      struct timeval start, now; gettimeofday(&start,NULL);
+      size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf){ close(s); goto after_internal; } buf[0]=0;
+      json_buf_append(&buf,&len,&cap,"["); int first=1; char ip[64];
+      for(;;){
+        size_t kvn = sizeof(kv)/sizeof(kv[0]);
+        int n = ubnt_discover_recv(s, ip, sizeof(ip), kv, &kvn);
+        if (n > 0) {
+          if (!first) json_buf_append(&buf,&len,&cap,","); first=0;
+          json_buf_append(&buf,&len,&cap,"{");
+          /* ensure ipv4 field present */
+          json_buf_append(&buf,&len,&cap,"\"ipv4\":"); json_append_escaped(&buf,&len,&cap, ip);
+          int have_hostname=0, have_hw=0, have_fwversion=0, have_firmware=0, have_product=0, have_uptime=0, have_mode=0, have_essid=0;
+          char fwversion_val[128]="";
+          for(size_t i=0;i<kvn;i++){
+            if(strcmp(kv[i].key,"ipv4")==0) continue; /* already added */
+            json_buf_append(&buf,&len,&cap,",");
+            json_buf_append(&buf,&len,&cap,"\""); json_buf_append(&buf,&len,&cap,"%s", kv[i].key); json_buf_append(&buf,&len,&cap,"\":");
+            json_append_escaped(&buf,&len,&cap, kv[i].value);
+            if(strcmp(kv[i].key,"hostname")==0) have_hostname=1; else if(strcmp(kv[i].key,"hwaddr")==0) have_hw=1; else if(strcmp(kv[i].key,"fwversion")==0){ have_fwversion=1; snprintf(fwversion_val,sizeof(fwversion_val),"%s",kv[i].value);} else if(strcmp(kv[i].key,"firmware")==0) have_firmware=1; else if(strcmp(kv[i].key,"product")==0) have_product=1; else if(strcmp(kv[i].key,"uptime")==0) have_uptime=1; else if(strcmp(kv[i].key,"mode")==0) have_mode=1; else if(strcmp(kv[i].key,"essid")==0) have_essid=1;
+          }
+          /* normalized fields expected: hwaddr, hostname, product, uptime, mode, essid, firmware */
+          if(!have_hw) json_buf_append(&buf,&len,&cap,",\"hwaddr\":\"\"");
+          if(!have_hostname) json_buf_append(&buf,&len,&cap,",\"hostname\":\"\"");
+          if(!have_product) json_buf_append(&buf,&len,&cap,",\"product\":\"\"");
+          if(!have_uptime) json_buf_append(&buf,&len,&cap,",\"uptime\":\"\"");
+          if(!have_mode) json_buf_append(&buf,&len,&cap,",\"mode\":\"\"");
+          if(!have_essid) json_buf_append(&buf,&len,&cap,",\"essid\":\"\"");
+          if(!have_firmware){
+            if(have_fwversion && fwversion_val[0]){
+              json_buf_append(&buf,&len,&cap,",\"firmware\":"); json_append_escaped(&buf,&len,&cap,fwversion_val);
+            } else {
+              json_buf_append(&buf,&len,&cap,",\"firmware\":\"\"");
+            }
+          }
+          json_buf_append(&buf,&len,&cap,"}");
+        }
+        gettimeofday(&now,NULL);
+        long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
+        if (ms > 300) { /* fire a second probe once */ ubnt_discover_send(s,&dst); }
+        if (ms > 600) break;
+        usleep(20000);
+      }
+      json_buf_append(&buf,&len,&cap,"]\n");
+      close(s);
+      if(len>2){ *out = buf; *outlen = len; fprintf(stderr,"[status-plugin] internal broadcast discovery produced %zu bytes\n", len); return 0; }
+      free(buf);
+    } else { close(s); }
+  }
+after_internal:
   /* fallback to arp-based device list */
   fprintf(stderr, "[status-plugin] falling back to ARP table\n");
-  if (devices_from_arp_json(out, outlen) == 0) return 0;
+  if (devices_from_arp_json(out, outlen) == 0) {
+    /* cache ARP fallback too */
+    if(cache_buf) free(cache_buf); cache_buf = malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=time(NULL);} return 0;
+  }
   fprintf(stderr, "[status-plugin] all device discovery methods failed\n");
   return -1;
 }

@@ -12,12 +12,12 @@ CC      ?= cc
 RM      ?= rm -f
 MKDIR_P ?= mkdir -p
 
-SRCS := src/olsrd_status_plugin.c src/httpd.c src/util.c src/connections.c
-HDRS := src/httpd.h src/util.h
+SRCS := src/olsrd_status_plugin.c src/httpd.c src/util.c src/connections.c rev/discover/ubnt_discover.c
+HDRS := src/httpd.h src/util.h rev/discover/ubnt_discover.h
 
 CFLAGS   ?= -O2
 CFLAGS   += -fPIC
-CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_SRC) -Isrc
+CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_SRC) -Isrc -Irev/discover
 WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wmissing-prototypes
 LDFLAGS  += -shared
 LDLIBS   += -lpthread

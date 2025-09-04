@@ -17,6 +17,8 @@
  */
 #include <stdint.h>
 #include <stddef.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #ifdef __cplusplus
 extern "C" {
