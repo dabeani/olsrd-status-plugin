@@ -44,7 +44,10 @@ static void format_duration(long s, char *out, size_t outlen) {
 
 /* Produce a Linux uptime(1)-like line with load averages: "up 2 days, 03:14, load average: 0.15, 0.08, 0.01" */
 static void format_uptime_linux(long seconds, char *out, size_t outlen) {
-  if (!out || outlen==0) return; out[0]=0;
+  if (!out || outlen==0) {
+    return;
+  }
+  out[0]=0;
   long days = seconds / 86400; long rem = seconds % 86400; long hrs = rem / 3600; rem %= 3600; long mins = rem / 60;
   char dur[128]; dur[0]=0;
   if (days > 0) {
