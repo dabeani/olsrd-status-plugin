@@ -873,14 +873,22 @@ function populateTracerouteTable(tracerouteData) {
   if (!tbody) return;
   tbody.innerHTML = '';
   if (!tracerouteData || !Array.isArray(tracerouteData)) return;
-
   tracerouteData.forEach(function(hop) {
     var tr = document.createElement('tr');
     function td(val) { var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
+    var ip = hop.ip || '';
+    var hostname = hop.hostname || hop.host || '';
+    // if hostname empty but ip looks like a hostname? leave blank; if ip not numeric maybe treat as hostname
+    if (!hostname && ip && !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) && ip.indexOf(':')<0) { hostname = ip; }
     tr.appendChild(td(hop.hop || ''));
-    tr.appendChild(td('<a href="https://' + (hop.ip || '') + '" target="_blank">' + (hop.ip || '') + '</a>'));
-    tr.appendChild(td('<a href="https://' + (hop.hostname || '') + '" target="_blank">' + (hop.hostname || '') + '</a>'));
-    tr.appendChild(td((hop.ping || '') + 'ms'));
+    tr.appendChild(td(ip ? ('<a href="https://' + ip + '" target="_blank">' + ip + '</a>') : ''));
+    tr.appendChild(td(hostname ? ('<a href="https://' + hostname + '" target="_blank">' + hostname + '</a>') : ''));
+    var pingVal = hop.ping || '';
+    if (pingVal) {
+      // strip any trailing ms to avoid double
+      pingVal = String(pingVal).replace(/ms$/i,'');
+      tr.appendChild(td(pingVal + ' ms'));
+    } else tr.appendChild(td(''));
     tbody.appendChild(tr);
   });
 }
@@ -925,35 +933,19 @@ function runTraceroute(){
         var paren = rest.match(/\(([^)]+)\)/);
         if (paren) {
           ip = paren[1];
-          // hostname is the part before the parentheses
           hostname = rest.replace(/\([^)]*\)/, '').trim().split(/\s+/)[0] || '';
         } else {
-          // no parentheses, split tokens
           var tokens = rest.split(/\s+/);
           if (tokens.length > 0) {
             var tok0 = tokens[0];
-            // crude IP detection
             var isIpv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(tok0);
             var isIpv6 = tok0.indexOf(':') >= 0;
-            if (isIpv4 || isIpv6) {
-              ip = tok0;
-            } else {
-              hostname = tok0;
-              if (tokens.length > 1) {
-                var maybeIp = tokens[1].replace(/^[()]+|[()]+$/g, '');
-                if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(maybeIp) || maybeIp.indexOf(':') >= 0) ip = maybeIp;
-              }
-            }
+            if (isIpv4 || isIpv6) { ip = tok0; }
+            else { hostname = tok0; if (tokens.length > 1) { var maybeIp = tokens[1].replace(/^[()]+|[()]+$/g, ''); if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(maybeIp) || maybeIp.indexOf(':') >= 0) ip = maybeIp; } }
           }
         }
-        // ping: look for number followed by ms
         var pingMatch = rest.match(/(\d+(?:\.\d+)?)\s*ms/);
-        if (pingMatch) ping = pingMatch[1];
-        else {
-          // fallback: pick last numeric token
-          var numMatch = rest.match(/(\d+(?:\.\d+)?)(?!.*\d)/);
-          if (numMatch) ping = numMatch[1];
-        }
+        if (pingMatch) ping = pingMatch[1]; else { var numMatch = rest.match(/(\d+(?:\.\d+)?)(?!.*\d)/); if (numMatch) ping = numMatch[1]; }
         hops.push({ hop: hopnum, ip: ip, hostname: hostname, ping: ping });
       }
       if (hops.length > 0) {

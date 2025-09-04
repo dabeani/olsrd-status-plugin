@@ -131,6 +131,19 @@ static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, co
   return 0;
 }
 
+/* --- Helper counters for OLSR link enrichment --- */
+static int find_json_string_value(const char *start, const char *key, char **val, size_t *val_len); /* forward */
+static int count_routes_for_ip(const char *section, const char *ip) {
+  if (!section || !ip || !ip[0]) return 0; const char *arr = strchr(section,'['); if(!arr) return 0; const char *p=arr; int depth=0; int cnt=0;
+  while(*p){ if(*p=='['){ depth++; p++; continue; } if(*p==']'){ depth--; if(depth==0) break; p++; continue; } if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ char *v; size_t vlen; char gw[64]=""; if(find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"via",&v,&vlen)) snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v); if(gw[0] && strcmp(gw,ip)==0) cnt++; } continue; } p++; }
+  return cnt;
+}
+static int count_nodes_for_ip(const char *section, const char *ip) {
+  if (!section || !ip || !ip[0]) return 0; const char *arr = strchr(section,'['); if(!arr) return 0; const char *p=arr; int depth=0; int cnt=0;
+  while(*p){ if(*p=='['){ depth++; p++; continue; } if(*p==']'){ depth--; if(depth==0) break; p++; continue; } if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ char *v; size_t vlen; char lh[64]=""; if(find_json_string_value(obj,"lastHopIP",&v,&vlen)) snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v); if(lh[0] && strcmp(lh,ip)==0) cnt++; } continue; } p++; }
+  return cnt;
+}
+
 /* global flags set at init */
 extern int g_is_edgerouter;
 extern int g_has_traceroute;
@@ -325,19 +338,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   const char *q = arr; int depth = 0;
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
   json_buf_append(&buf, &len, &cap, "["); int first = 1;
-  /* Pre-scan for routes and topology arrays to derive route/node counts per remoteIP */
+  /* Extract pointers to routes/topology arrays */
   const char *routes_section = strstr(raw, "\"routes\"");
   const char *topology_section = strstr(raw, "\"topology\"");
-  /* helper inline (cannot nest function in portable C) */
-  #define COUNT_IP(sectionPtr, ipStr, outVar) do { \
-    int _cnt = 0; \
-    if ((sectionPtr) && (ipStr)[0]) { \
-      const char *_p = (sectionPtr); \
-      char _needle[128]; snprintf(_needle, sizeof(_needle), "\"%s\"", (ipStr)); \
-      while ((_p = strstr(_p, _needle)) != NULL) { _cnt++; _p += strlen(_needle); } \
-    } \
-    (outVar) = _cnt; \
-  } while(0)
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
     if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
@@ -372,7 +375,11 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf, &len, &cap, ",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
       json_buf_append(&buf, &len, &cap, ",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
   /* derive simple counts */
-  int routes_cnt = 0; int nodes_cnt = 0; COUNT_IP(routes_section, remote, routes_cnt); COUNT_IP(topology_section, remote, nodes_cnt);
+  int routes_cnt = 0; int nodes_cnt = 0;
+  if (routes_section) routes_cnt = count_routes_for_ip(routes_section, remote);
+  if (topology_section) nodes_cnt = count_nodes_for_ip(topology_section, remote);
+  /* Fallback: if no topology info available (common on some builds) reuse routes count */
+  if (nodes_cnt == 0 && routes_cnt > 0 && (!topology_section || !*topology_section)) nodes_cnt = routes_cnt;
   /* Build short summary strings (similar to sample output showing number preceding details, e.g., "473") */
   char routes_s[16]; snprintf(routes_s, sizeof(routes_s), "%d", routes_cnt);
   char nodes_s[16]; snprintf(nodes_s, sizeof(nodes_s), "%d", nodes_cnt);
