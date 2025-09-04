@@ -1240,6 +1240,7 @@ static int h_versions_json(http_request_t *r) {
 static int h_traceroute(http_request_t *r) {
   char target[256] = "";
   (void)get_query_param(r, "target", target, sizeof(target));
+  char want_json[8] = ""; (void)get_query_param(r, "format", want_json, sizeof(want_json));
   if (!target[0]) { send_text(r, "No target provided\n"); return 0; }
   if (!g_has_traceroute || !g_traceroute_path[0]) { send_text(r, "traceroute not available\n"); return 0; }
   /* build command dynamically to avoid compile-time truncation warnings */
@@ -1250,12 +1251,57 @@ static int h_traceroute(http_request_t *r) {
   snprintf(cmd, cmdlen, "%s -4 -n -w 2 -q 1 -m 8 %s 2>&1", g_traceroute_path, target);
   char *out = NULL; size_t n = 0;
   if (util_exec(cmd, &out, &n) == 0 && out) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    http_write(r, out, n);
-    free(out);
-    free(cmd);
-    return 0;
+    if (want_json[0] && (want_json[0]=='j' || want_json[0]=='J')) {
+      /* parse traceroute plain text into JSON hops */
+      char *dup = strndup(out, n);
+      if (!dup) { free(out); free(cmd); send_json(r, "{\"error\":\"oom\"}\n"); return 0; }
+      char *saveptr=NULL; char *line=strtok_r(dup, "\n", &saveptr);
+      size_t cap=2048,len2=0; char *json=malloc(cap); if(!json){ free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0; } json[0]=0;
+      #define APP_TR(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(json); free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0;} if(len2+(size_t)_n+1>cap){ while(cap<len2+(size_t)_n+1) cap*=2; char *nb=realloc(json,cap); if(!nb){ free(_t); free(json); free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0;} json=nb;} memcpy(json+len2,_t,(size_t)_n); len2+=(size_t)_n; json[len2]=0; free(_t);}while(0)
+      APP_TR("{\"target\":"); json_append_escaped(&json,&len2,&cap,target); APP_TR(",\"hops\":["); int first=1;
+      while(line){
+        /* skip header */
+        if (strstr(line, "traceroute to") == line) { line=strtok_r(NULL,"\n",&saveptr); continue; }
+        char *trim=line; while(*trim==' '||*trim=='\t') trim++;
+        if(!*trim){ line=strtok_r(NULL,"\n",&saveptr); continue; }
+        /* capture hop number */
+        char *sp = trim; while(*sp && *sp!=' ' && *sp!='\t') sp++; char hopbuf[16]=""; size_t hlen=(size_t)(sp-trim); if(hlen && hlen<sizeof(hopbuf)){ memcpy(hopbuf,trim,hlen); hopbuf[hlen]=0; }
+        if(!hopbuf[0] || !isdigit((unsigned char)hopbuf[0])) { line=strtok_r(NULL,"\n",&saveptr); continue; }
+        /* extract IP/host and latency numbers */
+        char ip[64]=""; char host[128]=""; char *p2=sp; /* rest of line */
+        /* attempt parentheses ip */
+        char *paren = strchr(p2,'(');
+        if(paren){ char *close=strchr(paren,')'); if(close){ size_t ilen=(size_t)(close-(paren+1)); if(ilen && ilen<sizeof(ip)){ memcpy(ip,paren+1,ilen); ip[ilen]=0; } } }
+        /* host: token after hop that is not '(' and not numeric ip */
+        {
+          char tmp[256]; snprintf(tmp,sizeof(tmp),"%s",p2);
+          char *toksave=NULL; char *tok=strtok_r(tmp," \t",&toksave); while(tok){ if(tok[0]=='('){ tok=strtok_r(NULL," \t",&toksave); continue; } if(strcmp(tok,"*")==0){ tok=strtok_r(NULL," \t",&toksave); continue; } if(!host[0]){ snprintf(host,sizeof(host),"%s",tok); } tok=strtok_r(NULL," \t",&toksave); }
+          /* if host looks like ip and ip empty -> ip=host */
+          if(!ip[0] && host[0]){ int is_ip=1; for(char *c=host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } } if(is_ip){ snprintf(ip,sizeof(ip),"%s",host); host[0]=0; } }
+        }
+        /* collect all latency samples (numbers followed by ms) */
+        double samples[8]; int sc=0; char *scan=p2; while(*scan && sc<8){ while(*scan && !isdigit((unsigned char)*scan) && *scan!='*') scan++; if(*scan=='*'){ scan++; continue; } char *endp=NULL; double val=strtod(scan,&endp); if(endp && val>=0){ while(*endp==' ') endp++; if(strncasecmp(endp,"ms",2)==0){ samples[sc++]=val; scan=endp+2; continue; } } if(endp==scan){ scan++; } else scan=endp; }
+        /* build latency string: if multiple, join with '/' */
+        char latency[128]=""; if(sc==1) snprintf(latency,sizeof(latency),"%.3gms",samples[0]); else if(sc>1){ size_t off=0; for(int i=0;i<sc;i++){ int w=snprintf(latency+off,sizeof(latency)-off,"%s%.3gms", i?"/":"", samples[i]); if(w<0|| (size_t)w>=sizeof(latency)-off) break; off+=(size_t)w; } }
+        if(!first) APP_TR(","); first=0;
+        APP_TR("{\"hop\":"); json_append_escaped(&json,&len2,&cap,hopbuf);
+        APP_TR(",\"ip\":"); json_append_escaped(&json,&len2,&cap,ip);
+        APP_TR(",\"host\":"); json_append_escaped(&json,&len2,&cap,host);
+        APP_TR(",\"ping\":"); json_append_escaped(&json,&len2,&cap,latency);
+        APP_TR("}");
+        line=strtok_r(NULL,"\n",&saveptr);
+      }
+      APP_TR("]}\n");
+      http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,json,len2);
+      free(json); free(dup); free(out); free(cmd); return 0;
+    } else {
+      http_send_status(r, 200, "OK");
+      http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
+      http_write(r, out, n);
+      free(out);
+      free(cmd);
+      return 0;
+    }
   }
   free(cmd);
   /* try ICMP-based traceroute as a fallback */

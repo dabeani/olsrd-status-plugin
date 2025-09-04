@@ -910,9 +910,18 @@ function populateTracerouteTable(tracerouteData) {
     tr.appendChild(hostnameCell);
     var pingVal = hop.ping || '';
     if (pingVal) {
-      // strip any trailing ms to avoid double
-      pingVal = String(pingVal).replace(/ms$/i,'');
-      tr.appendChild(td(pingVal + ' ms'));
+      // Preserve original formatting if it already includes ms (avoid adding extra space)
+      var pv = String(pingVal).trim();
+      if (/ms$/i.test(pv)) {
+        // normalize to lowercase ms
+        pv = pv.replace(/MS$/,'ms');
+        tr.appendChild(td(pv));
+      } else if (pv === '*') {
+        tr.appendChild(td('*'));
+      } else {
+        // just a number, append ms without extra space to match python reference style
+        tr.appendChild(td(pv + 'ms'));
+      }
     } else tr.appendChild(td(''));
     tbody.appendChild(tr);
   });
