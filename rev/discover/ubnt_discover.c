@@ -184,6 +184,71 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
     size_t cap = kvcount ? *kvcount : 0;
     size_t out = 0;
     if (kv && cap) out = parse_tlv(buf, (size_t)n, kv, cap);
+    /* Fallback: many EdgeRouter / newer UBNT devices reply with a different layout:
+     *   Byte0 = 0x01 (version)
+     *   Byte1 = flags (often 0x00)
+     *   Byte2..3 = payload length (big-endian) of the remaining bytes
+     *   Then a sequence of extended TLVs: [tag_le16][len_u8][value...]
+     *   Common tags (little-endian tag bytes observed):
+     *     0x0002 : 10-byte value = 6B MAC + 4B IPv4 (repeated per interface)
+     *     0x000B : hostname (string, len bytes)
+     *     0x000C : product (string)
+     *     0x0003 : firmware/build string
+     *     0x0018 : uptime (u32 little-endian seconds)
+     * We only populate the first MAC/IP pair matching the source IP (or the first one if none match),
+     * and ignore duplicates once the key is set, similar to the primary parser's behaviour.
+     */
+    if (out == 0 && (size_t)n >= 8 && buf[0] == 0x01) {
+        size_t total_len = ((size_t)buf[2] << 8) | (size_t)buf[3];
+        if (total_len + 4 <= (size_t)n) {
+            size_t i = 4; int have_mac = 0, have_ip = 0, have_host = 0, have_product = 0, have_fw = 0, have_uptime = 0;
+            char chosen_ip[INET_ADDRSTRLEN] = ""; /* store first or matching */
+            while (i + 3 <= (size_t)n) {
+                uint16_t tag = (uint16_t)buf[i] | ((uint16_t)buf[i+1] << 8);
+                uint8_t l = buf[i+2];
+                i += 3;
+                if (i + l > (size_t)n) break; /* truncated */
+                const uint8_t *val = buf + i;
+                if (tag == 0x0002 && l == 10) {
+                    /* MAC + IPv4 */
+                    char mac[32];
+                    snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", val[0],val[1],val[2],val[3],val[4],val[5]);
+                    struct in_addr ia; memcpy(&ia, val+6, 4);
+                    char ipbuf[INET_ADDRSTRLEN];
+                    const char *ipstr = inet_ntop(AF_INET, &ia, ipbuf, sizeof(ipbuf));
+                    int ip_matches_src = (ip && ip[0] && ipstr && strcmp(ipstr, ip)==0);
+                    if (!have_mac) {
+                        /* Accept first pair, or later one if matches source and we had different first */
+                        if (!have_ip || ip_matches_src) {
+                            if (kv && out < cap) { snprintf(kv[out].key, sizeof(kv[out].key), "%s", "hwaddr"); snprintf(kv[out].value, sizeof(kv[out].value), "%s", mac); out++; }
+                            if (kv && out < cap && ipstr) { snprintf(kv[out].key, sizeof(kv[out].key), "%s", "ipv4"); snprintf(kv[out].value, sizeof(kv[out].value), "%s", ipstr); out++; }
+                            have_mac = 1; have_ip = 1; snprintf(chosen_ip, sizeof(chosen_ip), "%s", ipstr?ipstr:"");
+                        }
+                    }
+                } else if (tag == 0x000B && l > 0 && !have_host) {
+                    /* Hostname */
+                    char host[256]; size_t copy = l < sizeof(host)-1 ? l : sizeof(host)-1; memcpy(host, val, copy); host[copy]=0;
+                    /* Ensure printable */
+                    int ok = 1; for (size_t j=0;j<copy;j++){ if(!isprint(host[j])){ ok=0; break; } }
+                    if (ok) { if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","hostname"); snprintf(kv[out].value,sizeof(kv[out].value),"%s",host); out++; } have_host=1; }
+                } else if (tag == 0x000C && l > 0 && !have_product) {
+                    char prod[128]; size_t copy = l < sizeof(prod)-1 ? l : sizeof(prod)-1; memcpy(prod, val, copy); prod[copy]=0;
+                    int ok=1; for(size_t j=0;j<copy;j++){ if(!isprint(prod[j])){ ok=0; break; } }
+                    if (ok) { if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","product"); snprintf(kv[out].value,sizeof(kv[out].value),"%s",prod); out++; } have_product=1; }
+                } else if (tag == 0x0003 && l > 0 && !have_fw) {
+                    /* firmware/build string */
+                    char fw[160]; size_t copy = l < sizeof(fw)-1 ? l : sizeof(fw)-1; memcpy(fw,val,copy); fw[copy]=0;
+                    int ok=1; for(size_t j=0;j<copy;j++){ if(!isprint(fw[j])){ ok=0; break; } }
+                    if (ok) { if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","fwversion"); snprintf(kv[out].value,sizeof(kv[out].value),"%s",fw); out++; } have_fw=1; }
+                } else if (tag == 0x0018 && l == 4 && !have_uptime) {
+                    uint32_t u = (uint32_t)val[0] | ((uint32_t)val[1]<<8) | ((uint32_t)val[2]<<16) | ((uint32_t)val[3]<<24);
+                    if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","uptime"); snprintf(kv[out].value,sizeof(kv[out].value),"%u",u); out++; }
+                    have_uptime=1;
+                }
+                i += l;
+            }
+        }
+    }
     if (kvcount) *kvcount = out;
 
     // If nothing parsed, dump raw for debugging
