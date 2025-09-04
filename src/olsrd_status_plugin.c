@@ -232,13 +232,54 @@ static int count_routes_for_ip(const char *section, const char *ip) {
       const char *end = p;
       if (end>obj) {
         char *v; size_t vlen; char gw[64] = "";
-        if (find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"via",&v,&vlen))
+        if (find_json_string_value(obj,"gateway",&v,&vlen) ||
+            find_json_string_value(obj,"via",&v,&vlen) ||
+            find_json_string_value(obj,"gatewayIP",&v,&vlen) ||
+            find_json_string_value(obj,"nextHop",&v,&vlen) ||
+            find_json_string_value(obj,"nexthop",&v,&vlen)) {
           snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v);
+        }
+        /* strip /mask if present */
+        if (gw[0]) { char *slash=strchr(gw,'/'); if(slash) *slash=0; }
         if (gw[0] && strcmp(gw,ip)==0) cnt++;
       }
       continue;
     }
     p++;
+  }
+  /* Legacy fallback: routes represented as array of plain strings without gateway field.
+     Format examples: "193.238.158.38  1" or "78.41.112.141  5".
+     We approximate "routes via ip" by counting how many destination strings START with the neighbor IP.
+     This is heuristic (destination != gateway) but better than always zero. */
+  if (cnt == 0) {
+    const char *routes_key = strstr(section, "\"routes\"");
+    if (routes_key) {
+      const char *sa = strchr(routes_key,'[');
+      if (sa) {
+        const char *q = sa; int d = 0; int in_str = 0; const char *str_start = NULL;
+        while (*q) {
+          char c = *q;
+          if (!in_str) {
+            if (c == '[') { d++; }
+            else if (c == ']') { d--; if (d==0) break; }
+            else if (c == '"') { in_str = 1; str_start = q+1; }
+          } else { /* inside string */
+            if (c == '"') {
+              /* end of string */
+              size_t slen = (size_t)(q - str_start);
+              if (slen >= strlen(ip)) {
+                if (strncmp(str_start, ip, strlen(ip)) == 0) {
+                  /* ensure next char is space or end => begins with ip */
+                  if (slen == strlen(ip) || str_start[strlen(ip)]==' ' || str_start[strlen(ip)]=='\t') cnt++;
+                }
+              }
+              in_str = 0; str_start = NULL;
+            }
+          }
+          q++;
+        }
+      }
+    }
   }
   return cnt;
 }
@@ -259,11 +300,14 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
       if (end>obj) {
         char *v; size_t vlen; char lh[128] = "";
         /* Accept several possible key spellings – different olsrd/olsrd2 builds expose different field names */
-        if (find_json_string_value(obj,"lastHopIP",&v,&vlen) ||
-            find_json_string_value(obj,"lastHopIp",&v,&vlen) ||
-            find_json_string_value(obj,"lastHopIpAddress",&v,&vlen) ||
-            find_json_string_value(obj,"lastHop",&v,&vlen) ||
-            find_json_string_value(obj,"via",&v,&vlen)) {
+    if (find_json_string_value(obj,"lastHopIP",&v,&vlen) ||
+      find_json_string_value(obj,"lastHopIp",&v,&vlen) ||
+      find_json_string_value(obj,"lastHopIpAddress",&v,&vlen) ||
+      find_json_string_value(obj,"lastHop",&v,&vlen) ||
+      find_json_string_value(obj,"via",&v,&vlen) ||
+      find_json_string_value(obj,"gateway",&v,&vlen) ||
+      find_json_string_value(obj,"gatewayIP",&v,&vlen) ||
+      find_json_string_value(obj,"nextHop",&v,&vlen)) {
           snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v);
         }
         if (lh[0]) {
@@ -921,7 +965,20 @@ static int h_status(http_request_t *r) {
   if (olsr_links_raw && oln>0) {
     /* try to normalize olsrd raw links into UI-friendly format */
     char *norm = NULL; size_t nn = 0;
-    if (normalize_olsrd_links(olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
+    /* combine links + routes raw so route counting inside normalizer can see routes section */
+    char *combined_raw=NULL; size_t combined_len=0;
+    if (olsr_links_raw) {
+      size_t l1=strlen(olsr_links_raw); size_t l2= (olsr_routes_raw? strlen(olsr_routes_raw):0);
+      combined_len = l1 + l2 + 8;
+      combined_raw = malloc(combined_len+1);
+      if (combined_raw) {
+        combined_raw[0]=0;
+        memcpy(combined_raw, olsr_links_raw, l1); combined_raw[l1]='\n';
+        if (l2) memcpy(combined_raw+l1+1, olsr_routes_raw, l2);
+        combined_raw[l1+1+l2]=0;
+      }
+    }
+    if (normalize_olsrd_links(combined_raw?combined_raw:olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
       /* also attempt to normalize neighbors from neighbors payload */
       char *nne = NULL; size_t nne_n = 0;
@@ -932,6 +989,7 @@ static int h_status(http_request_t *r) {
         APPEND("\"neighbors\":[],");
       }
       free(norm);
+      if (combined_raw) { free(combined_raw); combined_raw=NULL; }
     } else {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
       /* neighbors fallback: try neighbors data first, then links */
@@ -942,6 +1000,7 @@ static int h_status(http_request_t *r) {
       } else {
         APPEND("\"neighbors\":[],");
       }
+      if (combined_raw) { free(combined_raw); combined_raw=NULL; }
     }
   } else {
     APPEND("\"links\":[],");
@@ -1209,7 +1268,21 @@ static int h_olsr_links(http_request_t *r) {
   }
   char *neighbors_raw=NULL; size_t nnr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr);
   char *routes_raw=NULL; size_t rr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &routes_raw,&rr);
-  char *norm_links=NULL; size_t nlinks=0; if(links_raw && normalize_olsrd_links(links_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
+  char *topology_raw=NULL; size_t tr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &topology_raw,&tr);
+  char *norm_links=NULL; size_t nlinks=0; if(links_raw){
+    size_t l1=strlen(links_raw);
+    size_t l2=routes_raw?strlen(routes_raw):0;
+    size_t l3=topology_raw?strlen(topology_raw):0;
+    char *combined_raw=malloc(l1+l2+l3+16);
+    if(combined_raw){
+      size_t off=0; memcpy(combined_raw+off,links_raw,l1); off+=l1; combined_raw[off++]='\n';
+      if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; }
+      if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
+      combined_raw[off]=0;
+      if(normalize_olsrd_links(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
+      free(combined_raw);
+    }
+  }
   char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
   /* Build JSON */
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{}\n"); goto done; } buf[0]=0;
@@ -1217,7 +1290,6 @@ static int h_olsr_links(http_request_t *r) {
   APP_O("{");
   APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP_O("\"olsrd_on\":%s,", olsrd_on?"true":"false");
-  APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   if(norm_links) APP_O("\"links\":%s,", norm_links); else APP_O("\"links\":[],");
   if(norm_neighbors) APP_O("\"neighbors\":%s", norm_neighbors); else APP_O("\"neighbors\":[]");
   APP_O("}\n");
@@ -1227,6 +1299,7 @@ done:
   if (links_raw) free(links_raw);
   if (neighbors_raw) free(neighbors_raw);
   if (routes_raw) free(routes_raw);
+  if (topology_raw) free(topology_raw);
   if (norm_links) free(norm_links);
   if (norm_neighbors) free(norm_neighbors);
   return 0;
@@ -1290,7 +1363,11 @@ static int h_status_olsr(http_request_t *r) {
   for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
   APP2("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
-  if(olsr_links_raw && oln>0){ char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(olsr_links_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } } else { APP2("\"links\":[]"); }
+  if(olsr_links_raw && oln>0){
+    char *combined_raw=NULL; size_t l1=strlen(olsr_links_raw); combined_raw=malloc(l1+4); if(combined_raw){ memcpy(combined_raw,olsr_links_raw,l1); combined_raw[l1]=0; }
+    char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw?combined_raw:olsr_links_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); }
+    if(combined_raw) free(combined_raw);
+  } else { APP2("\"links\":[]"); }
   APP2("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(pout) free(pout); return 0; }
 
