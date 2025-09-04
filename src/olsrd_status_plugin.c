@@ -971,7 +971,12 @@ static int h_olsr_links(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len);
   free(buf);
 done:
-  if(links_raw) free(links_raw); if(neighbors_raw) free(neighbors_raw); if(routes_raw) free(routes_raw); if(norm_links) free(norm_links); if(norm_neighbors) free(norm_neighbors); return 0;
+  if (links_raw) free(links_raw);
+  if (neighbors_raw) free(neighbors_raw);
+  if (routes_raw) free(routes_raw);
+  if (norm_links) free(norm_links);
+  if (norm_neighbors) free(norm_neighbors);
+  return 0;
 }
 
 /* Lightweight summary: only essentials for initial paint */
