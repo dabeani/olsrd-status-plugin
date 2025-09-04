@@ -341,10 +341,27 @@ function showRoutesFor(remoteIp) {
   fetch('/olsr/routes?via=' + encodeURIComponent(remoteIp), {cache:'no-store'})
     .then(function(r){ return r.json ? r.json() : r; })
     .then(function(obj){
-      if (!obj || !obj.routes || !Array.isArray(obj.routes) || !obj.routes.length) {
+      // Accept both legacy (array) and new object format { via, routes:[], count }
+      var routesArr = [];
+      if (Array.isArray(obj)) {
+        routesArr = obj;
+      } else if (obj && Array.isArray(obj.routes)) {
+        routesArr = obj.routes;
+      }
+      if (!routesArr.length) {
         body.textContent = 'No routes found for ' + remoteIp; return;
       }
-      body.textContent = obj.routes.join('\n');
+      // Clean potential stray double quotes from older malformed outputs
+      routesArr = routesArr.map(function(s){
+        if (typeof s !== 'string') return '';
+        var t = s.replace(/^"+|"+$/g,'').replace(/\\"/g,'"').trim();
+        return t;
+      }).filter(function(s){ return s.length; });
+      var header = '';
+      if (obj && !Array.isArray(obj) && typeof obj.count === 'number') {
+        header = 'Via ' + (obj.via || remoteIp) + ' (' + obj.count + ' routes)\n\n';
+      }
+      body.textContent = header + routesArr.join('\n');
     })
     .catch(function(){ body.textContent='Error loading routes'; });
   modal.style.display='block';

@@ -14,6 +14,7 @@
 #if defined(__linux__)
 # include <sys/sysinfo.h>
 #endif
+#include <time.h>
 
 #include "httpd.h"
 #include "util.h"
@@ -44,13 +45,14 @@ static void format_duration(long s, char *out, size_t outlen) {
 
 /* Produce a Linux uptime(1)-like line with load averages: "up 2 days, 03:14, load average: 0.15, 0.08, 0.01" */
 static void format_uptime_linux(long seconds, char *out, size_t outlen) {
-  if (!out || outlen==0) {
-    return;
-  }
-  out[0]=0;
-  long days = seconds / 86400; long rem = seconds % 86400; long hrs = rem / 3600; rem %= 3600; long mins = rem / 60;
+  if (!out || outlen==0) return;
+  if (seconds < 0) seconds = 0;
+  long days = seconds / 86400;
+  long hrs  = (seconds / 3600) % 24;
+  long mins = (seconds / 60) % 60;
   char dur[128]; dur[0]=0;
   if (days > 0) {
+    /* match classic uptime style: up X days, HH:MM */
     snprintf(dur, sizeof(dur), "up %ld day%s, %02ld:%02ld", days, days==1?"":"s", hrs, mins);
   } else if (hrs > 0) {
     snprintf(dur, sizeof(dur), "up %ld:%02ld", hrs, mins);
@@ -66,6 +68,35 @@ static void format_uptime_linux(long seconds, char *out, size_t outlen) {
   }
 #endif
   snprintf(out, outlen, "%s, load average: %.2f, %.2f, %.2f", dur, loads[0], loads[1], loads[2]);
+}
+
+/* Robust uptime seconds helper: /proc/uptime -> sysinfo() -> /proc/stat btime */
+static long get_uptime_seconds(void) {
+  long up = 0;
+  char *upt = NULL; size_t un = 0;
+  if (util_read_file("/proc/uptime", &upt, &un) == 0 && upt && un>0) {
+    /* first token */
+    up = (long)atof(upt);
+  }
+  if (upt) { free(upt); upt=NULL; }
+#if defined(__linux__)
+  if (up <= 0) {
+    struct sysinfo si; if (sysinfo(&si) == 0) up = (long)si.uptime;
+  }
+#endif
+  /* Fallback: parse btime from /proc/stat */
+  if (up <= 0) {
+    char *statc=NULL; size_t sn=0; if (util_read_file("/proc/stat", &statc, &sn)==0 && statc){
+      char *line = statc; char *end = statc + sn;
+      while(line < end){ char *nl = memchr(line,'\n',(size_t)(end-line)); size_t ll = nl ? (size_t)(nl-line) : (size_t)(end-line);
+        if (ll>6 && memcmp(line,"btime ",6)==0){ long btime = atol(line+6); if (btime>0){ time_t now = time(NULL); if (now > btime) up = (long)(now - btime); }
+          break; }
+        if (!nl) break; line = nl+1; }
+      free(statc);
+    }
+  }
+  if (up < 0) up = 0;
+  return up;
 }
 
 /* JSON buffer helpers used by h_status and other responders */
@@ -559,11 +590,7 @@ static int h_status(http_request_t *r) {
   }
 
   /* uptime in seconds */
-  char *upt = NULL; size_t un = 0; long uptime_seconds = 0;
-  if (util_read_file("/proc/uptime", &upt, &un) == 0 && upt && un>0) { uptime_seconds = (long)atof(upt); free(upt); upt=NULL; }
-#if defined(__linux__)
-  if (uptime_seconds == 0) { struct sysinfo si; if (sysinfo(&si) == 0) uptime_seconds = (long)si.uptime; }
-#endif
+  long uptime_seconds = get_uptime_seconds();
 
   /* airosdata */
   char *airos_raw = NULL; size_t airos_n = 0; int have_airos = 0;
@@ -804,39 +831,45 @@ static int h_status(http_request_t *r) {
         char *p = tout; char *line; int first = 1;
         while ((line = strsep(&p, "\n")) != NULL) {
           if (!line || !*line) continue;
-          /* skip header line starting with 'traceroute to' */
           if (strstr(line, "traceroute to") == line) continue;
-          /* tokenize */
-          char *copy = strdup(line);
-          char *tok = NULL; char *save = NULL; int idx = 0;
-          char hop[16] = ""; char ip[64] = ""; char host[256] = ""; char ping[64] = "";
-          tok = strtok_r(copy, " \t", &save);
-          while (tok) {
-            if (idx == 0) { snprintf(hop, sizeof(hop), "%s", tok); }
-            else if (idx == 1) {
-              /* could be hostname or ip */
-              if (tok[0] == '(') {
-                /* unexpected, skip */
-              } else {
-                /* store as ip for now */
-                snprintf(ip, sizeof(ip), "%s", tok);
-              }
-            } else if (idx == 2) {
-              /* maybe ip in parentheses or first ping */
-              if (tok[0] == '(') {
-                /* strip parentheses */
-                char *endp = strchr(tok, ')');
-                if (endp) { *endp = 0; snprintf(host, sizeof(host), "%s", tok+1); }
-              } else if (!ping[0]) {
-                snprintf(ping, sizeof(ping), "%s", tok);
-              }
-            } else {
-              if (!ping[0] && strchr(tok, 'm')) { snprintf(ping, sizeof(ping), "%s", tok); }
-            }
-            idx++; tok = strtok_r(NULL, " \t", &save);
+          /* Normalize multiple spaces -> single to simplify splitting */
+          char *norm = strdup(line); if(!norm) continue;
+          for(char *q=norm; *q; ++q){ if(*q=='\t') *q=' '; }
+          /* collapse spaces */
+          char *w=norm, *rdr=norm; int sp=0; while(*rdr){ if(*rdr==' '){ if(!sp){ *w++=' '; sp=1; } } else { *w++=*rdr; sp=0; } rdr++; } *w=0;
+          char hop[16]=""; char ip[64]=""; char host[256]=""; char ping[32]="";
+          /* '*' hop */
+          if (strchr(norm,'*') && strstr(norm," * ")==norm+ (strchr(norm,' ')? (strchr(norm,' ')-norm)+1:0)) {
+            /* leave as '*' no latency */
           }
-          free(copy);
-          if (!first) APPEND(","); first = 0;
+          /* Tokenize manually */
+          char *save=NULL; char *tok=strtok_r(norm," ",&save); int idx=0; char seen_paren_ip=0; char raw_ip_paren[64]=""; char raw_host[256]=""; 
+          while(tok){
+            if(idx==0){ snprintf(hop,sizeof(hop),"%s",tok); }
+            else if(idx==1){
+              if(tok[0]=='('){ /* rare ordering */ }
+              else if(strcmp(tok,"*")==0){ snprintf(ip,sizeof(ip),"*"); }
+              else { snprintf(raw_host,sizeof(raw_host),"%s",tok); }
+            } else {
+              if(tok[0]=='('){
+                char *endp=strchr(tok,')'); if(endp){ *endp=0; snprintf(raw_ip_paren,sizeof(raw_ip_paren),"%s",tok+1); seen_paren_ip=1; }
+              } else if(strchr(tok,'m') && !ping[0]) { /* latency token contains ms */
+                /* extract number+ms */
+                snprintf(ping,sizeof(ping),"%s",tok);
+              }
+            }
+            tok=strtok_r(NULL," ",&save); idx++;
+          }
+          if(seen_paren_ip){ snprintf(ip,sizeof(ip),"%s",raw_ip_paren); snprintf(host,sizeof(host),"%s",raw_host); }
+          else {
+            /* If we never saw parentheses and first non-hop token is an IP (digits + dots), treat as ip */
+            if(raw_host[0]) {
+              int is_ip=1; for(char *c=raw_host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } }
+              if(is_ip) snprintf(ip,sizeof(ip),"%s",raw_host); else snprintf(host,sizeof(host),"%s",raw_host);
+            }
+          }
+          free(norm);
+          if(!first) APPEND(","); first=0;
           APPEND("{\"hop\":%s,\"ip\":", hop); json_append_escaped(&buf,&len,&cap, ip);
           APPEND(",\"host\":"); json_append_escaped(&buf,&len,&cap, host);
           APPEND(",\"ping\":"); json_append_escaped(&buf,&len,&cap, ping);
@@ -899,7 +932,7 @@ static int h_status_lite(http_request_t *r) {
   /* primary IPv4 */
   char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if(getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(!ifa->ifa_addr) continue; if(ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break; } } } if(ifap) freeifaddrs(ifap);} APP_L("\"ip\":"); json_append_escaped(&buf,&len,&cap,ipaddr); APP_L(",");
   /* uptime */
-  long uptime_seconds=0; { char *upt=NULL; size_t un=0; if(util_read_file("/proc/uptime",&upt,&un)==0 && upt){ uptime_seconds=(long)atof(upt); free(upt);} }
+  long uptime_seconds = get_uptime_seconds();
   char uptime_str[64]=""; format_duration(uptime_seconds, uptime_str, sizeof(uptime_str));
   char uptime_linux[160]=""; format_uptime_linux(uptime_seconds, uptime_linux, sizeof(uptime_linux));
   APP_L("\"uptime_str\":"); json_append_escaped(&buf,&len,&cap,uptime_str); APP_L(",");
@@ -931,21 +964,30 @@ static int h_olsr_routes(http_request_t *r) {
   /* fetch routes JSON from possible endpoints */
   char *raw=NULL; size_t rn=0; const char *eps[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
   for(const char **ep=eps; *ep && !raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&raw,&rn)==0 && raw && rn>0) break; if(raw){ free(raw); raw=NULL; rn=0; } }
-  if(!raw){ send_json(r, "[]\n"); return 0; }
-  /* build result */
-  char *out=NULL; size_t cap=4096,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"[]\n"); return 0;} out[0]=0;
-  #define APP_R(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); free(raw); send_json(r,"[]\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(_t); free(out); free(raw); send_json(r,"[]\n"); return 0;} out=nb;} memcpy(out+len,_t,(size_t)_n); len+=(size_t)_n; out[len]=0; free(_t);}while(0)
-  APP_R("["); int first=1;
-  const char *p=strchr(raw,'['); if(!p) p=raw; int depth=0; while(*p){ if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ char *v; size_t vlen; char gw[128]=""; char dst[128]=""; char dev[64]=""; char metric[32]=""; if(find_json_string_value(obj,"via",&v,&vlen) || find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"gatewayIP",&v,&vlen) || find_json_string_value(obj,"nextHop",&v,&vlen)) snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v); if(find_json_string_value(obj,"destination",&v,&vlen) || find_json_string_value(obj,"destinationIPNet",&v,&vlen) || find_json_string_value(obj,"dst",&v,&vlen)) snprintf(dst,sizeof(dst),"%.*s",(int)vlen,v); if(find_json_string_value(obj,"device",&v,&vlen) || find_json_string_value(obj,"dev",&v,&vlen) || find_json_string_value(obj,"interface",&v,&vlen)) snprintf(dev,sizeof(dev),"%.*s",(int)vlen,v); if(find_json_string_value(obj,"metric",&v,&vlen) || find_json_string_value(obj,"rtpMetricCost",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
-            int match=1; if(filter){ if(!gw[0]) match=0; else { char gw_ip[128]; snprintf(gw_ip,sizeof(gw_ip),"%s",gw); char *slash=strchr(gw_ip,'/'); if(slash) *slash=0; if(strcmp(gw_ip,via_ip)!=0) match=0; } }
-            if(match && dst[0]){ if(!first) APP_R(","); first=0; APP_R("\"");
-              /* pack line as 'destination dev metric' similar to legacy output */
-              if(metric[0]){ char line[320]; snprintf(line,sizeof(line),"%s %s %s", dst, dev, metric); json_append_escaped(&out,&len,&cap,line); }
-              else { char line[256]; snprintf(line,sizeof(line),"%s %s", dst, dev); json_append_escaped(&out,&len,&cap,line); }
-              APP_R("\""); }
-          } continue; }
-        p++; }
-  APP_R("]\n");
+  if(!raw){ send_json(r, "{\"via\":\"\",\"routes\":[]}\n"); return 0; }
+  char *out=NULL; size_t cap=4096,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out[0]=0;
+  #define APP_R(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(_t); free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out=nb;} memcpy(out+len,_t,(size_t)_n); len+=(size_t)_n; out[len]=0; free(_t);}while(0)
+  APP_R("{\"via\":"); json_append_escaped(&out,&len,&cap, via_ip); APP_R(",\"routes\":["); int first=1; int count=0;
+  const char *p=strchr(raw,'['); if(!p) p=raw;
+  while(*p){
+    if(*p=='{'){
+      const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p;
+      if(end>obj){
+        char *v; size_t vlen; char gw[128]=""; char dst[128]=""; char dev[64]=""; char metric[32]="";
+        if(find_json_string_value(obj,"via",&v,&vlen) || find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"gatewayIP",&v,&vlen) || find_json_string_value(obj,"nextHop",&v,&vlen)) snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v);
+        if(find_json_string_value(obj,"destination",&v,&vlen) || find_json_string_value(obj,"destinationIPNet",&v,&vlen) || find_json_string_value(obj,"dst",&v,&vlen)) snprintf(dst,sizeof(dst),"%.*s",(int)vlen,v);
+        if(find_json_string_value(obj,"device",&v,&vlen) || find_json_string_value(obj,"dev",&v,&vlen) || find_json_string_value(obj,"interface",&v,&vlen)) snprintf(dev,sizeof(dev),"%.*s",(int)vlen,v);
+        if(find_json_string_value(obj,"metric",&v,&vlen) || find_json_string_value(obj,"rtpMetricCost",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
+        int match=1; if(filter){ if(!gw[0]) match=0; else { char gw_ip[128]; snprintf(gw_ip,sizeof(gw_ip),"%s",gw); char *slash=strchr(gw_ip,'/'); if(slash) *slash=0; if(strcmp(gw_ip,via_ip)!=0) match=0; } }
+        if(match && dst[0]){
+          if(!first) APP_R(","); first=0; count++;
+          char line[320]; if(metric[0]) snprintf(line,sizeof(line),"%s %s %s", dst, dev, metric); else snprintf(line,sizeof(line),"%s %s", dst, dev);
+          json_append_escaped(&out,&len,&cap,line);
+        }
+      }
+      continue; }
+    p++; }
+  APP_R("],\"count\":%d}\n", count);
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,len); free(out); free(raw); return 0; }
 
 /* --- OLSR links endpoint with minimal neighbors --- */
@@ -979,7 +1021,7 @@ done:
 static int h_status_summary(http_request_t *r) {
   char hostname[256]=""; if (gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; else hostname[0]=0;
   char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if (getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break;} } } if(ifap) freeifaddrs(ifap);} 
-  long uptime_seconds=0; { char *upt=NULL; size_t un=0; if(util_read_file("/proc/uptime",&upt,&un)==0 && upt){ uptime_seconds=(long)atof(upt); free(upt);} }
+  long uptime_seconds = get_uptime_seconds();
   char uptime_h[160]=""; format_uptime_linux(uptime_seconds, uptime_h, sizeof(uptime_h));
   char buf[1024]; snprintf(buf,sizeof(buf),"{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime_linux\":\"%s\"}\n", hostname, ipaddr, uptime_h);
   send_json(r, buf); return 0; }
