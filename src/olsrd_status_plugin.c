@@ -339,7 +339,13 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
 /* Try to obtain ubnt-discover output: prefer binary if present, else /tmp/10-all.json, then internal broadcast, else arp fallback */
 static int ubnt_discover_output(char **out, size_t *outlen) {
   /* Simple in-memory cache to avoid broadcasting too often */
-  static char *cache_buf = NULL; static size_t cache_len = 0; static time_t cache_time = 0; const int CACHE_TTL = 30; /* seconds */
+  static char *cache_buf = NULL; static size_t cache_len = 0; static time_t cache_time = 0; static int CACHE_TTL = 30; /* seconds */
+  static int ttl_inited = 0;
+  if(!ttl_inited){
+    const char *e = getenv("DISCOVERY_TTL");
+    if(e && *e){ int v = atoi(e); if(v>0 && v < 3600) CACHE_TTL = v; }
+    ttl_inited = 1;
+  }
   time_t now_ts = time(NULL);
   if (cache_buf && cache_len > 0 && (now_ts - cache_time) < CACHE_TTL) {
     char *dup = malloc(cache_len + 1);
@@ -414,6 +420,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
               json_buf_append(&buf,&len,&cap,",\"firmware\":\"\"");
             }
           }
+          /* Add enrichment placeholders for signal and rates (filled via external airosdata correlation on client) */
+          json_buf_append(&buf,&len,&cap,",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"");
           json_buf_append(&buf,&len,&cap,"}");
         }
         gettimeofday(&now,NULL);
@@ -523,10 +531,10 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
         r++;
       }
       if (!r || r<=obj_start) break;
-      /* within obj_start..r extract fields */
+  /* within obj_start..r extract fields */
   char *v; size_t vlen;
       /* fields to extract: ipv4 (or ip), mac or hwaddr, name/hostname, product, uptime, mode, essid, firmware */
-      char ipv4[64] = ""; char hwaddr[64] = ""; char hostname[256] = ""; char product[128] = ""; char uptime[64] = ""; char mode[64] = ""; char essid[128] = ""; char firmware[128] = "";
+  char ipv4[64] = ""; char hwaddr[64] = ""; char hostname[256] = ""; char product[128] = ""; char uptime[64] = ""; char mode[64] = ""; char essid[128] = ""; char firmware[128] = ""; char signal[32]=""; char tx_rate[32]=""; char rx_rate[32]="";
       if (find_json_string_value(obj_start, "ipv4", &v, &vlen) || find_json_string_value(obj_start, "ip", &v, &vlen)) { snprintf(ipv4, sizeof(ipv4), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "mac", &v, &vlen) || find_json_string_value(obj_start, "hwaddr", &v, &vlen)) { snprintf(hwaddr, sizeof(hwaddr), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "name", &v, &vlen) || find_json_string_value(obj_start, "hostname", &v, &vlen)) { snprintf(hostname, sizeof(hostname), "%.*s", (int)vlen, v); }
@@ -548,6 +556,10 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj_start, "mode", &v, &vlen)) { snprintf(mode, sizeof(mode), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "essid", &v, &vlen)) { snprintf(essid, sizeof(essid), "%.*s", (int)vlen, v); }
       if (find_json_string_value(obj_start, "firmware", &v, &vlen)) { snprintf(firmware, sizeof(firmware), "%.*s", (int)vlen, v); }
+  /* optional enrichment fields (best-effort) */
+  if (find_json_string_value(obj_start, "signal", &v, &vlen) || find_json_string_value(obj_start, "signal_dbm", &v, &vlen)) { snprintf(signal, sizeof(signal), "%.*s", (int)vlen, v); }
+  if (find_json_string_value(obj_start, "tx_rate", &v, &vlen) || find_json_string_value(obj_start, "txrate", &v, &vlen) || find_json_string_value(obj_start, "txSpeed", &v, &vlen)) { snprintf(tx_rate, sizeof(tx_rate), "%.*s", (int)vlen, v); }
+  if (find_json_string_value(obj_start, "rx_rate", &v, &vlen) || find_json_string_value(obj_start, "rxrate", &v, &vlen) || find_json_string_value(obj_start, "rxSpeed", &v, &vlen)) { snprintf(rx_rate, sizeof(rx_rate), "%.*s", (int)vlen, v); }
 
       /* append comma if not first */
       if (len > 2) json_buf_append(&buf, &len, &cap, ",");
@@ -558,7 +570,10 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
       json_buf_append(&buf,&len,&cap, ",\"uptime\":"); json_append_escaped(&buf,&len,&cap, uptime);
       json_buf_append(&buf,&len,&cap, ",\"mode\":"); json_append_escaped(&buf,&len,&cap, mode);
       json_buf_append(&buf,&len,&cap, ",\"essid\":"); json_append_escaped(&buf,&len,&cap, essid);
-      json_buf_append(&buf,&len,&cap, ",\"firmware\":"); json_append_escaped(&buf,&len,&cap, firmware);
+  json_buf_append(&buf,&len,&cap, ",\"firmware\":"); json_append_escaped(&buf,&len,&cap, firmware);
+  json_buf_append(&buf,&len,&cap, ",\"signal\":"); json_append_escaped(&buf,&len,&cap, signal);
+  json_buf_append(&buf,&len,&cap, ",\"tx_rate\":"); json_append_escaped(&buf,&len,&cap, tx_rate);
+  json_buf_append(&buf,&len,&cap, ",\"rx_rate\":"); json_append_escaped(&buf,&len,&cap, rx_rate);
       json_buf_append(&buf,&len,&cap, "}");
 
       q = r; continue;
@@ -1018,7 +1033,8 @@ static int h_status(http_request_t *r) {
           for(char *q=norm; *q; ++q){ if(*q=='\t') *q=' '; }
           /* collapse spaces */
           char *w=norm, *rdr=norm; int sp=0; while(*rdr){ if(*rdr==' '){ if(!sp){ *w++=' '; sp=1; } } else { *w++=*rdr; sp=0; } rdr++; } *w=0;
-          char hop[16]=""; char ip[64]=""; char host[256]=""; char ping[32]="";
+          /* ping buffer enlarged to 64 to avoid truncation when copying parsed token */
+          char hop[16]=""; char ip[64]=""; char host[256]=""; char ping[64]="";
           /* '*' hop */
           if (strchr(norm,'*') && strstr(norm," * ")==norm+ (strchr(norm,' ')? (strchr(norm,' ')-norm)+1:0)) {
             /* leave as '*' no latency */

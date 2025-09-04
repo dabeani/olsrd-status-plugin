@@ -257,7 +257,10 @@ function populateDevicesTable(devices, airos) {
     tr.appendChild(td(device.uptime));
     tr.appendChild(td(device.mode));
     tr.appendChild(td(device.essid));
-    tr.appendChild(td(device.firmware));
+  tr.appendChild(td(device.firmware));
+  tr.appendChild(td(device.signal || ''));
+  tr.appendChild(td(device.tx_rate || ''));
+  tr.appendChild(td(device.rx_rate || ''));
     var wireless = '';
     var freq_start = null, freq_end = null, frequency = null, chanbw = null;
     if (airos && airos[device.ipv4] && airos[device.ipv4].wireless) {
