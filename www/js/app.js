@@ -155,13 +155,18 @@ if (!window.Promise) {
 // Fetch polyfill for older browsers
 if (!window.fetch) {
   window.fetch = function(url, options) {
+    options = options || {};
     return new Promise(function(resolve, reject) {
       var xhr = new XMLHttpRequest();
-      xhr.open(options && options.method || 'GET', url, true);
-      if (options && options.headers) {
+      xhr.open(options.method || 'GET', url, true);
+      if (options.headers) {
         for (var header in options.headers) {
           xhr.setRequestHeader(header, options.headers[header]);
         }
+      }
+      // Add cache control header if cache option is specified
+      if (options.cache === 'no-store') {
+        xhr.setRequestHeader('Cache-Control', 'no-cache');
       }
       xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
@@ -180,7 +185,7 @@ if (!window.fetch) {
         }
       };
       xhr.onerror = function() { reject(new Error('Network error')); };
-      xhr.send(options && options.body);
+      xhr.send(options.body);
     });
   };
 }
