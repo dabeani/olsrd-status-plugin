@@ -150,7 +150,8 @@ if (!window.Promise) {
         }, reject);
       });
     });
-  };
+  }
+}
 
 // Fetch polyfill for older browsers
 if (!window.fetch) {
@@ -836,4 +837,3 @@ function runTraceroute(){
     } catch (e) { /* ignore parsing errors */ }
   }).catch(function(e){ if (pre) pre.textContent = 'ERR: '+e; });
 }
-
