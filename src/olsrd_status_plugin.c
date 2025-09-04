@@ -287,14 +287,22 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
 
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
 static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
-  if (mac_out && mac_len) mac_out[0]=0; if (host_out && host_len) host_out[0]=0; if(!ip||!*ip) return;
+  if (mac_out && mac_len) mac_out[0]=0;
+  if (host_out && host_len) host_out[0]=0;
+  if(!ip||!*ip) return;
   FILE *f = fopen("/proc/net/arp", "r");
   if (f) {
-    char line[512]; fgets(line,sizeof(line),f); /* skip header */
+    char line[512];
+    if(!fgets(line,sizeof(line),f)) { fclose(f); f=NULL; }
     while (fgets(line,sizeof(line),f)) {
       char ipf[128], hw[128];
       if (sscanf(line, "%127s %*s %*s %127s", ipf, hw) == 2) {
-        if (strcmp(ipf, ip)==0) { if (mac_out && mac_len) { snprintf(mac_out, mac_len, "%s", hw); } break; }
+        if (strcmp(ipf, ip)==0) {
+          if (mac_out && mac_len) {
+            size_t hwlen=strlen(hw); if(hwlen>=mac_len) hwlen=mac_len-1; memcpy(mac_out,hw,hwlen); mac_out[hwlen]=0;
+          }
+          break;
+        }
       }
     }
     fclose(f);
@@ -306,11 +314,19 @@ static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *h
 
 /* Basic ARP table to JSON device list */
 static int devices_from_arp_json(char **out, size_t *outlen) {
-  if(!out||!outlen) return -1; *out=NULL; *outlen=0;
-  FILE *f = fopen("/proc/net/arp","r"); if(!f) return -1; char *buf=NULL; size_t cap=2048,len=0; buf=malloc(cap); if(!buf){ fclose(f); return -1;} buf[0]=0; json_buf_append(&buf,&len,&cap,"["); int first=1; char line[512]; fgets(line,sizeof(line),f);
+  if(!out||!outlen) return -1;
+  *out=NULL; *outlen=0;
+  FILE *f = fopen("/proc/net/arp","r"); if(!f) return -1; char *buf=NULL; size_t cap=2048,len=0; buf=malloc(cap); if(!buf){ fclose(f); return -1;} buf[0]=0; json_buf_append(&buf,&len,&cap,"["); int first=1; char line[512];
+  if(!fgets(line,sizeof(line),f)) { fclose(f); free(buf); return -1; }
   while(fgets(line,sizeof(line),f)){
-    char ip[128], hw[128], dev[64]; if (sscanf(line,"%127s %*s %*s %127s %*s %63s", ip, hw, dev) >=2) {
-      if(!first) json_buf_append(&buf,&len,&cap,","); first=0; json_buf_append(&buf,&len,&cap,"{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,ip); json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw); json_buf_append(&buf,&len,&cap,",\"hostname\":\"\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"}"); }
+    char ip[128], hw[128], dev[64];
+    if (sscanf(line,"%127s %*s %*s %127s %*s %63s", ip, hw, dev) >=2) {
+      if(!first) json_buf_append(&buf,&len,&cap,",");
+      first=0;
+      json_buf_append(&buf,&len,&cap,"{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,ip);
+      json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
+      json_buf_append(&buf,&len,&cap,",\"hostname\":\"\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"}");
+    }
   }
   fclose(f); json_buf_append(&buf,&len,&cap,"]"); *out=buf; *outlen=len; return 0;
 }
@@ -360,7 +376,8 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       static char def_ip_cached[64];
       if (!def_ip_cached[0]) { char *rout_link=NULL; size_t rnl=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout_link,&rnl)==0 && rout_link){ char *pdef=strstr(rout_link,"via "); if(pdef){ pdef+=4; char *q2=strchr(pdef,' '); if(q2){ size_t L=q2-pdef; if(L<sizeof(def_ip_cached)){ strncpy(def_ip_cached,pdef,L); def_ip_cached[L]=0; } } } free(rout_link);} }
       int is_default = (def_ip_cached[0] && strcmp(def_ip_cached, remote)==0)?1:0;
-      if (!first) json_buf_append(&buf,&len,&cap,","); first=0;
+  if (!first) json_buf_append(&buf,&len,&cap,",");
+  first=0;
       json_buf_append(&buf,&len,&cap,"{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf);
       json_buf_append(&buf,&len,&cap,",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
       json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
@@ -383,14 +400,16 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
     const char *scan = raw; int safety=0;
     while((scan=strchr(scan,'{')) && safety<500) {
       safety++; const char *obj=scan; int od=0; const char *r=obj; while(*r){ if(*r=='{') od++; else if(*r=='}'){ od--; if(od==0){ r++; break; } } r++; }
-      if(!r) break; size_t ol=(size_t)(r-obj);
+  if(!r) break;
+  size_t ol=(size_t)(r-obj);
       if(!memmem(obj,ol,"remote",6) || !memmem(obj,ol,"local",5)) { scan=scan+1; continue; }
       char *v; size_t vlen; char local[64]=""; char remote[64]=""; char remote_host[128]="";
       if(find_json_string_value(obj,"localIP",&v,&vlen) || find_json_string_value(obj,"local",&v,&vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"remoteIP",&v,&vlen) || find_json_string_value(obj,"remote",&v,&vlen) || find_json_string_value(obj,"neighborIP",&v,&vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if(!remote[0]) { scan=r; continue; }
       if(remote[0]){ struct in_addr ina_r; if(inet_aton(remote,&ina_r)){ struct hostent *hre=gethostbyaddr(&ina_r,sizeof(ina_r),AF_INET); if(hre&&hre->h_name) snprintf(remote_host,sizeof(remote_host),"%s",hre->h_name); } }
-      if(!first) json_buf_append(&buf,&len,&cap,","); first=0;
+  if(!first) json_buf_append(&buf,&len,&cap,",");
+  first=0;
       json_buf_append(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
       json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
       json_buf_append(&buf,&len,&cap,",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
@@ -416,7 +435,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   const char *first = NULL; for (const char **p = ubnt_candidates; *p; ++p) { if (*p && path_exists(*p)) { first = *p; break; } }
   if (first) {
     fprintf(stderr, "[status-plugin] found ubnt-discover at: %s\n", first);
-    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s -d 150 -V -i none -j", first);
+  char cmd[1024]; /* enlarged to silence potential truncation warning */
+  snprintf(cmd, sizeof(cmd), "%s -d 150 -V -i none -j", first);
     if (util_exec(cmd, out, outlen) == 0 && *out && *outlen > 0) {
       fprintf(stderr, "[status-plugin] ubnt-discover succeeded (%zu bytes)\n", *outlen);
       /* cache */
@@ -466,6 +486,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
         gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
         if (ms > 300) { ubnt_discover_send(s,&dst); }
         if (ms > 800) break; usleep(20000);
+  if (ms > 800) break;
+  usleep(20000);
       }
       close(s);
       for(int di=0; di<dev_count; ++di){ if((!devices[di].have_hostname || !devices[di].have_hw) && devices[di].ip[0]){ char arp_mac[64]=""; char arp_host[256]=""; arp_enrich_ip(devices[di].ip, arp_mac, sizeof(arp_mac), arp_host, sizeof(arp_host)); if(!devices[di].have_hw && arp_mac[0]){ snprintf(devices[di].hw,sizeof(devices[di].hw),"%s",arp_mac); devices[di].have_hw=1; } if(!devices[di].have_hostname && arp_host[0]){ snprintf(devices[di].hostname,sizeof(devices[di].hostname),"%s",arp_host); devices[di].have_hostname=1; } } }
@@ -643,6 +665,10 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
       if(find_json_string_value(obj,"metric",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
       if(originator[0]) lookup_hostname_cached(originator, hostname, sizeof(hostname));
       if(!first) json_buf_append(&buf,&len,&cap,","); first=0;
+  if(!first) json_buf_append(&buf,&len,&cap,",");
+  first=0;
+  if(!first) json_buf_append(&buf,&len,&cap,",");
+  first=0;
       json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap,originator);
       json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap,bindto);
       json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
