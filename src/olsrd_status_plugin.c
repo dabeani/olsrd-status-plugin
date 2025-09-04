@@ -383,6 +383,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   /* Extract pointers to routes/topology arrays */
   const char *routes_section = strstr(raw, "\"routes\"");
   const char *topology_section = strstr(raw, "\"topology\"");
+  if (!routes_section || !topology_section) {
+    fprintf(stderr, "[status-plugin] debug: routes_section=%p topology_section=%p (expected non-NULL)\n", (void*)routes_section, (void*)topology_section);
+  }
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
     if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
@@ -418,8 +421,16 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf, &len, &cap, ",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
   /* derive simple counts */
   int routes_cnt = 0; int nodes_cnt = 0;
-  if (routes_section) routes_cnt = count_routes_for_ip(routes_section, remote);
-  if (topology_section) nodes_cnt = count_nodes_for_ip(topology_section, remote);
+  if (routes_section) {
+    routes_cnt = count_routes_for_ip(routes_section, remote);
+  } else {
+    fprintf(stderr, "[status-plugin] debug: no routes section when processing remote %s\n", remote);
+  }
+  if (topology_section) {
+    nodes_cnt = count_nodes_for_ip(topology_section, remote);
+  } else {
+    fprintf(stderr, "[status-plugin] debug: no topology section when processing remote %s\n", remote);
+  }
   /* Fallback: if no topology info available (common on some builds) reuse routes count */
   if (nodes_cnt == 0 && routes_cnt > 0 && (!topology_section || !*topology_section)) nodes_cnt = routes_cnt;
   /* Build short summary strings (similar to sample output showing number preceding details, e.g., "473") */
