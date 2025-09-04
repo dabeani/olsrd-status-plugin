@@ -331,6 +331,37 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
   fclose(f); json_buf_append(&buf,&len,&cap,"]"); *out=buf; *outlen=len; return 0;
 }
 
+/* Build node_db style object from ARP (keyed by IPv4) */
+static int devices_from_arp_nodedb(char **out, size_t *outlen) {
+  if(!out||!outlen) return -1; *out=NULL; *outlen=0;
+  FILE *f=fopen("/proc/net/arp","r"); if(!f) return -1;
+  size_t cap=4096,len=0; char *buf=malloc(cap); if(!buf){ fclose(f); return -1; } buf[0]=0;
+  json_buf_append(&buf,&len,&cap,"{"); int first=1; char line[512];
+  if(!fgets(line,sizeof(line),f)) { fclose(f); free(buf); return -1; }
+  while(fgets(line,sizeof(line),f)) {
+    char ip[128], hw[128], dev[64];
+    if (sscanf(line,"%127s %*s %*s %127s %*s %63s", ip, hw, dev) >=2) {
+      if(!first) json_buf_append(&buf,&len,&cap,",");
+      first=0;
+      /* attempt reverse DNS */
+      char host[256]=""; struct in_addr ina; if(inet_aton(ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he&&he->h_name) snprintf(host,sizeof(host),"%s",he->h_name); }
+      json_buf_append(&buf,&len,&cap,"\""); json_append_escaped(&buf,&len,&cap,ip); json_buf_append(&buf,&len,&cap,"\":{");
+      json_buf_append(&buf,&len,&cap,"\"n\":\"\",\"d\":\"\",\"id\":0,\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
+      json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,host);
+      json_buf_append(&buf,&len,&cap,"}");
+    }
+  }
+  json_buf_append(&buf,&len,&cap,first?"\"meta\":{\"fallback\":\"arp_empty\"}}":" ,\"meta\":{\"fallback\":\"arp\"}} ");
+  fclose(f);
+  *out=buf; *outlen=len; return 0;
+}
+
+/* Obtain primary non-loopback IPv4 (best effort). */
+static void get_primary_ipv4(char *out, size_t outlen){ if(out&&outlen) out[0]=0; struct ifaddrs *ifap=NULL,*ifa=NULL; if(getifaddrs(&ifap)==0){ for(ifa=ifap; ifa; ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b))){ if(strcmp(b,"127.0.0.1")!=0){ snprintf(out,outlen,"%s",b); break; } } } } freeifaddrs(ifap);} }
+
+/* Very lightweight validation that node_db json has object form & expected keys */
+static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) return 0; /* skip leading ws */ size_t i=0; while(i<len && (buf[i]==' '||buf[i]=='\n'||buf[i]=='\r'||buf[i]=='\t')) i++; if(i>=len) return 0; if(buf[i] != '{') return 0; /* look for some indicative keys */ if(strstr(buf,"\"v6-to-v4\"")||strstr(buf,"\"v6-to-id\"")||strstr(buf,"\"v6-hna-at\"")) return 1; if(strstr(buf,"\"n\"")) return 1; return 1; }
+
 /* Improved unique-destination counting: counts distinct destination nodes reachable via given last hop. */
 static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen) {
   if (!raw || !outbuf || !outlen) return -1;
@@ -1243,22 +1274,24 @@ static int h_nodedb(http_request_t *r) {
   if (!g_nodedb_cached || g_nodedb_cached_len==0 || (now - g_nodedb_last_fetch) > g_nodedb_ttl) need_fetch=1;
   pthread_mutex_unlock(&g_nodedb_lock);
   if (need_fetch) {
-    char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 %s", g_nodedb_url);
+    char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
+    char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", ipbuf, g_nodedb_url);
     char *fresh=NULL; size_t fn=0;
-    if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn)) {
+    if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
       pthread_mutex_lock(&g_nodedb_lock);
       if (g_nodedb_cached) free(g_nodedb_cached);
       g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
       pthread_mutex_unlock(&g_nodedb_lock);
-      fresh=NULL;
+      /* write a copy for external inspection */
+      FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} fresh=NULL;
     } else if (fresh) { free(fresh); }
   }
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
     http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
-  /* 4. ARP fallback */
-  if (devices_from_arp_json(&out,&n)==0 && out && n>0) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
+  /* 4. ARP fallback: produce object mapping */
+  if (devices_from_arp_nodedb(&out,&n)==0 && out && n>0) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
   if (out) free(out);
   send_json(r,"{}\n"); return 0;
 }
