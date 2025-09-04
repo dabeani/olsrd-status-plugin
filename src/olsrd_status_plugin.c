@@ -758,13 +758,40 @@ static int h_status(http_request_t *r) {
     free(rout);
   }
 
-  /* detect OLSR */
-  char *pout=NULL; size_t pn=0; int olsr2_on=0;
-  if (util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout && pn>0) { olsr2_on=1; fprintf(stderr,"[status-plugin] detected OLSR process: %s\n", pout); } else fprintf(stderr,"[status-plugin] no OLSR process detected\n");
 
-  /* fetch links if not detected */
-  char *olsr_links_raw=NULL; size_t oln=0;
-  if(!olsr2_on){ const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL}; for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){ olsr2_on=1; fprintf(stderr,"[status-plugin] successfully connected to OLSR at %s\n", *ep); break; } if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } } }
+  /* detect olsrd2 vs legacy olsrd processes separately; only set olsr2_on when olsrd2 found */
+  int olsr2_on = 0; /* true only for olsrd2 */
+  int olsrd_on = 0; /* legacy olsrd */
+  char *pout=NULL; size_t pn=0;
+  if (util_exec("pidof olsrd2 2>/dev/null", &pout,&pn)==0 && pout && pn>0) {
+    olsr2_on = 1;
+    fprintf(stderr,"[status-plugin] detected olsrd2 process: %s\n", pout);
+  }
+  if (pout) { free(pout); pout=NULL; pn=0; }
+  if (util_exec("pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout && pn>0) {
+    olsrd_on = 1;
+    fprintf(stderr,"[status-plugin] detected legacy olsrd process: %s\n", pout);
+  }
+  if (pout) { free(pout); pout=NULL; }
+  if (!olsrd_on && !olsr2_on) {
+    fprintf(stderr,"[status-plugin] no OLSR process detected\n");
+  }
+
+  /* fetch links (for either implementation); do not toggle olsr2_on based on HTTP success */
+  char *olsr_links_raw=NULL; size_t oln=0; {
+    const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+    for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){
+      char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep);
+      fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep);
+      if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){
+        fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+        break;
+      }
+      if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; }
+    }
+  }
+
+  /* (legacy duplicate fetch block removed after refactor) */
 
   char *olsr_neighbors_raw=NULL; size_t olnn=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw,&olnn)!=0 && olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; olnn=0; }
   char *olsr_routes_raw=NULL; size_t olr=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &olsr_routes_raw,&olr)!=0 && olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; olr=0; }
@@ -927,7 +954,8 @@ static int h_status(http_request_t *r) {
       APPEND("\"neighbors\":[],");
     }
   }
-  APPEND("\"olsr2_on\":%s", olsr2_on?"true":"false");
+  APPEND("\"olsr2_on\":%s,", olsr2_on?"true":"false");
+  APPEND("\"olsrd_on\":%s", olsrd_on?"true":"false");
 
   /* include raw olsr JSON for neighbors/routes/topology when available to mimic python script */
   if (olsr_neighbors_raw && olnn>0) { APPEND(",\"olsr_neighbors_raw\":%s", olsr_neighbors_raw); }
@@ -1127,7 +1155,7 @@ static int h_status_lite(http_request_t *r) {
   if(path_exists("/tmp/10-all.json")){ char *ar=NULL; size_t an=0; if(util_read_file("/tmp/10-all.json",&ar,&an)==0 && ar){ APP_L("\"airosdata\":%s,", ar); free(ar);} else APP_L("\"airosdata\":{},"); } else APP_L("\"airosdata\":{},");
   /* versions (fast attempt) */
   char *vout=NULL; size_t vn=0; int versions_loaded=0; if(path_exists("/config/custom/versions.sh")){ if(util_exec("/config/custom/versions.sh",&vout,&vn)==0 && vout){ APP_L("\"versions\":%s,", vout); free(vout); versions_loaded=1; }} else if(path_exists("/usr/share/olsrd-status-plugin/versions.sh")){ if(util_exec("/usr/share/olsrd-status-plugin/versions.sh",&vout,&vn)==0 && vout){ APP_L("\"versions\":%s,", vout); free(vout); versions_loaded=1; }} if(!versions_loaded) APP_L("\"versions\":{\"olsrd\":\"unknown\"},");
-  APP_L("\"olsr2_on\":false"); /* not probed here */
+  APP_L("\"olsr2_on\":false,\"olsrd_on\":false"); /* not probed here */
   APP_L("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
@@ -1167,8 +1195,18 @@ static int h_olsr_routes(http_request_t *r) {
 
 /* --- OLSR links endpoint with minimal neighbors --- */
 static int h_olsr_links(http_request_t *r) {
-  char *links_raw=NULL; size_t ln=0; int olsr_on=0; if(util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &links_raw,&ln)==0 && links_raw){ olsr_on=1; free(links_raw); links_raw=NULL; ln=0; }
-  if(!links_raw){ const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL}; for(const char **ep=eps; *ep && !links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&links_raw,&ln)==0 && links_raw && ln>0){ olsr_on=1; break; } if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } } }
+  int olsr2_on=0; /* only true if olsrd2 running */
+  int olsrd_on=0; /* legacy flag */
+  char *tmp=NULL; size_t tmplen=0;
+  if(util_exec("pidof olsrd2 2>/dev/null", &tmp,&tmplen)==0 && tmp && tmplen>0){ olsr2_on=1; }
+  if(tmp){ free(tmp); tmp=NULL; }
+  if(util_exec("pidof olsrd 2>/dev/null", &tmp,&tmplen)==0 && tmp && tmplen>0){ olsrd_on=1; }
+  if(tmp){ free(tmp); tmp=NULL; }
+  /* fetch links regardless of legacy vs v2 */
+  char *links_raw=NULL; size_t ln=0; {
+    const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+    for(const char **ep=eps; *ep && !links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&links_raw,&ln)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
+  }
   char *neighbors_raw=NULL; size_t nnr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr);
   char *routes_raw=NULL; size_t rr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &routes_raw,&rr);
   char *norm_links=NULL; size_t nlinks=0; if(links_raw && normalize_olsrd_links(links_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
@@ -1177,7 +1215,9 @@ static int h_olsr_links(http_request_t *r) {
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{}\n"); goto done; } buf[0]=0;
   #define APP_O(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); if(buf){ free(buf);} send_json(r,"{}\n"); goto done; } if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{}\n"); goto done;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_t);}while(0)
   APP_O("{");
-  APP_O("\"olsr2_on\":%s,", olsr_on?"true":"false");
+  APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
+  APP_O("\"olsrd_on\":%s,", olsrd_on?"true":"false");
+  APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   if(norm_links) APP_O("\"links\":%s,", norm_links); else APP_O("\"links\":[],");
   if(norm_neighbors) APP_O("\"neighbors\":%s", norm_neighbors); else APP_O("\"neighbors\":[]");
   APP_O("}\n");
@@ -1240,10 +1280,16 @@ static int h_status_olsr(http_request_t *r) {
   char def_ip[64]="", def_dev[64]=""; char *rout=NULL; size_t rn=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout){ char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } } p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } }
     free(rout); }
   APP2("\"default_route\":{"); APP2("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip); APP2(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev); APP2("},");
-  /* attempt OLSR links minimal (reuse normalization) */
-  char *olsr_links_raw=NULL; size_t oln=0; int olsr_on=0; char *pout=NULL; size_t pn=0; if(util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout){ olsr_on=1; }
-  if(!olsr_links_raw){ const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL}; for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){ olsr_on=1; break; } if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } } }
-  APP2("\"olsr2_on\":%s,", olsr_on?"true":"false");
+  /* attempt OLSR links minimal (separate flags) */
+  int olsr2_on=0, olsrd_on=0; char *pout=NULL; size_t pn=0;
+  if(util_exec("pidof olsrd2 2>/dev/null", &pout,&pn)==0 && pout && pn>0) { olsr2_on=1; }
+  if(pout){ free(pout); pout=NULL; pn=0; }
+  if(util_exec("pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout && pn>0) { olsrd_on=1; }
+  if(pout){ free(pout); pout=NULL; }
+  char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+  for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
+  APP2("\"olsr2_on\":%s,", olsr2_on?"true":"false");
+  APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
   if(olsr_links_raw && oln>0){ char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(olsr_links_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } } else { APP2("\"links\":[]"); }
   APP2("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(pout) free(pout); return 0; }

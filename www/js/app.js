@@ -488,6 +488,13 @@ function updateUI(data) {
     showTab('tab-olsr2', false);
     var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='none';
   }
+  // legacy OLSR tab visibility (if backend set olsrd_on or provided links while not olsr2)
+  try {
+    if (!data.olsr2_on && (data.olsrd_on || (data.links && data.links.length))) {
+      var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
+      if (linkTab) linkTab.parentElement.style.display = '';
+    }
+  } catch(e){}
   if (data.admin && data.admin.url) {
     showTab('tab-admin', true);
     var adminLink = document.getElementById('adminLink');
@@ -519,7 +526,7 @@ function detectPlatformAndLoad() {
         var adminTabLink = document.getElementById('tab-admin-link');
         if (adminTabLink) adminTabLink.style.display = (caps.show_admin_link? '' : 'none');
       } catch(e){}
-      var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsr2info: '', admin: null };
+  var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsrd_on: false, olsr2info: '', admin: null };
       // Fetch summary first for fast paint
       fetch('/status/summary',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
         if (s.hostname) data.hostname = s.hostname;
@@ -541,7 +548,7 @@ function detectPlatformAndLoad() {
           // ensure defaults so updateUI can safely use them
           data.default_route = status.default_route || {};
           data.links = status.links || [];
-          if (status.olsr2_on) {
+      if (status.olsr2_on) {
             data.olsr2_on = true;
             fetch('/olsr2', {cache: 'no-store'})
               .then(function(r) { return r.text(); })
@@ -550,7 +557,7 @@ function detectPlatformAndLoad() {
             updateUI(data);
             try {
               // OLSR Links
-              if (data.links && data.links.length) {
+        if (data.links && data.links.length) {
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
                 if (linkTab) linkTab.parentElement.style.display = '';
                 populateOlsrLinksTable(data.links);
@@ -559,6 +566,8 @@ function detectPlatformAndLoad() {
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
                 if (linkTab) linkTab.parentElement.style.display = '';
               }
+        // capture legacy olsrd_on flag if provided by backend full status later
+        if (typeof status.olsrd_on === 'boolean') data.olsrd_on = status.olsrd_on;
               // Neighbors
               if (status.olsr2_on && status.neighbors && Array.isArray(status.neighbors) && status.neighbors.length) {
                 var nLi = document.getElementById('tab-olsrd2-links'); if (nLi) nLi.style.display='';
