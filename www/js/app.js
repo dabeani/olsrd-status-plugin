@@ -482,8 +482,9 @@ function detectPlatformAndLoad() {
                 if (linkTab) linkTab.parentElement.style.display = '';
                 populateOlsrLinksTable(data.links);
               } else {
+                // Keep tab visible; it will lazy-load on click
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
-                if (linkTab) linkTab.parentElement.style.display = 'none';
+                if (linkTab) linkTab.parentElement.style.display = '';
               }
               // Neighbors
               if (status.olsr2_on && status.neighbors && Array.isArray(status.neighbors) && status.neighbors.length) {
