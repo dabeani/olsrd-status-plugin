@@ -529,12 +529,10 @@ function detectPlatformAndLoad() {
           // render fixed traceroute-to-uplink results when provided by /status
           try {
             if (status.trace_to_uplink && Array.isArray(status.trace_to_uplink) && status.trace_to_uplink.length) {
-              // show traceroute tab and populate table
               var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
               if (trTab) trTab.parentElement.style.display = '';
-              var hops = status.trace_to_uplink.map(function(h){ return { hop: h.hop || h.hop || '', ip: h.ip || h.ip || '', hostname: h.host || h.hostname || h.host || '', ping: h.ping || h.ping || '' }; });
+              var hops = status.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
               populateTracerouteTable(hops);
-              // also show a short textual summary
               var summaryEl = document.getElementById('traceroute-summary');
               if (summaryEl) summaryEl.textContent = 'Traceroute to ' + (status.trace_target || '') + ': ' + hops.length + ' hop(s)';
             }
@@ -557,6 +555,17 @@ function detectPlatformAndLoad() {
             default_route: status.default_route || {},
             links: status.links || []
           });
+          // Fallback traceroute initial display
+          try {
+            if (status.trace_to_uplink && Array.isArray(status.trace_to_uplink) && status.trace_to_uplink.length) {
+              var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
+              if (trTab) trTab.parentElement.style.display = '';
+              var hops = status.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
+              populateTracerouteTable(hops);
+              var summaryEl = document.getElementById('traceroute-summary');
+              if (summaryEl) summaryEl.textContent = 'Traceroute to ' + (status.trace_target || '') + ': ' + hops.length + ' hop(s)';
+            }
+          } catch(e) {}
         });
     } catch(e2) {}
   }
@@ -764,6 +773,15 @@ function renderConnectionsTable(c, nodedb) {
   var tbody = document.querySelector('#connectionsTable tbody');
   tbody.innerHTML = '';
   if (!c || !c.ports) return;
+  // Build simple IP->hostname map if nodedb given as array
+  var ipToHost = {};
+  if (nodedb) {
+    if (Array.isArray(nodedb)) {
+      nodedb.forEach(function(entry){ if(entry && entry.ipv4 && (entry.hostname || entry.name)) ipToHost[entry.ipv4] = entry.hostname || entry.name; });
+    } else if (typeof nodedb === 'object') {
+      Object.keys(nodedb).forEach(function(k){ var v = nodedb[k]; if(v && (v.hostname || v.name)) ipToHost[k] = v.hostname || v.name; });
+    }
+  }
   c.ports.forEach(function(p){
     var tr = document.createElement('tr');
     function td(val){ var td=document.createElement('td'); td.innerHTML = val || ''; return td; }
@@ -772,9 +790,8 @@ function renderConnectionsTable(c, nodedb) {
     tr.appendChild(td((p.macs || []).join('<br>')));
     tr.appendChild(td((p.ips || []).join('<br>')));
     var hostnames = [];
-    (p.ips || []).forEach(function(ip){ if(nodedb[ip] && nodedb[ip].name) hostnames.push(nodedb[ip].name); });
+    (p.ips || []).forEach(function(ip){ if(ipToHost[ip]) hostnames.push(ipToHost[ip]); });
     tr.appendChild(td(hostnames.join('<br>')));
-    tr.appendChild(td(p.notes || ''));
     tbody.appendChild(tr);
   });
   var headers = document.querySelectorAll('#connectionsTable th');

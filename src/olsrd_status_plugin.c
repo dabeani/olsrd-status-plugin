@@ -898,7 +898,11 @@ static int h_status_lite(http_request_t *r) {
   APP_L("\"uptime_linux\":"); json_append_escaped(&buf,&len,&cap,uptime_linux); APP_L(",");
   /* default route */
   char def_ip[64]="", def_dev[64]="", def_hostname[256]=""; char *rout=NULL; size_t rn=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout){ char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } } p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } } free(rout);} if(def_ip[0]){ struct in_addr ina; if(inet_aton(def_ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he && he->h_name) snprintf(def_hostname,sizeof(def_hostname),"%s",he->h_name); }}
-  APP_L("\"default_route\":{"); APP_L("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip); APP_L(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev); APP_L(",\"hostname\":"); json_append_escaped(&buf,&len,&cap,def_hostname); APP_L("},");
+  APP_L("\"default_route\":{");
+  APP_L("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip);
+  APP_L(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev);
+  APP_L(",\"hostname\":"); json_append_escaped(&buf,&len,&cap,def_hostname);
+  APP_L("},");
   /* devices */
   {
     char *ud=NULL; size_t udn=0; if(ubnt_discover_output(&ud,&udn)==0 && ud){ char *normalized=NULL; size_t nlen=0; if(normalize_ubnt_devices(ud,&normalized,&nlen)==0 && normalized){ APP_L("\"devices\":%s,", normalized); free(normalized);} else APP_L("\"devices\":[],"); free(ud);} else APP_L("\"devices\":[],");
