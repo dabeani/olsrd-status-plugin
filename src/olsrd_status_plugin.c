@@ -534,46 +534,11 @@ static void send_json(http_request_t *r, const char *json);
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
 
 static int h_airos(http_request_t *r);
-static int h_traffic(http_request_t *r);
 
-/* index.html moved to external asset at www/index.html; served from g_asset_root */
+/* Full /status endpoint */
 static int h_status(http_request_t *r) {
-  /* Build a JSON status object used by the frontend (app.js).
-   * Fields provided: hostname, ip, uptime (seconds), devices (empty/default), airosdata (from /tmp/10-all.json),
-   * default_route (ip, dev), links (empty array), olsr2_on (bool).
-   * Behavior adapts to EdgeRouter detection (g_is_edgerouter) and available tools.
-   */
-  char *buf = NULL; size_t cap = 8192, len = 0;
-  buf = (char*)malloc(cap);
-  if (!buf) { send_json(r, "{}\n"); return 0; }
-  /* NOTE: Previous implementation used a fixed 1KB stack buffer and truncated
-   * any formatted output >1023 bytes, corrupting large embedded JSON blobs
-   * (airosdata, olsr_neighbors_raw, routes, topology, etc.) leading to
-   * frontend JSON parse errors ("Expected ':' after property name ...").
-   * This version allocates an appropriately sized temporary string using
-   * asprintf/vasprintf semantics, eliminating silent truncation.
-   */
-  #define APPEND(fmt,...) do { \
-    char *_tmp_alloc = NULL; \
-    int _app_n = asprintf(&_tmp_alloc, fmt, ##__VA_ARGS__); \
-    if (_app_n < 0 || !_tmp_alloc) { \
-      if (_tmp_alloc) free(_tmp_alloc); \
-      free(buf); send_json(r, "{}\n"); return 0; \
-    } \
-    if (len + (size_t)_app_n + 1 > cap) { \
-      while (cap < len + (size_t)_app_n + 1) cap *= 2; \
-      char *nb = (char*)realloc(buf, cap); \
-      if (!nb) { free(_tmp_alloc); free(buf); send_json(r, "{}\n"); return 0; } \
-      buf = nb; \
-    } \
-    memcpy(buf + len, _tmp_alloc, (size_t)_app_n); \
-    len += (size_t)_app_n; \
-    buf[len] = 0; \
-    free(_tmp_alloc); \
-  } while (0)
-
-  /* use json_append_escaped(...) helper defined above */
-
+  char *buf = NULL; size_t cap = 16384, len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); return 0; } buf[0]=0;
+  #define APPEND(fmt,...) do { char *_tmp=NULL; int _n=asprintf(&_tmp,fmt,##__VA_ARGS__); if(_n<0||!_tmp){ if(_tmp) free(_tmp); free(buf); send_json(r,"{}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_tmp); free(buf); send_json(r,"{}\n"); return 0;} buf=nb;} memcpy(buf+len,_tmp,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_tmp);}while(0)
   /* hostname */
   char hostname[256] = ""; if (gethostname(hostname, sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0;
 
@@ -585,9 +550,7 @@ static int h_status(http_request_t *r) {
       if (!ifa->ifa_addr) continue;
       if (ifa->ifa_addr->sa_family == AF_INET) {
         char bufip[INET_ADDRSTRLEN] = "";
-        struct sockaddr_in sa_local;
-        memset(&sa_local, 0, sizeof(sa_local));
-        memcpy(&sa_local, ifa->ifa_addr, sizeof(sa_local));
+        struct sockaddr_in sa_local; memset(&sa_local, 0, sizeof(sa_local)); memcpy(&sa_local, ifa->ifa_addr, sizeof(sa_local));
         inet_ntop(AF_INET, &sa_local.sin_addr, bufip, sizeof(bufip));
         if (bufip[0] && strcmp(bufip, "127.0.0.1") != 0) { snprintf(ipaddr, sizeof(ipaddr), "%s", bufip); break; }
       }
@@ -595,81 +558,41 @@ static int h_status(http_request_t *r) {
     freeifaddrs(ifap);
   }
 
-  /* uptime in seconds (first token of /proc/uptime) */
+  /* uptime in seconds */
   char *upt = NULL; size_t un = 0; long uptime_seconds = 0;
-  if (util_read_file("/proc/uptime", &upt, &un) == 0 && upt && un>0) {
-    uptime_seconds = (long)atof(upt);
-    free(upt); upt = NULL;
-  }
-  /* fallback: if /proc/uptime didn't yield a value, try sysinfo() on Linux */
+  if (util_read_file("/proc/uptime", &upt, &un) == 0 && upt && un>0) { uptime_seconds = (long)atof(upt); free(upt); upt=NULL; }
 #if defined(__linux__)
-  if (uptime_seconds == 0) {
-    struct sysinfo si;
-    if (sysinfo(&si) == 0) uptime_seconds = (long)si.uptime;
-  }
+  if (uptime_seconds == 0) { struct sysinfo si; if (sysinfo(&si) == 0) uptime_seconds = (long)si.uptime; }
 #endif
 
-  /* airosdata: include raw JSON from /tmp/10-all.json if present */
-  char *airos_raw = NULL; size_t airos_n = 0;
-  int have_airos = 0;
-  if (util_read_file("/tmp/10-all.json", &airos_raw, &airos_n) == 0 && airos_raw && airos_n > 0) have_airos = 1;
+  /* airosdata */
+  char *airos_raw = NULL; size_t airos_n = 0; int have_airos = 0;
+  if (util_read_file("/tmp/10-all.json", &airos_raw, &airos_n) == 0 && airos_raw && airos_n>0) have_airos = 1;
 
-  /* default route: parse `ip route show default` */
-  char def_ip[64] = ""; char def_dev[64] = "";
-  char *rout = NULL; size_t rn = 0;
-  if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout && rn>0) {
-    /* sample: default via 78.41.115.1 dev eth0 proto static
-       find 'via' and 'dev' tokens */
-    char *p = strstr(rout, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def_ip)) { strncpy(def_ip, p, L); def_ip[L]=0; } } }
-    p = strstr(rout, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def_dev)) { strncpy(def_dev, p, L); def_dev[L]=0; } else snprintf(def_dev, sizeof(def_dev), "%s", p); } else snprintf(def_dev, sizeof(def_dev), "%s", p); }
-    free(rout); rout = NULL;
+  /* default route */
+  char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
+  if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout) {
+    char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } }
+    p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } }
+    free(rout);
   }
 
-  /* detect olsr2 presence by pidof */
-  char *pout = NULL; size_t pn = 0; int olsr2_on = 0;
-  if (util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout, &pn) == 0 && pout && pn>0) {
-    olsr2_on = 1; /* keep pout for diagnostics, free after JSON emitted */
-    fprintf(stderr, "[status-plugin] detected OLSR process: %s\n", pout);
-  } else {
-    fprintf(stderr, "[status-plugin] no OLSR process detected\n");
-  }
+  /* detect OLSR */
+  char *pout=NULL; size_t pn=0; int olsr2_on=0;
+  if (util_exec("pidof olsrd2 2>/dev/null || pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout && pn>0) { olsr2_on=1; fprintf(stderr,"[status-plugin] detected OLSR process: %s\n", pout); } else fprintf(stderr,"[status-plugin] no OLSR process detected\n");
 
-  /* try to fetch olsrd links from local JSON API endpoints if pidof didn't detect process */
-  char *olsr_links_raw = NULL; size_t oln = 0;
-  if (!olsr2_on) {
-    const char *endpoints[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
-    for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
-      char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
-      fprintf(stderr, "[status-plugin] trying OLSR endpoint: %s\n", *ep);
-      if (util_exec(cmd, &olsr_links_raw, &oln) == 0 && olsr_links_raw && oln>0) {
-        olsr2_on = 1;
-        fprintf(stderr, "[status-plugin] successfully connected to OLSR at %s\n", *ep);
-        break;
-      }
-      if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
-    }
-    if (!olsr2_on) {
-      fprintf(stderr, "[status-plugin] no OLSR API endpoints accessible\n");
-    }
-  }
-  /* additionally try to fetch neighbors, routes and topology JSON for inclusion in /status */
-  char *olsr_neighbors_raw = NULL; size_t olnn = 0;
-  char *olsr_routes_raw = NULL; size_t olr = 0;
-  char *olsr_topology_raw = NULL; size_t olt = 0;
-  if (!olsr_neighbors_raw) {
-    if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn) != 0) { if (olsr_neighbors_raw) { free(olsr_neighbors_raw); olsr_neighbors_raw = NULL; olnn = 0; } }
-  }
-  if (!olsr_routes_raw) {
-    if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr) != 0) { if (olsr_routes_raw) { free(olsr_routes_raw); olsr_routes_raw = NULL; olr = 0; } }
-  }
-  if (!olsr_topology_raw) {
-    if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt) != 0) { if (olsr_topology_raw) { free(olsr_topology_raw); olsr_topology_raw = NULL; olt = 0; } }
-  }
+  /* fetch links if not detected */
+  char *olsr_links_raw=NULL; size_t oln=0;
+  if(!olsr2_on){ const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL}; for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){ olsr2_on=1; fprintf(stderr,"[status-plugin] successfully connected to OLSR at %s\n", *ep); break; } if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } } }
+
+  char *olsr_neighbors_raw=NULL; size_t olnn=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw,&olnn)!=0 && olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; olnn=0; }
+  char *olsr_routes_raw=NULL; size_t olr=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &olsr_routes_raw,&olr)!=0 && olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; olr=0; }
+  char *olsr_topology_raw=NULL; size_t olt=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &olsr_topology_raw,&olt)!=0 && olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; olt=0; }
 
   /* Build JSON */
   APPEND("{");
-  APPEND("\"hostname\":"); json_append_escaped(&buf, &len, &cap, hostname); APPEND(",");
-  APPEND("\"ip\":"); json_append_escaped(&buf, &len, &cap, ipaddr); APPEND(",");
+  APPEND("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APPEND(",");
+  APPEND("\"ip\":"); json_append_escaped(&buf,&len,&cap,ipaddr); APPEND(",");
   APPEND("\"uptime\":\"%ld\",", uptime_seconds);
 
   /* default_route */
@@ -1003,43 +926,27 @@ static int h_status_lite(http_request_t *r) {
 
 /* --- Per-neighbor routes endpoint: /olsr/routes?via=1.2.3.4 --- */
 static int h_olsr_routes(http_request_t *r) {
-  char via_ip[64]; via_ip[0]=0;
-  if (!get_query_param(r, "via", via_ip, sizeof(via_ip)) || !via_ip[0]) {
-    send_json(r, "{\"error\":\"missing via parameter\"}\n");
-    return 0;
-  }
-  char *raw=NULL; size_t rn=0; /* try olsrd2 first */
-  if (util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &raw, &rn) != 0 || !raw || rn==0) {
-    if (raw) { free(raw); raw=NULL; rn=0; }
-    /* optional: fall back to legacy endpoints (none for routes) */
-  }
-  if (!raw) { char buf[256]; snprintf(buf,sizeof(buf),"{\"via\":\""); /* minimal empty result */
-    size_t off=strlen(buf); if(off+strlen(via_ip)+64 < sizeof(buf)) { strcat(buf, via_ip); strcat(buf, "\",\"routes\":[]}\n"); send_json(r, buf); }
-    else send_json(r, "{\"routes\":[]}\n");
-    return 0; }
-  /* Parse JSON-ish content for routes objects */
-  char *out=NULL; size_t cap=1024,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"{\"routes\":[]}\n"); return 0; }
-  #define APP_R(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); free(raw); send_json(r,"{\"routes\":[]}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(_t); free(out); free(raw); send_json(r,"{\"routes\":[]}\n"); return 0;} out=nb;} memcpy(out+len,_t,(size_t)_n); len+=(size_t)_n; out[len]=0; free(_t);}while(0)
-  APP_R("{\"via\":"); json_append_escaped(&out,&len,&cap,via_ip); APP_R(",\"routes\":[");
-  int first=1; const char *p = strstr(raw, "\"routes\""); if(p){ p=strchr(p,'['); if(p){ p++; int depth=1; while(*p && depth>0){ if(*p=='['){ depth++; p++; continue;} if(*p==']'){ depth--; if(depth==0) break; p++; continue;} if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ /* inspect object */
-            char *v; size_t vlen; char via[64]=""; char dest[128]=""; char dev[64]=""; char metric[32]=""; 
-            if(find_json_string_value(obj,"via",&v,&vlen) || find_json_string_value(obj,"gateway",&v,&vlen)) snprintf(via,sizeof(via),"%.*s",(int)vlen,v);
-            if(via[0] && strcmp(via, via_ip)==0){
-              if(find_json_string_value(obj,"destination",&v,&vlen) || find_json_string_value(obj,"destinationIPNet",&v,&vlen)) snprintf(dest,sizeof(dest),"%.*s",(int)vlen,v);
-              if(find_json_string_value(obj,"device",&v,&vlen) || find_json_string_value(obj,"dev",&v,&vlen)) snprintf(dev,sizeof(dev),"%.*s",(int)vlen,v);
-              if(find_json_string_value(obj,"metric",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
-              char line[256]; line[0]=0; if(dest[0]){ snprintf(line,sizeof(line),"%s %s %s", dest, dev, metric); }
-              if(line[0]){ if(!first) APP_R(","); first=0; APP_R("\""); json_append_escaped(&out,&len,&cap,line); APP_R("\""); }
-            }
-          }
-          continue; }
+  char via_ip[64]=""; get_query_param(r,"via", via_ip, sizeof(via_ip));
+  int filter = via_ip[0] ? 1 : 0;
+  /* fetch routes JSON from possible endpoints */
+  char *raw=NULL; size_t rn=0; const char *eps[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
+  for(const char **ep=eps; *ep && !raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&raw,&rn)==0 && raw && rn>0) break; if(raw){ free(raw); raw=NULL; rn=0; } }
+  if(!raw){ send_json(r, "[]\n"); return 0; }
+  /* build result */
+  char *out=NULL; size_t cap=4096,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"[]\n"); return 0;} out[0]=0;
+  #define APP_R(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); free(raw); send_json(r,"[]\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(_t); free(out); free(raw); send_json(r,"[]\n"); return 0;} out=nb;} memcpy(out+len,_t,(size_t)_n); len+=(size_t)_n; out[len]=0; free(_t);}while(0)
+  APP_R("["); int first=1;
+  const char *p=strchr(raw,'['); if(!p) p=raw; int depth=0; while(*p){ if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ char *v; size_t vlen; char gw[128]=""; char dst[128]=""; char dev[64]=""; char metric[32]=""; if(find_json_string_value(obj,"via",&v,&vlen) || find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"gatewayIP",&v,&vlen) || find_json_string_value(obj,"nextHop",&v,&vlen)) snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v); if(find_json_string_value(obj,"destination",&v,&vlen) || find_json_string_value(obj,"destinationIPNet",&v,&vlen) || find_json_string_value(obj,"dst",&v,&vlen)) snprintf(dst,sizeof(dst),"%.*s",(int)vlen,v); if(find_json_string_value(obj,"device",&v,&vlen) || find_json_string_value(obj,"dev",&v,&vlen) || find_json_string_value(obj,"interface",&v,&vlen)) snprintf(dev,sizeof(dev),"%.*s",(int)vlen,v); if(find_json_string_value(obj,"metric",&v,&vlen) || find_json_string_value(obj,"rtpMetricCost",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
+            int match=1; if(filter){ if(!gw[0]) match=0; else { char gw_ip[128]; snprintf(gw_ip,sizeof(gw_ip),"%s",gw); char *slash=strchr(gw_ip,'/'); if(slash) *slash=0; if(strcmp(gw_ip,via_ip)!=0) match=0; } }
+            if(match && dst[0]){ if(!first) APP_R(","); first=0; APP_R("\"");
+              /* pack line as 'destination dev metric' similar to legacy output */
+              if(metric[0]){ char line[320]; snprintf(line,sizeof(line),"%s %s %s", dst, dev, metric); json_append_escaped(&out,&len,&cap,line); }
+              else { char line[256]; snprintf(line,sizeof(line),"%s %s", dst, dev); json_append_escaped(&out,&len,&cap,line); }
+              APP_R("\""); }
+          } continue; }
         p++; }
-    }
-  }
-  APP_R("]}\n");
-  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,len);
-  free(out); free(raw); return 0;
-}
+  APP_R("]\n");
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,len); free(out); free(raw); return 0; }
 
 /* --- OLSR links endpoint with minimal neighbors --- */
 static int h_olsr_links(http_request_t *r) {
