@@ -882,7 +882,15 @@ function populateTracerouteTable(tracerouteData) {
     if (!hostname && ip && !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) && ip.indexOf(':')<0) { hostname = ip; }
     tr.appendChild(td(hop.hop || ''));
     tr.appendChild(td(ip ? ('<a href="https://' + ip + '" target="_blank">' + ip + '</a>') : ''));
-    tr.appendChild(td(hostname ? ('<a href="https://' + hostname + '" target="_blank">' + hostname + '</a>') : ''));
+    var hostnameCell = td(hostname ? ('<a href="https://' + hostname + '" target="_blank">' + hostname + '</a>') : '');
+    // attempt lightweight reverse lookup via existing connections/nodedb if available globally
+    if (!hostname && ip && window._nodedb_cache) {
+      try {
+        var hn = window._nodedb_cache[ip];
+        if (hn) hostnameCell.innerHTML = '<a href="https://' + hn + '" target="_blank">' + hn + '</a>';
+      } catch(e){}
+    }
+    tr.appendChild(hostnameCell);
     var pingVal = hop.ping || '';
     if (pingVal) {
       // strip any trailing ms to avoid double
@@ -892,6 +900,8 @@ function populateTracerouteTable(tracerouteData) {
     tbody.appendChild(tr);
   });
 }
+          // expose nodedb for traceroute hostname enrichment
+          try { window._nodedb_cache = nodedb; } catch(e){}
 
 function runTraceroute(){
   var target = document.getElementById('tr-host').value.trim();

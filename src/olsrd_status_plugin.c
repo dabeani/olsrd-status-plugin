@@ -383,8 +383,30 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   /* Extract pointers to routes/topology arrays */
   const char *routes_section = strstr(raw, "\"routes\"");
   const char *topology_section = strstr(raw, "\"topology\"");
+  char *routes_fetched = NULL; size_t routes_fetched_len = 0;
+  char *topology_fetched = NULL; size_t topology_fetched_len = 0;
   if (!routes_section || !topology_section) {
-    fprintf(stderr, "[status-plugin] debug: routes_section=%p topology_section=%p (expected non-NULL)\n", (void*)routes_section, (void*)topology_section);
+    fprintf(stderr, "[status-plugin] debug: initial sections: routes=%p topology=%p attempting extra fetch\n", (void*)routes_section, (void*)topology_section);
+    /* Try to fetch missing sections individually from known endpoints (olsrd2 HTTP API) */
+    const char *bases[] = { "http://127.0.0.1:9090", "http://127.0.0.1:2006", "http://127.0.0.1:8123", NULL };
+    for (const char **b = bases; *b && (!routes_section || !topology_section); ++b) {
+      char cmd[256];
+      if (!routes_section) {
+        snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s/routes", *b);
+        if (util_exec(cmd, &routes_fetched, &routes_fetched_len) == 0 && routes_fetched && routes_fetched_len>0) {
+          /* make sure it's an array or object containing an array */
+          routes_section = routes_fetched; /* count_* only needs '[' */
+          fprintf(stderr, "[status-plugin] debug: fetched routes from %s (%zu bytes)\n", *b, routes_fetched_len);
+        } else if (routes_fetched) { free(routes_fetched); routes_fetched=NULL; routes_fetched_len=0; }
+      }
+      if (!topology_section) {
+        snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s/topology", *b);
+        if (util_exec(cmd, &topology_fetched, &topology_fetched_len) == 0 && topology_fetched && topology_fetched_len>0) {
+          topology_section = topology_fetched;
+          fprintf(stderr, "[status-plugin] debug: fetched topology from %s (%zu bytes)\n", *b, topology_fetched_len);
+        } else if (topology_fetched) { free(topology_fetched); topology_fetched=NULL; topology_fetched_len=0; }
+      }
+    }
   }
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
@@ -449,7 +471,10 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
     }
     q++; 
   }
-  json_buf_append(&buf, &len, &cap, "]"); *outbuf = buf; *outlen = len; return 0;
+  json_buf_append(&buf, &len, &cap, "]");
+  if (routes_fetched) free(routes_fetched);
+  if (topology_fetched) free(topology_fetched);
+  *outbuf = buf; *outlen = len; return 0;
 }
 
 /* Normalize olsrd neighbors JSON into array expected by UI
