@@ -134,13 +134,55 @@ static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, co
 /* --- Helper counters for OLSR link enrichment --- */
 static int find_json_string_value(const char *start, const char *key, char **val, size_t *val_len); /* forward */
 static int count_routes_for_ip(const char *section, const char *ip) {
-  if (!section || !ip || !ip[0]) return 0; const char *arr = strchr(section,'['); if(!arr) return 0; const char *p=arr; int depth=0; int cnt=0;
-  while(*p){ if(*p=='['){ depth++; p++; continue; } if(*p==']'){ depth--; if(depth==0) break; p++; continue; } if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ char *v; size_t vlen; char gw[64]=""; if(find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"via",&v,&vlen)) snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v); if(gw[0] && strcmp(gw,ip)==0) cnt++; } continue; } p++; }
+  if (!section || !ip || !ip[0]) return 0;
+  const char *arr = strchr(section,'[');
+  if (!arr) return 0;
+  const char *p = arr;
+  int depth = 0;
+  int cnt = 0;
+  while (*p) {
+    if (*p == '[') { depth++; p++; continue; }
+    if (*p == ']') { depth--; if (depth==0) break; p++; continue; }
+    if (*p == '{') {
+      const char *obj = p; int od = 1; p++;
+      while (*p && od>0) { if (*p=='{') od++; else if (*p=='}') od--; p++; }
+      const char *end = p;
+      if (end>obj) {
+        char *v; size_t vlen; char gw[64] = "";
+        if (find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"via",&v,&vlen))
+          snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v);
+        if (gw[0] && strcmp(gw,ip)==0) cnt++;
+      }
+      continue;
+    }
+    p++;
+  }
   return cnt;
 }
 static int count_nodes_for_ip(const char *section, const char *ip) {
-  if (!section || !ip || !ip[0]) return 0; const char *arr = strchr(section,'['); if(!arr) return 0; const char *p=arr; int depth=0; int cnt=0;
-  while(*p){ if(*p=='['){ depth++; p++; continue; } if(*p==']'){ depth--; if(depth==0) break; p++; continue; } if(*p=='{'){ const char *obj=p; int od=1; p++; while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; } const char *end=p; if(end>obj){ char *v; size_t vlen; char lh[64]=""; if(find_json_string_value(obj,"lastHopIP",&v,&vlen)) snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v); if(lh[0] && strcmp(lh,ip)==0) cnt++; } continue; } p++; }
+  if (!section || !ip || !ip[0]) return 0;
+  const char *arr = strchr(section,'[');
+  if (!arr) return 0;
+  const char *p = arr;
+  int depth = 0;
+  int cnt = 0;
+  while (*p) {
+    if (*p == '[') { depth++; p++; continue; }
+    if (*p == ']') { depth--; if (depth==0) break; p++; continue; }
+    if (*p == '{') {
+      const char *obj = p; int od = 1; p++;
+      while (*p && od>0) { if (*p=='{') od++; else if (*p=='}') od--; p++; }
+      const char *end = p;
+      if (end>obj) {
+        char *v; size_t vlen; char lh[64] = "";
+        if (find_json_string_value(obj,"lastHopIP",&v,&vlen))
+          snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v);
+        if (lh[0] && strcmp(lh,ip)==0) cnt++;
+      }
+      continue;
+    }
+    p++;
+  }
   return cnt;
 }
 
