@@ -230,7 +230,11 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
                     char host[256]; size_t copy = l < sizeof(host)-1 ? l : sizeof(host)-1; memcpy(host, val, copy); host[copy]=0;
                     /* Ensure printable */
                     int ok = 1; for (size_t j=0;j<copy;j++){ if(!isprint(host[j])){ ok=0; break; } }
-                    if (ok) { if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","hostname"); snprintf(kv[out].value,sizeof(kv[out].value),"%s",host); out++; } have_host=1; }
+                    if (ok && kv && out < cap) {
+                        snprintf(kv[out].key,sizeof(kv[out].key),"%s","hostname");
+                        size_t vcopy = copy; if (vcopy >= sizeof(kv[out].value)) vcopy = sizeof(kv[out].value)-1;
+                        memcpy(kv[out].value, host, vcopy); kv[out].value[vcopy]=0; out++; have_host=1;
+                    }
                 } else if (tag == 0x000C && l > 0 && !have_product) {
                     char prod[128]; size_t copy = l < sizeof(prod)-1 ? l : sizeof(prod)-1; memcpy(prod, val, copy); prod[copy]=0;
                     int ok=1; for(size_t j=0;j<copy;j++){ if(!isprint(prod[j])){ ok=0; break; } }
@@ -239,7 +243,11 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
                     /* firmware/build string */
                     char fw[160]; size_t copy = l < sizeof(fw)-1 ? l : sizeof(fw)-1; memcpy(fw,val,copy); fw[copy]=0;
                     int ok=1; for(size_t j=0;j<copy;j++){ if(!isprint(fw[j])){ ok=0; break; } }
-                    if (ok) { if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","fwversion"); snprintf(kv[out].value,sizeof(kv[out].value),"%s",fw); out++; } have_fw=1; }
+                    if (ok && kv && out < cap) {
+                        snprintf(kv[out].key,sizeof(kv[out].key),"%s","fwversion");
+                        size_t vcopy = copy; if (vcopy >= sizeof(kv[out].value)) vcopy = sizeof(kv[out].value)-1;
+                        memcpy(kv[out].value, fw, vcopy); kv[out].value[vcopy]=0; out++; have_fw=1;
+                    }
                 } else if (tag == 0x0018 && l == 4 && !have_uptime) {
                     uint32_t u = (uint32_t)val[0] | ((uint32_t)val[1]<<8) | ((uint32_t)val[2]<<16) | ((uint32_t)val[3]<<24);
                     if (kv && out < cap) { snprintf(kv[out].key,sizeof(kv[out].key),"%s","uptime"); snprintf(kv[out].value,sizeof(kv[out].value),"%u",u); out++; }
