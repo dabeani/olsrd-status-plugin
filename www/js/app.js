@@ -528,29 +528,53 @@ if (!Array.prototype.map) {
   };
 }
 
-// classList polyfill for older browsers
-if (!HTMLElement.prototype.classList) {
-  HTMLElement.prototype.classList = {
-    add: function(className) {
-      if (this && typeof this.className === 'string') {
-        if (!new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className)) {
-          this.className += (this.className ? ' ' : '') + className;
-        }
-      }
-    },
-    remove: function(className) {
-      if (this && typeof this.className === 'string') {
-        this.className = this.className.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ');
-      }
-    },
-    contains: function(className) {
-      if (this && typeof this.className === 'string') {
-        return new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className);
-      }
-      return false;
+// classList polyfill for older browsers (avoids Illegal invocation by using a getter with element closure)
+;(function(){
+  var testEl = document && document.documentElement;
+  if (!testEl) return;
+  if (!('classList' in testEl)) {
+    function trim(str){ return str.replace(/^\s+|\s+$/g,''); }
+    function makeTokenList(el){
+      function getClasses(){ return trim(el.className || '').split(/\s+/).filter(function(c){ return c.length; }); }
+      return {
+        add: function(token){
+          if (!token) return;
+            var classes = getClasses();
+            if (classes.indexOf && classes.indexOf(token) === -1) { classes.push(token); }
+            else if (!classes.indexOf) { // old browsers without indexOf
+              var found = false; for (var i=0;i<classes.length;i++){ if(classes[i]===token){ found=true; break; } }
+              if(!found) classes.push(token);
+            }
+            el.className = classes.join(' ');
+        },
+        remove: function(token){
+          if (!token) return;
+          var classes = getClasses();
+          var out = [];
+          for (var i=0;i<classes.length;i++){ if(classes[i]!==token) out.push(classes[i]); }
+          el.className = out.join(' ');
+        },
+        contains: function(token){
+          if (!token) return false;
+          var classes = getClasses();
+          if (classes.indexOf) return classes.indexOf(token) !== -1;
+          for (var i=0;i<classes.length;i++){ if (classes[i]===token) return true; }
+          return false;
+        },
+        toggle: function(token){ if (this.contains(token)) { this.remove(token); return false; } else { this.add(token); return true; } }
+      };
     }
-  };
-}
+    try {
+      Object.defineProperty(Element.prototype, 'classList', { get: function(){ return makeTokenList(this); } });
+    } catch(e) { // fallback for very old browsers without defineProperty on DOM prototypes
+      // Overwrite via simple function returning fresh object each time
+      if (HTMLElement && HTMLElement.prototype) {
+        HTMLElement.prototype.__getClassList = function(){ return makeTokenList(this); };
+        HTMLElement.prototype.classList = makeTokenList(document.createElement('div')); // dummy to avoid errors
+      }
+    }
+  }
+})();
 
 // querySelector and querySelectorAll polyfills for older browsers
 if (!document.querySelector) {
