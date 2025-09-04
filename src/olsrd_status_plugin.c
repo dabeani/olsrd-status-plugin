@@ -336,6 +336,33 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
   json_buf_append(&buf, &len, &cap, "]\n"); *out = buf; *outlen = len; return 0;
 }
 
+/* Lookup single IP in /proc/net/arp and optional reverse DNS; fill mac/host if found */
+static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
+  if (mac_out && mac_len) mac_out[0] = 0; if (host_out && host_len) host_out[0] = 0;
+  if (!ip || !*ip) return;
+  FILE *f = fopen("/proc/net/arp", "r"); if (!f) return;
+  char line[512];
+  /* skip header */ if (!fgets(line, sizeof(line), f)) { fclose(f); return; }
+  while (fgets(line, sizeof(line), f)) {
+    char lip[64], hw[64], dev[64]; lip[0]=hw[0]=dev[0]=0;
+    if (sscanf(line, "%63s %*s %*s %63s %*s %63s", lip, hw, dev) >= 1) {
+      if (strcmp(lip, ip) == 0) {
+        if (mac_out && mac_len && hw[0] && strcmp(hw, "00:00:00:00:00:00") != 0) {
+          snprintf(mac_out, mac_len, "%s", hw);
+        }
+        if (host_out && host_len) {
+          struct in_addr ina; if (inet_aton(lip, &ina)) {
+            struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
+            if (he && he->h_name) snprintf(host_out, host_len, "%s", he->h_name);
+          }
+        }
+        break;
+      }
+    }
+  }
+  fclose(f);
+}
+
 /* Try to obtain ubnt-discover output: prefer binary if present, else /tmp/10-all.json, then internal broadcast, else arp fallback */
 static int ubnt_discover_output(char **out, size_t *outlen) {
   /* Simple in-memory cache to avoid broadcasting too often */
@@ -386,10 +413,21 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
       struct timeval start, now; gettimeofday(&start,NULL);
       size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf){ close(s); goto after_internal; } buf[0]=0;
       json_buf_append(&buf,&len,&cap,"["); int first=1; char ip[64];
+      char seen_ips[64][64]; int seen_count = 0;
       for(;;){
         size_t kvn = sizeof(kv)/sizeof(kv[0]);
         int n = ubnt_discover_recv(s, ip, sizeof(ip), kv, &kvn);
         if (n > 0) {
+          /* skip if ip already seen */
+          int dup = 0; for(int si=0; si<seen_count; ++si){ if(strcmp(seen_ips[si], ip)==0){ dup=1; break; } }
+          if (dup) {
+            /* already recorded this device */
+            goto next_iter_discover;
+          }
+          if (seen_count < (int)(sizeof(seen_ips)/sizeof(seen_ips[0]))) {
+            snprintf(seen_ips[seen_count], sizeof(seen_ips[seen_count]), "%s", ip);
+            seen_count++;
+          }
           if (!first) {
             json_buf_append(&buf,&len,&cap,",");
           }
@@ -405,6 +443,13 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
             json_buf_append(&buf,&len,&cap,"\""); json_buf_append(&buf,&len,&cap,"%s", kv[i].key); json_buf_append(&buf,&len,&cap,"\":");
             json_append_escaped(&buf,&len,&cap, kv[i].value);
             if(strcmp(kv[i].key,"hostname")==0) have_hostname=1; else if(strcmp(kv[i].key,"hwaddr")==0) have_hw=1; else if(strcmp(kv[i].key,"fwversion")==0){ have_fwversion=1; snprintf(fwversion_val,sizeof(fwversion_val),"%s",kv[i].value);} else if(strcmp(kv[i].key,"firmware")==0) have_firmware=1; else if(strcmp(kv[i].key,"product")==0) have_product=1; else if(strcmp(kv[i].key,"uptime")==0) have_uptime=1; else if(strcmp(kv[i].key,"mode")==0) have_mode=1; else if(strcmp(kv[i].key,"essid")==0) have_essid=1;
+          }
+          /* ARP enrichment if hostname or hwaddr missing */
+          if ((!have_hw || !have_hostname) && ip[0]) {
+            char arp_mac[64]=""; char arp_host[256]="";
+            arp_enrich_ip(ip, arp_mac, sizeof(arp_mac), arp_host, sizeof(arp_host));
+            if (!have_hw && arp_mac[0]) { json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap, arp_mac); have_hw=1; }
+            if (!have_hostname && arp_host[0]) { json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap, arp_host); have_hostname=1; }
           }
           /* normalized fields expected: hwaddr, hostname, product, uptime, mode, essid, firmware */
           if(!have_hw) json_buf_append(&buf,&len,&cap,",\"hwaddr\":\"\"");
@@ -424,6 +469,7 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
           json_buf_append(&buf,&len,&cap,",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"");
           json_buf_append(&buf,&len,&cap,"}");
         }
+  next_iter_discover:
         gettimeofday(&now,NULL);
         long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
         if (ms > 300) { /* fire a second probe once */ ubnt_discover_send(s,&dst); }
