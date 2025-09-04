@@ -384,7 +384,10 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
         size_t kvn = sizeof(kv)/sizeof(kv[0]);
         int n = ubnt_discover_recv(s, ip, sizeof(ip), kv, &kvn);
         if (n > 0) {
-          if (!first) json_buf_append(&buf,&len,&cap,","); first=0;
+          if (!first) {
+            json_buf_append(&buf,&len,&cap,",");
+          }
+          first = 0;
           json_buf_append(&buf,&len,&cap,"{");
           /* ensure ipv4 field present */
           json_buf_append(&buf,&len,&cap,"\"ipv4\":"); json_append_escaped(&buf,&len,&cap, ip);
@@ -430,7 +433,17 @@ after_internal:
   fprintf(stderr, "[status-plugin] falling back to ARP table\n");
   if (devices_from_arp_json(out, outlen) == 0) {
     /* cache ARP fallback too */
-    if(cache_buf) free(cache_buf); cache_buf = malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=time(NULL);} return 0;
+    if (cache_buf) {
+      free(cache_buf);
+    }
+    cache_buf = malloc(*outlen + 1);
+    if (cache_buf) {
+      memcpy(cache_buf, *out, *outlen);
+      cache_buf[*outlen] = 0;
+      cache_len = *outlen;
+      cache_time = time(NULL);
+    }
+    return 0;
   }
   fprintf(stderr, "[status-plugin] all device discovery methods failed\n");
   return -1;
