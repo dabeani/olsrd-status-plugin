@@ -338,7 +338,12 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
 
 /* Lookup single IP in /proc/net/arp and optional reverse DNS; fill mac/host if found */
 static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
-  if (mac_out && mac_len) mac_out[0] = 0; if (host_out && host_len) host_out[0] = 0;
+  if (mac_out && mac_len) {
+    mac_out[0] = 0;
+  }
+  if (host_out && host_len) {
+    host_out[0] = 0;
+  }
   if (!ip || !*ip) return;
   FILE *f = fopen("/proc/net/arp", "r"); if (!f) return;
   char line[512];
