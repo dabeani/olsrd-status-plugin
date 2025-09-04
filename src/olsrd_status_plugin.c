@@ -88,10 +88,20 @@ static long get_uptime_seconds(void) {
   if (up <= 0) {
     char *statc=NULL; size_t sn=0; if (util_read_file("/proc/stat", &statc, &sn)==0 && statc){
       char *line = statc; char *end = statc + sn;
-      while(line < end){ char *nl = memchr(line,'\n',(size_t)(end-line)); size_t ll = nl ? (size_t)(nl-line) : (size_t)(end-line);
-        if (ll>6 && memcmp(line,"btime ",6)==0){ long btime = atol(line+6); if (btime>0){ time_t now = time(NULL); if (now > btime) up = (long)(now - btime); }
-          break; }
-        if (!nl) break; line = nl+1; }
+      while (line < end) {
+        char *nl = memchr(line,'\n',(size_t)(end-line));
+        size_t ll = nl ? (size_t)(nl-line) : (size_t)(end-line);
+        if (ll > 6 && memcmp(line,"btime ",6)==0) {
+          long btime = atol(line+6);
+          if (btime > 0) {
+            time_t now = time(NULL);
+            if (now > btime) up = (long)(now - btime);
+          }
+          break;
+        }
+        if (!nl) break;
+        line = nl + 1;
+      }
       free(statc);
     }
   }
@@ -860,12 +870,18 @@ static int h_status(http_request_t *r) {
             }
             tok=strtok_r(NULL," ",&save); idx++;
           }
-          if(seen_paren_ip){ snprintf(ip,sizeof(ip),"%s",raw_ip_paren); snprintf(host,sizeof(host),"%s",raw_host); }
-          else {
-            /* If we never saw parentheses and first non-hop token is an IP (digits + dots), treat as ip */
+          if(seen_paren_ip){
+            snprintf(ip,sizeof(ip),"%s",raw_ip_paren);
+            snprintf(host,sizeof(host),"%s",raw_host);
+          } else {
             if(raw_host[0]) {
               int is_ip=1; for(char *c=raw_host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } }
-              if(is_ip) snprintf(ip,sizeof(ip),"%s",raw_host); else snprintf(host,sizeof(host),"%s",raw_host);
+              if(is_ip) {
+                /* limit copy explicitly to avoid warning (raw_host len already bounded) */
+                snprintf(ip,sizeof(ip),"%.*s", (int)sizeof(ip)-1, raw_host);
+              } else {
+                snprintf(host,sizeof(host),"%.*s", (int)sizeof(host)-1, raw_host);
+              }
             }
           }
           free(norm);
