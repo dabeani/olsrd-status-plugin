@@ -1277,7 +1277,15 @@ static int h_traceroute(http_request_t *r) {
           char tmp[256]; snprintf(tmp,sizeof(tmp),"%s",p2);
           char *toksave=NULL; char *tok=strtok_r(tmp," \t",&toksave); while(tok){ if(tok[0]=='('){ tok=strtok_r(NULL," \t",&toksave); continue; } if(strcmp(tok,"*")==0){ tok=strtok_r(NULL," \t",&toksave); continue; } if(!host[0]){ snprintf(host,sizeof(host),"%s",tok); } tok=strtok_r(NULL," \t",&toksave); }
           /* if host looks like ip and ip empty -> ip=host */
-          if(!ip[0] && host[0]){ int is_ip=1; for(char *c=host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } } if(is_ip){ snprintf(ip,sizeof(ip),"%s",host); host[0]=0; } }
+          if(!ip[0] && host[0]){
+            int is_ip=1; for(char *c=host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } }
+            if(is_ip){
+              /* safe bounded copy host(<=128) -> ip(64) */
+              size_t host_len_copy = strnlen(host, sizeof(ip)-1);
+              memcpy(ip, host, host_len_copy); ip[host_len_copy]=0;
+              host[0]=0;
+            }
+          }
         }
         /* collect all latency samples (numbers followed by ms) */
         double samples[8]; int sc=0; char *scan=p2; while(*scan && sc<8){ while(*scan && !isdigit((unsigned char)*scan) && *scan!='*') scan++; if(*scan=='*'){ scan++; continue; } char *endp=NULL; double val=strtod(scan,&endp); if(endp && val>=0){ while(*endp==' ') endp++; if(strncasecmp(endp,"ms",2)==0){ samples[sc++]=val; scan=endp+2; continue; } } if(endp==scan){ scan++; } else scan=endp; }
