@@ -333,7 +333,8 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
 
 /* Build node_db style object from ARP (keyed by IPv4) */
 static int devices_from_arp_nodedb(char **out, size_t *outlen) {
-  if(!out||!outlen) return -1; *out=NULL; *outlen=0;
+  if(!out||!outlen) return -1;
+  *out=NULL; *outlen=0;
   FILE *f=fopen("/proc/net/arp","r"); if(!f) return -1;
   size_t cap=4096,len=0; char *buf=malloc(cap); if(!buf){ fclose(f); return -1; } buf[0]=0;
   json_buf_append(&buf,&len,&cap,"{"); int first=1; char line[512];
