@@ -16,6 +16,7 @@
 #endif
 #include <time.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 #include "httpd.h"
 #include "util.h"
@@ -23,6 +24,45 @@
 #include "ubnt_discover.h"
 
 #include <stdarg.h>
+
+/* Global configuration/state (single authoritative definitions) */
+int g_is_edgerouter = 0;
+int g_has_ubnt_discover = 0;
+int g_has_traceroute = 0;
+int g_is_linux_container = 0;
+
+static char   g_bind[64] = "0.0.0.0";
+static int    g_port = 11080;
+static int    g_enable_ipv6 = 0;
+static char   g_asset_root[512] = "/usr/share/olsrd-status-plugin/www";
+
+/* Node DB remote auto-update cache */
+static char   g_nodedb_url[512] = "https://ff.cybercomm.at/node_db.json"; /* override via plugin param nodedb_url */
+static int    g_nodedb_ttl = 300; /* seconds */
+static time_t g_nodedb_last_fetch = 0; /* epoch of last successful fetch */
+static char  *g_nodedb_cached = NULL; /* malloc'ed JSON blob */
+static size_t g_nodedb_cached_len = 0;
+static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Paths to optional external tools (detected at init) */
+#ifndef PATHLEN
+#define PATHLEN 512
+#endif
+char g_ubnt_discover_path[PATHLEN] = "";
+char g_traceroute_path[PATHLEN] = "";
+char g_olsrd_path[PATHLEN] = "";
+
+/* Forward declarations for HTTP handlers */
+static int h_root(http_request_t *r);
+static int h_ipv4(http_request_t *r); static int h_ipv6(http_request_t *r);
+static int h_status(http_request_t *r); static int h_status_summary(http_request_t *r); static int h_status_olsr(http_request_t *r); static int h_status_lite(http_request_t *r);
+static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
+static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
+static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r); static int h_olsrd(http_request_t *r);
+static int h_discover(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
+static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
+static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
+static int h_traceroute(http_request_t *r);
 
 /* helper: return 1 if buffer contains any non-whitespace byte */
 static int buffer_has_content(const char *b, size_t n) {
@@ -300,7 +340,7 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
 extern int g_is_edgerouter;
 extern int g_has_traceroute;
 extern char g_traceroute_path[];
-static int g_is_linux_container = 0;
+/* g_is_linux_container defined at top */
 
 
 /* Return first existing path from candidates or NULL */
@@ -1326,33 +1366,50 @@ static int h_status_olsr(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(pout) free(pout); return 0; }
 
 static int h_nodedb(http_request_t *r) {
-  /* Try local custom node db first, then /tmp, then remote fetch. */
-  char *out = NULL; size_t n = 0;
+  /* Auto-update strategy with caching & configurable URL.
+   * 1. If /config/custom/node_db.json exists -> serve (override).
+   * 2. Else if /tmp/node_db.json newer than last remote fetch -> serve.
+   * 3. Else serve cached remote (fetch if stale/absent based on ttl).
+   * 4. Else ARP synthesized fallback.
+   */
   const char *local_custom = "/config/custom/node_db.json";
   const char *tmp_local = "/tmp/node_db.json";
-  if (path_exists(local_custom)) {
-    if (util_read_file(local_custom, &out, &n) == 0 && out && buffer_has_content(out, n)) {
-      http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
+  char *out=NULL; size_t n=0;
+  /* 1. persistent override */
+  if (path_exists(local_custom) && util_read_file(local_custom,&out,&n)==0 && out && buffer_has_content(out,n)) {
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
+  if (out) { free(out); out=NULL; n=0; }
+  /* 2. tmp override (mtime newer than last remote fetch) */
+  struct stat st; if (path_exists(tmp_local) && stat(tmp_local,&st)==0) {
+    if (util_read_file(tmp_local,&out,&n)==0 && out && buffer_has_content(out,n)) {
+      if (st.st_mtime >= g_nodedb_last_fetch) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
     }
-    if (out) { free(out); out = NULL; n = 0; }
+    if (out) { free(out); out=NULL; n=0; }
   }
-  if (path_exists(tmp_local)) {
-    if (util_read_file(tmp_local, &out, &n) == 0 && out && buffer_has_content(out, n)) {
-      http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
-    }
-    if (out) { free(out); out = NULL; n = 0; }
+  /* 3. remote cached fetch */
+  int need_fetch=0; time_t now=time(NULL);
+  pthread_mutex_lock(&g_nodedb_lock);
+  if (!g_nodedb_cached || g_nodedb_cached_len==0 || (now - g_nodedb_last_fetch) > g_nodedb_ttl) need_fetch=1;
+  pthread_mutex_unlock(&g_nodedb_lock);
+  if (need_fetch) {
+    char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 %s", g_nodedb_url);
+    char *fresh=NULL; size_t fn=0;
+    if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn)) {
+      pthread_mutex_lock(&g_nodedb_lock);
+      if (g_nodedb_cached) free(g_nodedb_cached);
+      g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
+      pthread_mutex_unlock(&g_nodedb_lock);
+      fresh=NULL;
+    } else if (fresh) { free(fresh); }
   }
-  /* attempt remote fetch via curl */
-  if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &out, &n) == 0 && out && buffer_has_content(out, n)) {
-    http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
-  }
-  if (out) { free(out); out = NULL; n = 0; }
-  /* try arp-based fallback */
-  if (devices_from_arp_json(&out, &n) == 0 && out && n>0) {
-    http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n); free(out); return 0;
-  }
-  send_json(r, "{}\n");
-  return 0;
+  pthread_mutex_lock(&g_nodedb_lock);
+  if (g_nodedb_cached && g_nodedb_cached_len>0) {
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
+  pthread_mutex_unlock(&g_nodedb_lock);
+  /* 4. ARP fallback */
+  if (devices_from_arp_json(&out,&n)==0 && out && n>0) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
+  if (out) free(out);
+  send_json(r,"{}\n"); return 0;
 }
 
 /* capabilities endpoint */
@@ -1400,101 +1457,7 @@ static int h_capabilities_local(http_request_t *r) {
   send_json(r, buf);
   return 0;
 }
-#include "httpd.h"
-int g_is_edgerouter = 0;
-int g_has_ubnt_discover = 0;
-int g_has_traceroute = 0;
-/* PATHLEN not provided by host headers in this build context; use 512 as a safe default. */
-#ifndef PATHLEN
-#define PATHLEN 512
-#endif
-char g_ubnt_discover_path[PATHLEN] = "";
-char g_traceroute_path[PATHLEN] = "";
-char g_olsrd_path[PATHLEN] = "";
-#include "util.h"
-#include "olsrd_plugin.h"
-int env_is_edgerouter(void);
-int env_is_linux_container(void);
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <time.h>
-
-static char   g_bind[64] = "0.0.0.0";
-static int    g_port = 11080;
-static int    g_enable_ipv6 = 0;
-static char   g_asset_root[512] = "/usr/share/olsrd-status-plugin/www";
-
-static int h_root(http_request_t *r);
-static int h_ipv4(http_request_t *r);
-static int h_ipv6(http_request_t *r);
-static int h_txtinfo(http_request_t *r);
-static int h_jsoninfo(http_request_t *r);
-static int h_olsrd(http_request_t *r);
-static int h_discover(http_request_t *r);
-static int h_connections(http_request_t *r);
-static int h_airos(http_request_t *r);
-static int h_traffic(http_request_t *r);
-
-/* embedded index.html removed; assets are served from g_asset_root/www (see www/index.html) */
-
-/* Stubs for JSON/async handlers referenced during http server registration. */
-/* connections.json: return JSON produced by render_connections_json */
-static int h_connections_json(http_request_t *r) {
-  char *out = NULL; size_t n = 0;
-  if (render_connections_json(&out, &n) == 0 && out) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-    http_write(r, out, n);
-    free(out);
-    return 0;
-  }
-  send_json(r, "{}\n");
-  return 0;
-}
-
-/* versions.json: run versions.sh (custom or packaged) and return JSON output */
-static int h_versions_json(http_request_t *r) {
-  char *out = NULL; size_t n = 0;
-  const char *custom = "/config/custom/versions.sh";
-  const char *packaged = "/usr/share/olsrd-status-plugin/versions.sh";
-  if (path_exists(custom)) {
-    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s", custom);
-  if (util_exec(cmd, &out, &n) == 0 && out && buffer_has_content(out, n)) {
-      http_send_status(r, 200, "OK");
-      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-      http_write(r, out, n); free(out); return 0;
-    }
-  if (out) { free(out); out = NULL; n = 0; }
-  }
-  if (path_exists(packaged)) {
-    char cmd[512]; snprintf(cmd, sizeof(cmd), "%s", packaged);
-  if (util_exec(cmd, &out, &n) == 0 && out && buffer_has_content(out, n)) {
-      http_send_status(r, 200, "OK");
-      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-      http_write(r, out, n); free(out); return 0;
-    }
-  if (out) { free(out); out = NULL; n = 0; }
-  }
-  /* fallback: run versions.sh from repo root if present (development) */
-  if (path_exists("./versions.sh")) {
-  if (util_exec("./versions.sh", &out, &n) == 0 && out && buffer_has_content(out, n)) {
-      http_send_status(r, 200, "OK");
-      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-      http_write(r, out, n); free(out); return 0;
-    }
-  if (out) { free(out); out = NULL; n = 0; }
-  }
-  /* final fallback: synthesize minimal versions payload */
-  {
-    char host[256]=""; gethostname(host,sizeof(host)); host[sizeof(host)-1]=0;
-    char synthesized[512]; snprintf(synthesized,sizeof(synthesized),"{\"olsrd_status_plugin\":\"%s\",\"host\":\"%s\"}", "1.0", host);
-    send_json(r, synthesized);
-  }
-  return 0;
-}
+/* duplicate include/global block removed */
 
 /* traceroute: run traceroute binary if available and return stdout as plain text */
 static int h_traceroute(http_request_t *r) {
@@ -1806,6 +1769,8 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "port",       .set_plugin_parameter = &set_int_param, .data = &g_port,       .addon = {0} },
   { .name = "enableipv6", .set_plugin_parameter = &set_int_param, .data = &g_enable_ipv6,.addon = {0} },
   { .name = "assetroot",  .set_plugin_parameter = &set_str_param, .data = g_asset_root,  .addon = {0} },
+  { .name = "nodedb_url", .set_plugin_parameter = &set_str_param, .data = g_nodedb_url,  .addon = {0} },
+  { .name = "nodedb_ttl", .set_plugin_parameter = &set_int_param, .data = &g_nodedb_ttl, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -2104,6 +2069,44 @@ static int h_connections(http_request_t *r) {
 
   // Nothing available
   send_text(r, "n/a\n");
+  return 0;
+}
+
+static int h_connections_json(http_request_t *r) {
+  char *out=NULL; size_t n=0;
+  if (render_connections_json(&out,&n)==0 && out && n>0) {
+    http_send_status(r,200,"OK");
+    http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n");
+    http_write(r,out,n);
+    free(out); return 0;
+  }
+  /* fallback: synthesize empty structure */
+  send_json(r,"{\"ports\":[]}\n");
+  if(out) free(out); return 0;
+}
+
+static int h_versions_json(http_request_t *r) {
+  char *out=NULL; size_t n=0; int ok=0;
+  if(path_exists("/config/custom/versions.sh")) {
+    if(util_exec("/config/custom/versions.sh", &out,&n)==0 && out && buffer_has_content(out,n)) ok=1;
+  }
+  if(!ok && out){ free(out); out=NULL; n=0; }
+  if(!ok && path_exists("/usr/share/olsrd-status-plugin/versions.sh")) {
+    if(util_exec("/usr/share/olsrd-status-plugin/versions.sh", &out,&n)==0 && out && buffer_has_content(out,n)) ok=1;
+  }
+  if(!ok && out){ free(out); out=NULL; n=0; }
+  if(!ok && path_exists("./versions.sh")) {
+    if(util_exec("./versions.sh", &out,&n)==0 && out && buffer_has_content(out,n)) ok=1;
+  }
+  if(ok) {
+    http_send_status(r,200,"OK");
+    http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n");
+    http_write(r,out,n); free(out); return 0;
+  }
+  /* fallback minimal */
+  char host[256]=""; gethostname(host,sizeof(host)); host[sizeof(host)-1]=0;
+  char buf[512]; snprintf(buf,sizeof(buf),"{\"olsrd_status_plugin\":\"%s\",\"host\":\"%s\"}\n","1.0",host);
+  send_json(r,buf);
   return 0;
 }
 
