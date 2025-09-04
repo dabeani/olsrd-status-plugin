@@ -585,6 +585,20 @@ var _olsrLoaded = false;
 window.addEventListener('load', function(){
   var mt = document.getElementById('mainTabs');
   if (!mt) return;
+  function ensureTraceroutePreloaded(){
+    var tbody = document.querySelector('#tracerouteTable tbody');
+    if (tbody && tbody.children.length) return; // already populated
+    fetch('/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
+      if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length){
+        var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
+        if (trTab) trTab.parentElement.style.display='';
+        var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
+        populateTracerouteTable(hops);
+        var summaryEl = document.getElementById('traceroute-summary');
+        if (summaryEl) summaryEl.textContent = 'Traceroute to ' + (st.trace_target || '') + ': ' + hops.length + ' hop(s)';
+      }
+    }).catch(function(){});
+  }
   mt.addEventListener('click', function(e){
     var a = e.target.closest('a'); if(!a) return;
     if (a.getAttribute('href') === '#tab-olsr' && !_olsrLoaded) {
@@ -592,6 +606,8 @@ window.addEventListener('load', function(){
         if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }
         _olsrLoaded = true;
       }).catch(function(){});
+    } else if (a.getAttribute('href') === '#tab-traceroute') {
+      ensureTraceroutePreloaded();
     }
   });
 });
@@ -986,3 +1002,17 @@ function runTraceroute(){
     } catch (e) { /* ignore parsing errors */ }
   }).catch(function(e){ if (pre) pre.textContent = 'ERR: '+e; });
 }
+
+// Legacy OLSRd presence detection
+  function detectLegacyOlsrd(cb){
+    // Reuse existing status endpoint: if olsr2_on true we consider olsrd2; need explicit legacy check
+    fetch('/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
+      // If olsr2_on is true assume olsrd2; hide legacy links tab unless links array exists AND st.olsr2_on is false
+      var show = false;
+      if (!st.olsr2_on && st.links && Array.isArray(st.links) && st.links.length) show = true;
+      var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
+      if (linkTab) linkTab.parentElement.style.display = show? '' : 'none';
+      if (cb) cb(show);
+    }).catch(function(){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) linkTab.parentElement.style.display='none'; if(cb) cb(false); });
+  }
+  detectLegacyOlsrd();
