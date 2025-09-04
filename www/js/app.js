@@ -2,7 +2,11 @@
 if (!window.JSON) {
   window.JSON = {
     parse: function(s) {
-      return eval('(' + s + ')');
+      try {
+        return eval('(' + s + ')');
+      } catch (e) {
+        throw new Error('Invalid JSON');
+      }
     },
     stringify: function(obj) {
       var t = typeof obj;
@@ -13,7 +17,7 @@ if (!window.JSON) {
       var json = [];
       var arr = (obj && obj.constructor === Array);
       for (var k in obj) {
-        if (obj.hasOwnProperty(k)) {
+        if (obj.hasOwnProperty && obj.hasOwnProperty(k)) {
           json.push((arr ? "" : '"' + k + '":') + window.JSON.stringify(obj[k]));
         }
       }
@@ -25,9 +29,10 @@ if (!window.JSON) {
 // Object.keys polyfill for older browsers
 if (!Object.keys) {
   Object.keys = function(obj) {
+    if (!obj) return [];
     var keys = [];
     for (var key in obj) {
-      if (obj.hasOwnProperty(key)) {
+      if (obj.hasOwnProperty && obj.hasOwnProperty(key)) {
         keys.push(key);
       }
     }
@@ -527,15 +532,22 @@ if (!Array.prototype.map) {
 if (!HTMLElement.prototype.classList) {
   HTMLElement.prototype.classList = {
     add: function(className) {
-      if (!new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className)) {
-        this.className += (this.className ? ' ' : '') + className;
+      if (this && typeof this.className === 'string') {
+        if (!new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className)) {
+          this.className += (this.className ? ' ' : '') + className;
+        }
       }
     },
     remove: function(className) {
-      this.className = this.className.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ');
+      if (this && typeof this.className === 'string') {
+        this.className = this.className.replace(new RegExp('(^|\\s)' + className + '(\\s|$)', 'g'), ' ');
+      }
     },
     contains: function(className) {
-      return new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className);
+      if (this && typeof this.className === 'string') {
+        return new RegExp('(^|\\s)' + className + '(\\s|$)').test(this.className);
+      }
+      return false;
     }
   };
 }
