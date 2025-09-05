@@ -89,8 +89,13 @@ static int parse_cidr(const char *s, struct in6_addr *out_addr, int *out_prefix)
 int http_allow_cidr(const char *cidr_or_addr_mask) {
   struct in6_addr a; int p;
   if (parse_cidr(cidr_or_addr_mask, &a, &p) != 0) return -1;
+  int was_empty = (g_allowed == NULL);
   cidr_entry_t *e = calloc(1, sizeof(*e)); if (!e) return -1;
-  e->addr = a; e->prefix = p; e->next = g_allowed; g_allowed = e; return 0;
+  e->addr = a; e->prefix = p; e->next = g_allowed; g_allowed = e;
+  if (was_empty) {
+    fprintf(stderr, "[httpd] access restricted: Net parameter(s) found, only allowed networks will have access\n");
+  }
+  return 0;
 }
 
 static int addr_prefix_match(const struct in6_addr *a, const struct in6_addr *b, int prefix) {
