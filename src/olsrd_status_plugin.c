@@ -2235,10 +2235,24 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   return 0;
 }
 
+/* accept multiple PlParam "Net" entries; each value can be CIDR (a/b) or
+ * "addr mask" pairs like "193.238.156.0 255.255.252.0" or single address.
+ */
+static int set_net_param(const char *value, void *data __attribute__((unused)), set_plugin_parameter_addon addon __attribute__((unused))) {
+  if (!value) return 1;
+  /* forward to httpd allow-list */
+  if (http_allow_cidr(value) != 0) {
+    fprintf(stderr, "[status-plugin] invalid Net parameter: %s\n", value);
+    return 1;
+  }
+  return 0;
+}
+
 static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "bind",       .set_plugin_parameter = &set_str_param, .data = g_bind,        .addon = {0} },
   { .name = "port",       .set_plugin_parameter = &set_int_param, .data = &g_port,       .addon = {0} },
   { .name = "enableipv6", .set_plugin_parameter = &set_int_param, .data = &g_enable_ipv6,.addon = {0} },
+  { .name = "Net",        .set_plugin_parameter = &set_net_param, .data = NULL,          .addon = {0} },
   { .name = "assetroot",  .set_plugin_parameter = &set_str_param, .data = g_asset_root,  .addon = {0} },
   { .name = "nodedb_url", .set_plugin_parameter = &set_str_param, .data = g_nodedb_url,  .addon = {0} },
   { .name = "nodedb_ttl", .set_plugin_parameter = &set_int_param, .data = &g_nodedb_ttl, .addon = {0} },

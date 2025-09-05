@@ -30,6 +30,94 @@ static pthread_t g_srv_th;
 static int g_run = 0;
 static char g_asset_root[512] = {0};
 static http_handler_node_t *g_handlers = NULL;
+/* simple allow-list storage */
+typedef struct cidr_entry {
+  struct in6_addr addr;
+  int prefix; /* 0-128 */
+  struct cidr_entry *next;
+} cidr_entry_t;
+static cidr_entry_t *g_allowed = NULL;
+
+static int parse_cidr(const char *s, struct in6_addr *out_addr, int *out_prefix) {
+  if (!s || !out_addr || !out_prefix) return -1;
+  char tmp[128]; snprintf(tmp, sizeof(tmp), "%s", s);
+  char *sp = strchr(tmp, ' ');
+  char *slash = strchr(tmp, '/');
+  if (sp) {
+    /* format: "addr mask" */
+    *sp = 0; char *addr = tmp; char *mask = sp+1; /* mask like 255.255.252.0 */
+    struct in_addr a, m;
+    if (inet_pton(AF_INET, addr, &a) == 1 && inet_pton(AF_INET, mask, &m) == 1) {
+      /* convert to in6 mapped */
+      memset(out_addr, 0, sizeof(*out_addr));
+      out_addr->s6_addr[10] = 0xff; out_addr->s6_addr[11] = 0xff;
+      memcpy(&out_addr->s6_addr[12], &a, 4);
+      uint32_t maskbe; memcpy(&maskbe, &m, 4);
+      maskbe = ntohl(maskbe);
+      int p = 0; for (int i=31;i>=0;--i) if (maskbe & (1u<<i)) p++; else break;
+      *out_prefix = p;
+      return 0;
+    }
+    return -1;
+  } else if (slash) {
+    /* cidr like 193.238.156.0/22 or IPv6*/
+    if (strchr(tmp, ':')) {
+      /* IPv6 */
+      char *cp = strchr(tmp,'/'); if (!cp) return -1; *cp=0; char *pfx = cp+1;
+      if (inet_pton(AF_INET6, tmp, out_addr) != 1) return -1;
+      *out_prefix = atoi(pfx);
+      return 0;
+    } else {
+      char *cp = strchr(tmp,'/'); *cp=0; char *pfx = cp+1; struct in_addr a;
+      if (inet_pton(AF_INET, tmp, &a) != 1) return -1;
+      memset(out_addr,0,sizeof(*out_addr)); out_addr->s6_addr[10]=0xff; out_addr->s6_addr[11]=0xff; memcpy(&out_addr->s6_addr[12], &a,4);
+      *out_prefix = atoi(pfx);
+      return 0;
+    }
+  } else {
+    /* single address */
+    struct in_addr a;
+    if (inet_pton(AF_INET, tmp, &a) == 1) {
+      memset(out_addr,0,sizeof(*out_addr)); out_addr->s6_addr[10]=0xff; out_addr->s6_addr[11]=0xff; memcpy(&out_addr->s6_addr[12], &a,4);
+      *out_prefix = 32; return 0;
+    }
+    if (inet_pton(AF_INET6, tmp, out_addr) == 1) { *out_prefix = 128; return 0; }
+    return -1;
+  }
+}
+
+int http_allow_cidr(const char *cidr_or_addr_mask) {
+  struct in6_addr a; int p;
+  if (parse_cidr(cidr_or_addr_mask, &a, &p) != 0) return -1;
+  cidr_entry_t *e = calloc(1, sizeof(*e)); if (!e) return -1;
+  e->addr = a; e->prefix = p; e->next = g_allowed; g_allowed = e; return 0;
+}
+
+static int addr_prefix_match(const struct in6_addr *a, const struct in6_addr *b, int prefix) {
+  if (prefix <= 0) return 1;
+  int full_bytes = prefix / 8;
+  int rem_bits = prefix % 8;
+  if (full_bytes > 16) full_bytes = 16;
+  if (memcmp(a, b, full_bytes) != 0) return 0;
+  if (rem_bits == 0) return 1;
+  unsigned char mask = (unsigned char)(0xff << (8 - rem_bits));
+  return ( (a->s6_addr[full_bytes] & mask) == (b->s6_addr[full_bytes] & mask) );
+}
+
+int http_is_client_allowed(const char *client_ip) {
+  if (!client_ip) return 0;
+  if (!g_allowed) return 1; /* no restrictions */
+  struct in6_addr a; if (strchr(client_ip,':')) {
+    if (inet_pton(AF_INET6, client_ip, &a) != 1) return 0;
+  } else {
+    struct in_addr v4; if (inet_pton(AF_INET, client_ip, &v4) != 1) return 0;
+    memset(&a,0,sizeof(a)); a.s6_addr[10]=0xff; a.s6_addr[11]=0xff; memcpy(&a.s6_addr[12], &v4,4);
+  }
+  for (cidr_entry_t *e = g_allowed; e; e = e->next) {
+    if (addr_prefix_match(&a, &e->addr, e->prefix)) return 1;
+  }
+  return 0;
+}
 
 static int starts_with(const char *s, const char *p) {
   size_t ls = strlen(s), lp = strlen(p);
@@ -196,7 +284,14 @@ static void *server_thread(void *arg) {
       if (strcmp(nptr->route, r.path) == 0) {
         handled = 1;
         fprintf(stderr, "[httpd] dispatch to handler: %s\n", nptr->route);
-        nptr->fn(&r);
+        /* enforce access control */
+        if (!http_is_client_allowed(r.client_ip)) {
+          fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, nptr->route);
+          http_send_status(&r, 403, "Forbidden");
+          http_printf(&r, "Content-Type: text/plain\r\n\r\nforbidden\n");
+        } else {
+          nptr->fn(&r);
+        }
         break;
       }
       nptr = nptr->next;

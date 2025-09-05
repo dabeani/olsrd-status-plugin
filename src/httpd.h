@@ -28,6 +28,13 @@ void http_write(http_request_t *r, const char *buf, size_t len);
 int  http_printf(http_request_t *r, const char *fmt, ...);
 int  http_send_file(http_request_t *r, const char *asset_root, const char *relpath, const char *mime);
 
+/* Access control: allow registering CIDRs or address/mask pairs; if no
+ * networks registered, access is allowed for all clients. Returns 0 on
+ * success, -1 on parse error. http_is_client_allowed returns 1 if the
+ * client IP is allowed, 0 otherwise.
+ */
+int http_allow_cidr(const char *cidr_or_addr_mask);
+int http_is_client_allowed(const char *client_ip);
 #ifdef __cplusplus
 }
 #endif
