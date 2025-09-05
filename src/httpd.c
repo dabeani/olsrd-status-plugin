@@ -245,6 +245,15 @@ static void *server_thread(void *arg) {
     char buf[8192];
     ssize_t n = read(cfd, buf, sizeof(buf)-1);
     if (n <= 0) { close(cfd); continue; }
+    /* if we filled the buffer completely, the request may be too large -> reject */
+    if ((size_t)n >= sizeof(buf)-1) {
+      /* respond with 413 Payload Too Large and close */
+      http_request_t r = {0}; r.fd = cfd; snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+      http_send_status(&r, 413, "Payload Too Large");
+      http_printf(&r, "Content-Type: text/plain\r\n\r\nRequest too large\n");
+      close(cfd);
+      continue;
+    }
     buf[n] = 0;
     http_request_t r = {0};
     r.fd = cfd;
@@ -259,24 +268,51 @@ static void *server_thread(void *arg) {
     char *sp1 = strchr(buf, ' ');
     if (!sp1) { close(cfd); continue; }
     *sp1 = 0;
+    /* accept only safe methods to reduce attack surface */
     snprintf(r.method, sizeof(r.method), "%.7s", buf);
+    if (!(strcmp(r.method, "GET") == 0 || strcmp(r.method, "HEAD") == 0)) {
+      http_send_status(&r, 405, "Method Not Allowed");
+      http_printf(&r, "Content-Type: text/plain\r\n\r\nMethod not allowed\n");
+      close(cfd);
+      continue;
+    }
     char *sp2 = strchr(sp1+1, ' ');
     if (!sp2) { close(cfd); continue; }
     *sp2 = 0;
     char *path = sp1+1;
     char *q = strchr(path, '?');
-    if (q) { *q = 0; snprintf(r.query, sizeof(r.query), "%s", q+1); urldecode(r.query); }
-    snprintf(r.path, sizeof(r.path), "%s", path);
+    if (q) {
+      *q = 0;
+      /* copy query safely */
+      size_t qlen = strnlen(q+1, sizeof(r.query)-1);
+      if (qlen >= sizeof(r.query)-1) qlen = sizeof(r.query)-1;
+      memcpy(r.query, q+1, qlen); r.query[qlen]=0; urldecode(r.query);
+    }
+    /* copy path safely */
+    size_t plen = strnlen(path, sizeof(r.path)-1);
+    if (plen >= sizeof(r.path)-1) plen = sizeof(r.path)-1;
+    memcpy(r.path, path, plen); r.path[plen]=0;
     char *hosth = strcasestr(sp2+1, "\nHost:");
     if (hosth) {
       hosth += 6;
       while (*hosth==' ' || *hosth=='\t') hosth++;
       char *e = strpbrk(hosth, "\r\n");
       if (e) *e = 0;
-      snprintf(r.host, sizeof(r.host), "%s", hosth);
+      /* copy host safely */
+      size_t hlen = strnlen(hosth, sizeof(r.host)-1);
+      if (hlen >= sizeof(r.host)-1) hlen = sizeof(r.host)-1;
+      memcpy(r.host, hosth, hlen); r.host[hlen]=0;
     }
     /* Log incoming request */
     fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r.method, r.path, r.client_ip, r.query, r.host);
+    /* Enforce allow-list even for static assets */
+    if (!http_is_client_allowed(r.client_ip)) {
+      fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, r.path);
+      http_send_status(&r, 403, "Forbidden");
+      http_printf(&r, "Content-Type: text/plain\r\n\r\nforbidden\n");
+      close(cfd);
+      continue;
+    }
     if (starts_with(r.path, "/css/") || starts_with(r.path, "/js/") || starts_with(r.path, "/fonts/")) {
       fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r.path, g_asset_root);
       http_send_file(&r, g_asset_root, r.path+1, NULL);
