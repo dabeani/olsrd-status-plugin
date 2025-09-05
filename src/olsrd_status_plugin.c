@@ -534,10 +534,53 @@ static void get_primary_ipv4(char *out, size_t outlen){ if(out&&outlen) out[0]=0
 /* Very lightweight validation that node_db json has object form & expected keys */
 static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) return 0; /* skip leading ws */ size_t i=0; while(i<len && (buf[i]==' '||buf[i]=='\n'||buf[i]=='\r'||buf[i]=='\t')) i++; if(i>=len) return 0; if(buf[i] != '{') return 0; /* look for some indicative keys */ if(strstr(buf,"\"v6-to-v4\"")||strstr(buf,"\"v6-to-id\"")||strstr(buf,"\"v6-hna-at\"")) return 1; if(strstr(buf,"\"n\"")) return 1; return 1; }
 
+/* Fetch remote node_db and update cache */
+static void fetch_remote_nodedb(void) {
+  char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
+  char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", ipbuf, g_nodedb_url);
+  char *fresh=NULL; size_t fn=0;
+  if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+    /* augment: if remote JSON is an object mapping IP -> { n:.. } ensure each has hostname/name keys */
+    int is_object_mapping = 0; /* heuristic: starts with '{' and contains '"n"' and an IPv4 pattern */
+    if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1;
+    if (is_object_mapping) {
+      /* naive single-pass insertion: for each occurrence of "n":"VALUE" inside an object that lacks hostname add "hostname":"VALUE","name":"VALUE" */
+      char *aug = malloc(fn*2 + 32); /* generous */
+      if (aug) {
+        size_t o=0; const char *p=fresh; int in_obj=0; int pending_insert=0; char last_n_val[256]; last_n_val[0]=0; int inserted_for_obj=0;
+        while (*p) {
+          if (*p=='{') { in_obj++; inserted_for_obj=0; last_n_val[0]=0; pending_insert=0; }
+          if (*p=='}') { if (pending_insert && last_n_val[0] && !inserted_for_obj) {
+              o += (size_t)snprintf(aug+o, fn*2+32 - o, ",\"hostname\":\"%s\",\"name\":\"%s\"", last_n_val, last_n_val);
+              pending_insert=0; inserted_for_obj=1; }
+            in_obj--; if (in_obj<0) in_obj=0; }
+          if (strncmp(p,"\"n\":\"",5)==0) {
+            const char *vstart = p+5; const char *q=vstart; while(*q && *q!='"') q++; size_t L=(size_t)(q-vstart); if(L>=sizeof(last_n_val)) L=sizeof(last_n_val)-1; memcpy(last_n_val,vstart,L); last_n_val[L]=0; pending_insert=1; inserted_for_obj=0;
+          }
+          if (pending_insert && strncmp(p,"\"hostname\"",10)==0) { pending_insert=0; inserted_for_obj=1; }
+          if (pending_insert && strncmp(p,"\"name\"",6)==0) { /* still add hostname later if only name appears */ }
+          aug[o++]=*p; p++; if(o>fn*2) break; }
+        aug[o]=0;
+        if (o>0) { free(fresh); fresh=aug; fn=strlen(fresh); }
+        else free(aug);
+      }
+    }
+    pthread_mutex_lock(&g_nodedb_lock);
+    if (g_nodedb_cached) free(g_nodedb_cached);
+    g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
+    pthread_mutex_unlock(&g_nodedb_lock);
+    /* write a copy for external inspection */
+    FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} fresh=NULL;
+  } else if (fresh) { free(fresh); }
+    else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
+}
+
 /* Improved unique-destination counting: counts distinct destination nodes reachable via given last hop. */
 static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen) {
   if (!raw || !outbuf || !outlen) return -1;
   *outbuf = NULL; *outlen = 0;
+  /* Always fetch remote node_db for fresh data */
+  fetch_remote_nodedb();
   /* --- Route & node name fan-out (Python legacy parity) ------------------
    * The original bmk-webstatus.py derives per-neighbor route counts and node
    * counts exclusively from the Linux IPv4 routing table plus node_db names:
@@ -585,28 +628,37 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
             char nodename[128]="";
             int have_name = 0;
             /* Acquire node_db under lock (may be updated asynchronously) */
+            char *nodedb_buf = NULL; size_t nodedb_len = 0;
             if (g_nodedb_cached && g_nodedb_cached_len>0) {
               pthread_mutex_lock(&g_nodedb_lock);
-              if (g_nodedb_cached && g_nodedb_cached_len>0) {
-                char pattern[256]; snprintf(pattern,sizeof(pattern),"\"%s\":{", dest);
-                char *kp = strstr(g_nodedb_cached, pattern);
-                if (kp) {
-                  char *np = strstr(kp, "\"n\":");
-                  if (np && np < strstr(kp, "}")) { /* within object */
-                    np = strchr(np, '"'); /* first quote of key maybe; move to value */
-                    if (np) { /* find first '"' after 'n":' */
-                      np = strchr(np+1,'"');
-                      if (np) {
-                        char *val_start = np+1; char *val_end = strchr(val_start,'"');
-                        if (val_end && val_end>val_start) {
-                          size_t L = (size_t)(val_end-val_start); if (L >= sizeof(nodename)) L = sizeof(nodename)-1; memcpy(nodename,val_start,L); nodename[L]='\0'; if(nodename[0]) have_name=1; }
-                      }
+              nodedb_buf = g_nodedb_cached;
+              nodedb_len = g_nodedb_cached_len;
+              pthread_mutex_unlock(&g_nodedb_lock);
+            }
+            if (nodedb_buf && nodedb_len > 0) {
+              char pattern[256]; snprintf(pattern,sizeof(pattern),"\"%s\":{", dest);
+              char *kp = strstr(nodedb_buf, pattern);
+              if (kp) {
+                char *np = strstr(kp, "\"n\":");
+                if (np && np < strstr(kp, "}")) { /* within object */
+                  np += 5; /* skip "\"n\":" */
+                  /* skip whitespace */
+                  while (*np && (*np == ' ' || *np == '\t' || *np == '\n' || *np == '\r')) np++;
+                  if (*np == '"') {
+                    char *val_start = np + 1;
+                    char *val_end = strchr(val_start, '"');
+                    if (val_end && val_end > val_start) {
+                      size_t L = (size_t)(val_end - val_start);
+                      if (L >= sizeof(nodename)) L = sizeof(nodename) - 1;
+                      memcpy(nodename, val_start, L);
+                      nodename[L] = '\0';
+                      if (nodename[0]) have_name = 1;
                     }
                   }
                 }
               }
-              pthread_mutex_unlock(&g_nodedb_lock);
             }
+            if (nodedb_buf && nodedb_buf != g_nodedb_cached) free(nodedb_buf);
             if (have_name) {
               /* ensure unique per gateway */
               int dup=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) if(strcmp(gw_stats[gi].names[ni],nodename)==0){ dup=1; break; }
@@ -1665,75 +1717,14 @@ static int h_status_olsr(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(routes_raw) free(routes_raw); if(topology_raw) free(topology_raw); return 0; }
 
 static int h_nodedb(http_request_t *r) {
-  /* Auto-update strategy with caching & configurable URL.
-   * 1. If /config/custom/node_db.json exists -> serve (override).
-   * 2. Else if /tmp/node_db.json newer than last remote fetch -> serve.
-   * 3. Else serve cached remote (fetch if stale/absent based on ttl).
-   * 4. Else ARP synthesized fallback.
-   */
-  const char *local_custom = "/config/custom/node_db.json";
-  const char *tmp_local = "/tmp/node_db.json";
-  char *out=NULL; size_t n=0;
-  /* 1. persistent override */
-  if (path_exists(local_custom) && util_read_file(local_custom,&out,&n)==0 && out && buffer_has_content(out,n)) {
-    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
-  if (out) { free(out); out=NULL; n=0; }
-  /* 2. tmp override (mtime newer than last remote fetch) */
-  struct stat st; if (path_exists(tmp_local) && stat(tmp_local,&st)==0) {
-    if (util_read_file(tmp_local,&out,&n)==0 && out && buffer_has_content(out,n)) {
-      if (st.st_mtime >= g_nodedb_last_fetch) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
-    }
-    if (out) { free(out); out=NULL; n=0; }
-  }
-  /* 3. remote cached fetch */
-  int need_fetch=0; time_t now=time(NULL);
-  pthread_mutex_lock(&g_nodedb_lock);
-  if (!g_nodedb_cached || g_nodedb_cached_len==0 || (now - g_nodedb_last_fetch) > g_nodedb_ttl) need_fetch=1;
-  pthread_mutex_unlock(&g_nodedb_lock);
-  if (need_fetch) {
-    char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
-    char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", ipbuf, g_nodedb_url);
-    char *fresh=NULL; size_t fn=0;
-    if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
-      /* augment: if remote JSON is an object mapping IP -> { n:.. } ensure each has hostname/name keys */
-      int is_object_mapping = 0; /* heuristic: starts with '{' and contains '"n"' and an IPv4 pattern */
-      if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1;
-      if (is_object_mapping) {
-        /* naive single-pass insertion: for each occurrence of "n":"VALUE" inside an object that lacks hostname add "hostname":"VALUE","name":"VALUE" */
-        char *aug = malloc(fn*2 + 32); /* generous */
-        if (aug) {
-          size_t o=0; const char *p=fresh; int in_obj=0; int pending_insert=0; char last_n_val[256]; last_n_val[0]=0; int inserted_for_obj=0;
-          while (*p) {
-            if (*p=='{') { in_obj++; inserted_for_obj=0; last_n_val[0]=0; pending_insert=0; }
-            if (*p=='}') { if (pending_insert && last_n_val[0] && !inserted_for_obj) {
-                o += (size_t)snprintf(aug+o, fn*2+32 - o, ",\"hostname\":\"%s\",\"name\":\"%s\"", last_n_val, last_n_val);
-                pending_insert=0; inserted_for_obj=1; }
-              in_obj--; if (in_obj<0) in_obj=0; }
-            if (strncmp(p,"\"n\":\"",5)==0) {
-              const char *vstart = p+5; const char *q=vstart; while(*q && *q!='"') q++; size_t L=(size_t)(q-vstart); if(L>=sizeof(last_n_val)) L=sizeof(last_n_val)-1; memcpy(last_n_val,vstart,L); last_n_val[L]=0; pending_insert=1; inserted_for_obj=0;
-            }
-            if (pending_insert && strncmp(p,"\"hostname\"",10)==0) { pending_insert=0; inserted_for_obj=1; }
-            if (pending_insert && strncmp(p,"\"name\"",6)==0) { /* still add hostname later if only name appears */ }
-            aug[o++]=*p; p++; if(o>fn*2) break; }
-          aug[o]=0;
-          if (o>0) { free(fresh); fresh=aug; fn=strlen(fresh); }
-          else free(aug);
-        }
-      }
-      pthread_mutex_lock(&g_nodedb_lock);
-      if (g_nodedb_cached) free(g_nodedb_cached);
-      g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
-      pthread_mutex_unlock(&g_nodedb_lock);
-      /* write a copy for external inspection */
-      FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} fresh=NULL;
-    } else if (fresh) { free(fresh); }
-      else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
-  }
+  /* Always fetch remote node_db */
+  fetch_remote_nodedb();
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
     http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
-  /* 4. ARP fallback: produce object mapping */
+  /* ARP fallback: produce object mapping */
+  char *out=NULL; size_t n=0;
   if (devices_from_arp_nodedb(&out,&n)==0 && out && n>0) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
   if (out) free(out);
   send_json(r,"{}\n"); return 0;
@@ -2046,36 +2037,23 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
       return;
     }
   }
-  /* try local nodedb files */
-  const char *ndpaths[] = { "/config/custom/node_db.json", "/tmp/node_db.json", NULL };
-  for (const char **np = ndpaths; *np; ++np) {
-    if (!path_exists(*np)) continue;
-    char *nbuf = NULL; size_t nbs = 0;
-    if (util_read_file(*np, &nbuf, &nbs) == 0 && nbuf && nbs>0) {
-  char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 117, ipv4);
-      char *pos = strstr(nbuf, needle);
-      if (pos) {
-        char *hpos = strstr(pos, "\"hostname\":");
-        if (hpos && find_json_string_value(hpos, "hostname", &pos, &nbs)) {
-          size_t copy = nbs < outlen-1 ? nbs : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); free(nbuf); return;
-        }
-      }
-      free(nbuf);
-    }
-  }
-  /* try remote node_db as last resort */
-  char *outb = NULL; size_t obn = 0;
-  if (util_exec("/usr/bin/curl -s --max-time 1 https://ff.cybercomm.at/node_db.json", &outb, &obn) == 0 && outb && obn>0) {
-  char needle[128]; snprintf(needle, sizeof(needle), "\"ipv4\":\"%.*s\"", 117, ipv4);
-    char *pos = strstr(outb, needle);
+  /* try cached remote node_db first */
+  fetch_remote_nodedb();
+  if (g_nodedb_cached && g_nodedb_cached_len > 0) {
+    char needle[128]; snprintf(needle, sizeof(needle), "\"%s\":", ipv4);
+    char *pos = strstr(g_nodedb_cached, needle);
     if (pos) {
       char *hpos = strstr(pos, "\"hostname\":");
-      if (hpos && find_json_string_value(hpos, "hostname", &pos, &obn)) {
-        size_t copy = obn < outlen-1 ? obn : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); free(outb); return;
+      if (hpos && find_json_string_value(hpos, "hostname", &pos, &g_nodedb_cached_len)) {
+        size_t copy = g_nodedb_cached_len < outlen-1 ? g_nodedb_cached_len : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+      }
+      /* fallback to "n" */
+      char *npos = strstr(pos, "\"n\":");
+      if (npos && find_json_string_value(npos, "n", &pos, &g_nodedb_cached_len)) {
+        size_t copy = g_nodedb_cached_len < outlen-1 ? g_nodedb_cached_len : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
       }
     }
   }
-  if (outb) free(outb);
   /* nothing found */
   out[0]=0;
 }
