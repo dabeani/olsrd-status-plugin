@@ -2040,7 +2040,11 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
   /* try cached remote node_db first */
   fetch_remote_nodedb();
   if (g_nodedb_cached && g_nodedb_cached_len > 0) {
-    char needle[128]; snprintf(needle, sizeof(needle), "\"%s\":", ipv4);
+    char needle[256]; 
+    if (snprintf(needle, sizeof(needle), "\"%s\":", ipv4) >= (int)sizeof(needle)) {
+      /* IP address too long, skip */
+      goto nothing_found;
+    }
     char *pos = strstr(g_nodedb_cached, needle);
     if (pos) {
       char *hpos = strstr(pos, "\"hostname\":");
@@ -2055,6 +2059,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
     }
   }
   /* nothing found */
+nothing_found:
   out[0]=0;
 }
 
