@@ -6,26 +6,46 @@
 #include <sys/stat.h>
 
 int util_exec(const char *cmd, char **out, size_t *outlen) {
+  /* Cap total output to avoid unbounded memory consumption from spawns */
+  const size_t MAX_EXEC_OUTPUT = 1024 * 1024; /* 1 MiB */
   *out = NULL; *outlen = 0;
+  if (!cmd) return -1;
   FILE *fp = popen(cmd, "r");
   if (!fp) return -1;
   size_t cap = 8192;
+  if (cap > MAX_EXEC_OUTPUT) cap = MAX_EXEC_OUTPUT;
   char *buf = (char*)malloc(cap);
   if (!buf) { pclose(fp); return -1; }
   size_t len = 0;
   size_t n;
   while (!feof(fp)) {
-    if (cap - len < 4096) {
-      cap *= 2;
-      char *nb = (char*)realloc(buf, cap);
-      if (!nb) { free(buf); pclose(fp); return -1; }
-      buf = nb;
+    size_t want = 4096;
+    if (MAX_EXEC_OUTPUT - len == 0) {
+      /* reached maximum allowed output; stop reading further */
+      break;
     }
-    n = fread(buf + len, 1, 4096, fp);
+    if (want > MAX_EXEC_OUTPUT - len) want = MAX_EXEC_OUTPUT - len;
+    if (cap - len < want) {
+      size_t newcap = cap * 2;
+      if (newcap > MAX_EXEC_OUTPUT) newcap = MAX_EXEC_OUTPUT;
+      if (newcap <= cap) {
+        /* cannot grow further */
+        break;
+      }
+      char *nb = (char*)realloc(buf, newcap);
+      if (!nb) { free(buf); pclose(fp); return -1; }
+      buf = nb; cap = newcap;
+    }
+    n = fread(buf + len, 1, want, fp);
+    if (n == 0) break;
     len += n;
   }
   pclose(fp);
   /* null-terminate the returned buffer for safety */
+  if (len >= MAX_EXEC_OUTPUT) {
+    /* ensure last byte reserved for NUL */
+    len = MAX_EXEC_OUTPUT - 1;
+  }
   char *nb = (char*)realloc(buf, len + 1);
   if (nb) buf = nb;
   buf[len] = '\0';
@@ -42,6 +62,9 @@ int util_read_file(const char *path, char **out, size_t *outlen) {
   long sz = ftell(f);
   fseek(f, 0, SEEK_SET);
   if (sz < 0) { fclose(f); return -1; }
+  /* Prevent trying to read extremely large files into memory (cap at 5 MiB) */
+  const long MAX_FILE_READ = 5 * 1024 * 1024;
+  if (sz > MAX_FILE_READ) { fclose(f); return -1; }
   /* allocate one extra byte for a terminating NUL to make the buffer string-safe */
   char *buf = (char*)malloc((size_t)sz + 1);
   if (!buf) { fclose(f); return -1; }
@@ -103,14 +126,21 @@ int util_http_get_url_local(const char *url, char **out, size_t *outlen, int tim
   struct timeval to; to.tv_sec = timeout_sec; to.tv_usec = 0; setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
 
   char req[1024]; int rn = snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", path);
-  if (send(fd, req, rn, 0) != rn) { close(fd); return -1; }
+  if (rn < 0 || rn >= (int)sizeof(req)) { close(fd); return -1; }
+  if (send(fd, req, (size_t)rn, 0) != rn) { close(fd); return -1; }
 
-  size_t cap = 8192; char *buf = malloc(cap); if(!buf){ close(fd); return -1; }
+  const size_t MAX_BODY = 512 * 1024; /* 512 KiB */
+  size_t cap = 8192; if (cap > MAX_BODY) cap = MAX_BODY; char *buf = malloc(cap); if(!buf){ close(fd); return -1; }
   size_t len = 0; ssize_t n;
   while ((n = recv(fd, buf + len, (ssize_t)(cap - len), 0)) > 0) {
     len += (size_t)n;
+    if (len >= MAX_BODY) {
+      /* reached cap, stop reading further */
+      break;
+    }
     if (cap - len < 4096) {
-      cap *= 2; char *nb = realloc(buf, cap); if (!nb) { free(buf); close(fd); return -1; } buf = nb;
+      size_t newcap = cap * 2; if (newcap > MAX_BODY) newcap = MAX_BODY;
+      char *nb = realloc(buf, newcap); if (!nb) { free(buf); close(fd); return -1; } buf = nb; cap = newcap;
     }
   }
   close(fd);

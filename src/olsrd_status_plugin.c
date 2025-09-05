@@ -176,8 +176,15 @@ static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const 
 #endif
   va_end(ap);
   if (n < 0 || !t) return -1;
+  const size_t MAX_JSON_BUF = 2 * 1024 * 1024; /* 2 MiB */
   if (*lenptr + (size_t)n + 1 > *capptr) {
-    while (*capptr < *lenptr + (size_t)n + 1) *capptr *= 2;
+    while (*capptr < *lenptr + (size_t)n + 1) {
+      size_t next = *capptr * 2;
+      if (next > MAX_JSON_BUF) next = MAX_JSON_BUF;
+      if (next <= *capptr) { free(t); return -1; }
+      *capptr = next;
+    }
+    if (*capptr > MAX_JSON_BUF) { free(t); return -1; }
     char *nb = (char*)realloc(*bufptr, *capptr);
     if (!nb) { free(t); return -1; }
     *bufptr = nb;
@@ -913,27 +920,40 @@ broadcast_fail:
  */
 static int find_json_string_value(const char *start, const char *key, char **val, size_t *val_len) {
   if (!start || !key || !val || !val_len) return 0;
-  char needle[128]; snprintf(needle, sizeof(needle), "\"%s\"", key);
-  const char *p = start;
-  while ((p = strstr(p, needle)) != NULL) {
+  /* Safety limits to avoid pathological searches on large or malicious inputs */
+  const size_t MAX_SEARCH = 256 * 1024; /* 256 KiB */
+  const size_t MAX_VALUE_LEN = 4096; /* cap returned value length */
+  char needle[128]; if ((size_t)snprintf(needle, sizeof(needle), "\"%s\"", key) >= sizeof(needle)) return 0;
+  const char *p = start; const char *search_end = start + MAX_SEARCH;
+  /* find buffer true end by looking for terminating NUL if present and shorten search_end accordingly */
+  const char *nul = memchr(start, '\0', MAX_SEARCH);
+  if (nul) search_end = nul;
+  while (p < search_end && (p = strstr(p, needle)) != NULL) {
     const char *q = p + strlen(needle);
-    /* skip whitespace */ while (*q && (*q==' '||*q=='\t'||*q=='\r'||*q=='\n')) q++;
-    if (*q != ':') { p = q; continue; }
-    q++; while (*q && (*q==' '||*q=='\t'||*q=='\r'||*q=='\n')) q++;
+    /* skip whitespace */ while (q < search_end && (*q==' '||*q=='\t'||*q=='\r'||*q=='\n')) q++;
+    if (q >= search_end || *q != ':') { p = q; continue; }
+    q++; while (q < search_end && (*q==' '||*q=='\t'||*q=='\r'||*q=='\n')) q++;
+    if (q >= search_end) return 0;
     if (*q == '"') {
       q++; const char *vstart = q; const char *r = q;
-      while (*r) {
-        if (*r == '\\' && r[1]) { r += 2; continue; }
-        if (*r == '"') { *val = (char*)vstart; *val_len = (size_t)(r - vstart); return 1; }
+      while (r < search_end && *r) {
+        if (*r == '\\' && (r + 1) < search_end) { r += 2; continue; }
+        if (*r == '"') {
+          size_t vlen = (size_t)(r - vstart);
+          if (vlen > MAX_VALUE_LEN) vlen = MAX_VALUE_LEN;
+          *val = (char*)vstart; *val_len = vlen; return 1;
+        }
         r++;
       }
       return 0;
     } else {
       /* not a quoted string: capture until comma or closing brace */
       const char *vstart = q; const char *r = q;
-      while (*r && *r != ',' && *r != '}' && *r != '\n') r++;
+      while (r < search_end && *r && *r != ',' && *r != '}' && *r != '\n') r++;
       while (r > vstart && (*(r-1)==' '||*(r-1)=='\t')) r--;
-      *val = (char*)vstart; *val_len = (size_t)(r - vstart); return 1;
+      size_t vlen = (size_t)(r - vstart);
+      if (vlen > MAX_VALUE_LEN) vlen = MAX_VALUE_LEN;
+      *val = (char*)vstart; *val_len = vlen; return 1;
     }
   }
   return 0;
