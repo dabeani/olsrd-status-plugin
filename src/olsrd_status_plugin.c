@@ -1202,7 +1202,7 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   if (olsrd4conf && olsrd4_n>0) { if (memmem(olsrd4conf, olsrd4_n, "olsrd_watchdog", 13) || memmem(olsrd4conf, olsrd4_n, "LoadPlugin.*olsrd_watchdog", 22)) olsrd4watchdog = 1; free(olsrd4conf); }
 
   /* ips */
-  char ipv4_addr[64] = "n/a", ipv6_addr[128] = "n/a", originator[128] = "n/a";
+  char ipv4_addr[64] = "n/a", ipv6_addr[128] = "n/a";
   char *tmp_out = NULL; size_t tmp_n = 0;
   if (util_exec("ip -4 -o addr show scope global | awk '{print $4; exit}' | cut -d/ -f1", &tmp_out, &tmp_n) == 0 && tmp_out && tmp_n>0) { char *t = strndup(tmp_out, tmp_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(ipv4_addr, t, sizeof(ipv4_addr)-1); free(t); } free(tmp_out); tmp_out=NULL; tmp_n=0; }
   if (util_exec("ip -6 -o addr show scope global | awk '{print $4; exit}' | cut -d/ -f1", &tmp_out, &tmp_n) == 0 && tmp_out && tmp_n>0) { char *t = strndup(tmp_out, tmp_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(ipv6_addr, t, sizeof(ipv6_addr)-1); free(t); } free(tmp_out); tmp_out=NULL; tmp_n=0; }
@@ -1348,24 +1348,16 @@ static int h_status(http_request_t *r) {
   /* default_route */
   /* attempt reverse DNS for default route IP to provide a hostname for the gateway */
   /* Try EdgeRouter path first */
-  char *vout=NULL; size_t vn=0; int versions_loaded=0;
-  if (path_exists("/config/custom/versions.sh")) {
-    if (util_exec("/config/custom/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
+  /* versions: use internal generator rather than external script */
+  {
+    char *vout = NULL; size_t vn = 0;
+    if (generate_versions_json(&vout, &vn) == 0 && vout && vn>0) {
+      APPEND("\"versions\":%s,", vout);
+      free(vout); vout = NULL;
+    } else {
+      /* Provide basic fallback versions for Linux container */
+      APPEND("\"versions\":{\"olsrd\":\"unknown\",\"system\":\"linux-container\"},");
     }
-  } else if (path_exists("/usr/share/olsrd-status-plugin/versions.sh")) {
-    if (util_exec("/usr/share/olsrd-status-plugin/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
-    }
-  } else if (path_exists("./versions.sh")) {
-    if (util_exec("./versions.sh", &vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
-    }
-  }
-  
-  if (!versions_loaded) {
-    /* Provide basic fallback versions for Linux container */
-    APPEND("\"versions\":{\"olsrd\":\"unknown\",\"system\":\"linux-container\"},");
   }
   /* attempt to read traceroute_to from settings.inc (same path as python reference) */
     /* attempt to read traceroute_to from settings.inc (same path as python reference)
@@ -1682,7 +1674,15 @@ static int h_status_lite(http_request_t *r) {
   /* airos data minimal */
   if(path_exists("/tmp/10-all.json")){ char *ar=NULL; size_t an=0; if(util_read_file("/tmp/10-all.json",&ar,&an)==0 && ar){ APP_L("\"airosdata\":%s,", ar); free(ar);} else APP_L("\"airosdata\":{},"); } else APP_L("\"airosdata\":{},");
   /* versions (fast attempt) */
-  char *vout=NULL; size_t vn=0; int versions_loaded=0; if(path_exists("/config/custom/versions.sh")){ if(util_exec("/config/custom/versions.sh",&vout,&vn)==0 && vout){ APP_L("\"versions\":%s,", vout); free(vout); versions_loaded=1; }} else if(path_exists("/usr/share/olsrd-status-plugin/versions.sh")){ if(util_exec("/usr/share/olsrd-status-plugin/versions.sh",&vout,&vn)==0 && vout){ APP_L("\"versions\":%s,", vout); free(vout); versions_loaded=1; }} if(!versions_loaded) APP_L("\"versions\":{\"olsrd\":\"unknown\"},");
+  {
+    char *vout=NULL; size_t vn=0;
+    if (generate_versions_json(&vout, &vn) == 0 && vout && vn>0) {
+      APP_L("\"versions\":%s,", vout);
+      free(vout);
+    } else {
+      APP_L("\"versions\":{\"olsrd\":\"unknown\"},");
+    }
+  }
   /* detect olsrd / olsrd2 (previously skipped in lite) */
   int lite_olsr2_on=0, lite_olsrd_on=0; detect_olsr_processes(&lite_olsrd_on,&lite_olsr2_on);
   APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false");
@@ -2578,7 +2578,10 @@ static int h_versions_json(http_request_t *r) {
         else if (strncmp(line, "ebtables=", 9) == 0) strncpy(ebtables_ver, line+9, sizeof(ebtables_ver)-1);
         else if (strncmp(line, "blockpriv=", 10) == 0) strncpy(blockpriv_ver, line+10, sizeof(blockpriv_ver)-1);
         else if (strncmp(line, "autoupdate=", 11) == 0) strncpy(autoupdate_ver, line+11, sizeof(autoupdate_ver)-1);
-        if (!nl) break; p = nl + 1;
+        if (!nl) {
+          break;
+        }
+        p = nl + 1;
       }
     }
   }
