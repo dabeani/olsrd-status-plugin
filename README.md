@@ -107,6 +107,23 @@ LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
 * `enableipv6` – (placeholder) toggle IPv6 support future use.
 * `assetroot` – directory containing `www/` assets (index.html, CSS, JS).
 
+## Environment overrides
+The plugin also accepts a small set of environment variables which, if set before the plugin is started, will override the equivalent `PlParam` values. These are useful for quick testing or when deploying the plugin from container images or scripts.
+
+Supported variables:
+
+* `OLSRD_STATUS_PLUGIN_PORT` – numeric TCP port (1-65535). If set and valid it replaces the `port` parameter.
+* `OLSRD_STATUS_PLUGIN_NET` – allow-list entries for HTTP access control; this may contain multiple entries separated by commas, semicolons or whitespace. Each token must be a CIDR (e.g. `192.168.0.0/24`) or an address/mask pair. Valid entries are registered using the plugin's allow-list logic; invalid tokens are ignored and logged.
+* `OLSRD_STATUS_PLUGIN_NODEDB_URL` – URL string for the remote node DB used to populate `nodedb.json` (overrides `nodedb_url`).
+* `OLSRD_STATUS_PLUGIN_NODEDB_TTL` – integer seconds TTL for the cached node DB (overrides `nodedb_ttl`).
+* `OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK` – integer (0 or 1) controlling whether the node DB is written to disk (overrides `nodedb_write_disk`).
+
+Notes:
+
+* Environment values are applied at plugin initialization and take precedence over `PlParam` values (i.e. env overrides config). If you prefer configuration file values to take precedence, tell me and I can flip the order.
+* `OLSRD_STATUS_PLUGIN_NET` supports multiple entries in one variable (for example: `192.168.1.0/24,10.0.0.0/8`). Each valid entry is added to the HTTP allow-list. Invalid entries are ignored but logged to stderr.
+* The plugin logs overrides and invalid environment values to stderr so they are discoverable during startup.
+
 ## Security Notes
 * Endpoint intentionally unauthenticated for embedded deployment simplicity; place behind firewall or restrict `bind` to management network if needed.
 * All parsing is defensive with bounds checks; malformed upstream JSON will degrade gracefully (empty arrays / zero counts) rather than crash.
