@@ -358,10 +358,70 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
   return cnt;
 }
 
-/* Conservative unique node counting: treat distinct destination fields reached via ip as unique */
+/* Improved unique node counting: for topology-style sections (array of objects with lastHop*/
 static int count_unique_nodes_for_ip(const char *section, const char *ip) {
-  /* For now reuse simple count; could be extended to track unique destinations */
-  return count_nodes_for_ip(section, ip);
+  if (!section || !ip || !ip[0]) return 0;
+  const char *arr = strchr(section,'[');
+  if (!arr) return 0;
+  const char *p = arr;
+  int depth = 0;
+  /* store up to N unique destinations (cap to avoid excessive memory) */
+  const int MAX_UNIQUE = 2048;
+  char **uniq = NULL; int ucnt = 0; int rc = 0;
+  while (*p) {
+    if (*p=='[') { depth++; p++; continue; }
+    if (*p==']') { depth--; if(depth==0) break; p++; continue; }
+    if (*p=='{') {
+      const char *obj = p; int od=1; p++;
+      while (*p && od>0) { if (*p=='{') od++; else if (*p=='}') od--; p++; }
+      const char *end = p; if (end<=obj) continue;
+      char *v; size_t vlen; char lastHop[128]=""; char dest[128]="";
+      /* Extract lastHop variants */
+      if (find_json_string_value(obj,"lastHopIP",&v,&vlen) ||
+          find_json_string_value(obj,"lastHopIp",&v,&vlen) ||
+          find_json_string_value(obj,"lastHopIpAddress",&v,&vlen) ||
+          find_json_string_value(obj,"lastHop",&v,&vlen) ||
+          find_json_string_value(obj,"via",&v,&vlen) ||
+          find_json_string_value(obj,"gateway",&v,&vlen) ||
+          find_json_string_value(obj,"gatewayIP",&v,&vlen) ||
+          find_json_string_value(obj,"nextHop",&v,&vlen)) {
+        snprintf(lastHop,sizeof(lastHop),"%.*s",(int)vlen,v);
+      }
+      if (!lastHop[0]) continue;
+      /* normalize (trim possible /mask) */
+      char lastHopTrim[128]; snprintf(lastHopTrim,sizeof(lastHopTrim),"%s",lastHop); char *slash = strchr(lastHopTrim,'/'); if (slash) *slash='\0';
+      if (strcmp(lastHopTrim, ip)!=0) continue; /* only entries for this neighbor */
+      /* Extract destination variants */
+      if (find_json_string_value(obj,"destinationIP",&v,&vlen) ||
+          find_json_string_value(obj,"destinationIp",&v,&vlen) ||
+          find_json_string_value(obj,"destination",&v,&vlen) ||
+          find_json_string_value(obj,"destIpAddress",&v,&vlen) ||
+          find_json_string_value(obj,"dest",&v,&vlen) ||
+          find_json_string_value(obj,"to",&v,&vlen) ||
+          find_json_string_value(obj,"target",&v,&vlen) ||
+          find_json_string_value(obj,"originator",&v,&vlen)) {
+        snprintf(dest,sizeof(dest),"%.*s",(int)vlen,v);
+      }
+      if (!dest[0]) continue;
+      char destTrim[128]; snprintf(destTrim,sizeof(destTrim),"%s",dest); slash = strchr(destTrim,'/'); if (slash) *slash='\0';
+      if (strcmp(destTrim, ip)==0) continue; /* don't count neighbor itself */
+      if (destTrim[0]==0) continue;
+      /* linear de-dupe (counts small, keep simple) */
+      int dup=0; for (int i=0;i<ucnt;i++){ if(strcmp(uniq[i],destTrim)==0){ dup=1; break; } }
+      if (!dup) {
+        if (!uniq) uniq = (char**)calloc(MAX_UNIQUE,sizeof(char*));
+        if (uniq && ucnt < MAX_UNIQUE) {
+          uniq[ucnt] = strdup(destTrim);
+          if (uniq[ucnt]) ucnt++;
+        }
+      }
+      continue;
+    }
+    p++;
+  }
+  rc = ucnt;
+  if (uniq) { for (int i=0;i<ucnt;i++) free(uniq[i]); free(uniq); }
+  return rc;
 }
 
 /* Extract twoHopNeighborCount (or linkcount as last resort) for a given neighbor IP from neighbors section */
