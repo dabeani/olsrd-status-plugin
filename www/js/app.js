@@ -862,12 +862,19 @@ window.addEventListener('load', function(){
   var refreshLinksBtn = document.getElementById('refresh-links');
   if (refreshLinksBtn) {
     refreshLinksBtn.addEventListener('click', function(){
-      var statusEl = document.getElementById('links-status'); if (statusEl) statusEl.textContent = 'Loading...';
-      fetch('/olsr/links',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){
+      var statusEl = document.getElementById('links-status'); var spinner = document.getElementById('refresh-links-spinner');
+      try { refreshLinksBtn.disabled = true; } catch(e){}
+      if (statusEl) statusEl.textContent = 'Refreshing…';
+      if (spinner) spinner.classList.add('rotate');
+      // First force-update node_db
+      fetch('/nodedb/refresh',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(res){
+        // ignore res contents; continue to fetch latest links
+        return fetch('/olsr/links',{cache:'no-store'});
+      }).then(function(r2){ return r2.json(); }).then(function(o){
         if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }
         if (statusEl) statusEl.textContent = '';
         _olsrLoaded = true;
-      }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; });
+      }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; }).finally(function(){ try{ refreshLinksBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
     });
   }
 });

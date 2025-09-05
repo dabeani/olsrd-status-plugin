@@ -98,7 +98,10 @@
 
         <!-- OLSR Links -->
     <div id="tab-olsr" class="tab-pane">
-          <h3>OLSR Links <button id="refresh-links" class="btn btn-xs btn-default">Refresh</button>
+          <style>#refresh-links .spin{display:inline-block; width:12px; height:12px; vertical-align:middle; margin-right:6px;}
+          @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+          .spin.rotate { animation: spin 1s linear infinite; }</style>
+          <h3>OLSR Links <button id="refresh-links" class="btn btn-xs btn-default"><span class="spin" id="refresh-links-spinner"></span>Refresh</button>
             <span id="links-status" class="small-muted"></span></h3>
           <div class="table-responsive">
             <table id="olsrLinksTable" class="table table-bordered table-condensed">
