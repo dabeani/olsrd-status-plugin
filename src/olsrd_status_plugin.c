@@ -1370,15 +1370,17 @@ static int h_status_olsr(http_request_t *r) {
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
   for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
+  /* also get routes & topology to enrich route/node counts like /olsr/links */
+  char *routes_raw=NULL; size_t rr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &routes_raw,&rr);
+  char *topology_raw=NULL; size_t tr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &topology_raw,&tr);
   APP2("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
   if(olsr_links_raw && oln>0){
-    char *combined_raw=NULL; size_t l1=strlen(olsr_links_raw); combined_raw=malloc(l1+4); if(combined_raw){ memcpy(combined_raw,olsr_links_raw,l1); combined_raw[l1]=0; }
-    char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw?combined_raw:olsr_links_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); }
-    if(combined_raw) free(combined_raw);
+    size_t l1=strlen(olsr_links_raw); size_t l2=routes_raw?strlen(routes_raw):0; size_t l3=topology_raw?strlen(topology_raw):0;
+    char *combined_raw=malloc(l1+l2+l3+8); if(combined_raw){ size_t off=0; memcpy(combined_raw+off,olsr_links_raw,l1); off+=l1; combined_raw[off++]='\n'; if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; } if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; } combined_raw[off]=0; char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } free(combined_raw);} else { APP2("\"links\":[]"); }
   } else { APP2("\"links\":[]"); }
   APP2("}\n");
-  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); return 0; }
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(routes_raw) free(routes_raw); if(topology_raw) free(topology_raw); return 0; }
 
 static int h_nodedb(http_request_t *r) {
   /* Auto-update strategy with caching & configurable URL.
