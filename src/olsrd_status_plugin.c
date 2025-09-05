@@ -967,7 +967,8 @@ static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char 
     } else { snprintf(addrpart, sizeof(addrpart), "%s", keybuf); }
     struct in_addr ina_k; if (!inet_aton(addrpart, &ina_k)) { p = objend; continue; }
     uint32_t net = ntohl(ina_k.s_addr);
-    if (maskbits < 0) maskbits = 0; if (maskbits > 32) maskbits = 32;
+  if (maskbits < 0) maskbits = 0;
+  if (maskbits > 32) maskbits = 32;
     uint32_t mask = (maskbits == 0) ? 0 : ((maskbits == 32) ? 0xFFFFFFFFu : (~((1u << (32 - maskbits)) - 1u)));
     if ((dest & mask) != (net & mask)) { p = objend; continue; }
     /* matched; extract "n" value inside object */
