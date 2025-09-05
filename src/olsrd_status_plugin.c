@@ -613,7 +613,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
               if(!dup && gw_stats[gi].name_count < 256) {
                 /* Cap and copy safely */
                 nodename[63]='\0';
-                snprintf(gw_stats[gi].names[gw_stats[gi].name_count], sizeof(gw_stats[gi].names[0]), "%s", nodename);
+                size_t nlen = strnlen(nodename, 63);
+                memcpy(gw_stats[gi].names[gw_stats[gi].name_count], nodename, nlen);
+                gw_stats[gi].names[gw_stats[gi].name_count][nlen] = '\0';
                 gw_stats[gi].name_count++;
                 gw_stats[gi].nodes = gw_stats[gi].name_count;
               }
