@@ -498,34 +498,6 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
   fclose(f); json_buf_append(&buf,&len,&cap,"]"); *out=buf; *outlen=len; return 0;
 }
 
-/* Build node_db style object from ARP (keyed by IPv4) */
-static int devices_from_arp_nodedb(char **out, size_t *outlen) {
-  if(!out||!outlen) return -1;
-  *out=NULL; *outlen=0;
-  FILE *f=fopen("/proc/net/arp","r"); if(!f) return -1;
-  size_t cap=4096,len=0; char *buf=malloc(cap); if(!buf){ fclose(f); return -1; } buf[0]=0;
-  json_buf_append(&buf,&len,&cap,"{"); int first=1; char line[512];
-  if(!fgets(line,sizeof(line),f)) { fclose(f); free(buf); return -1; }
-  while(fgets(line,sizeof(line),f)) {
-    char ip[128], hw[128], dev[64];
-    if (sscanf(line,"%127s %*s %*s %127s %*s %63s", ip, hw, dev) >=2) {
-      if(!first) json_buf_append(&buf,&len,&cap,",");
-      first=0;
-      /* attempt reverse DNS */
-      char host[256]=""; struct in_addr ina; if(inet_aton(ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he&&he->h_name) snprintf(host,sizeof(host),"%s",he->h_name); }
-      json_buf_append(&buf,&len,&cap,"\""); json_append_escaped(&buf,&len,&cap,ip); json_buf_append(&buf,&len,&cap,"\":{");
-  json_buf_append(&buf,&len,&cap,"\"n\":\"\",\"d\":\"\",\"id\":0,\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
-  json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,host);
-  /* provide legacy alias 'name' so UI versions that only look for hostname/name see something */
-  json_buf_append(&buf,&len,&cap,",\"name\":"); json_append_escaped(&buf,&len,&cap,host);
-      json_buf_append(&buf,&len,&cap,"}");
-    }
-  }
-  json_buf_append(&buf,&len,&cap,first?"\"meta\":{\"fallback\":\"arp_empty\"}}":" ,\"meta\":{\"fallback\":\"arp\"}} ");
-  fclose(f);
-  *out=buf; *outlen=len; return 0;
-}
-
 /* Obtain primary non-loopback IPv4 (best effort). */
 static void get_primary_ipv4(char *out, size_t outlen){ if(out&&outlen) out[0]=0; struct ifaddrs *ifap=NULL,*ifa=NULL; if(getifaddrs(&ifap)==0){ for(ifa=ifap; ifa; ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b))){ if(strcmp(b,"127.0.0.1")!=0){ snprintf(out,outlen,"%s",b); break; } } } } freeifaddrs(ifap);} }
 
@@ -871,7 +843,7 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
     close(s);
   }
 broadcast_fail:
-  /* ARP fallback */
+  /* Use internal broadcast discovery */
   if (devices_from_arp_json(out, outlen)==0 && *out && *outlen>0) { free(cache_buf); cache_buf=malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=nowt; } return 0; }
   return -1;
 }
@@ -1183,7 +1155,7 @@ static int h_status(http_request_t *r) {
   APPEND("\"hostname\":"); json_append_escaped(&buf, &len, &cap, def_hostname);
   APPEND("},");
 
-  /* devices will be populated below from ubnt-discover or arp fallback */
+  /* devices will be populated below from ubnt-discover */
 
   /* airosdata: raw JSON if present */
   if (have_airos) {
@@ -1259,11 +1231,11 @@ static int h_status(http_request_t *r) {
     }
   }
   /* fallback: if traceroute_to not set, use default route IP (filled later) - placeholder handled below */
-  /* Try to populate devices from ubnt-discover (or fallback) using helper */
+  /* Try to populate devices from ubnt-discover using helper */
   {
     char *ud = NULL; size_t udn = 0;
     if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
-      fprintf(stderr, "[status-plugin] got device data from ubnt-discover or fallback (%zu bytes)\n", udn);
+      fprintf(stderr, "[status-plugin] got device data from ubnt-discover (%zu bytes)\n", udn);
       char *normalized = NULL; size_t nlen = 0;
       if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
         APPEND("\"devices\":");
@@ -1696,10 +1668,7 @@ static int h_nodedb(http_request_t *r) {
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
     http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
-  /* ARP fallback: produce object mapping */
-  char *out=NULL; size_t n=0;
-  if (devices_from_arp_nodedb(&out,&n)==0 && out && n>0) { http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,out,n); free(out); return 0; }
-  if (out) free(out);
+  /* No fallback - return empty if no remote data available */
   send_json(r,"{}\n"); return 0;
 }
 
