@@ -455,8 +455,10 @@ static int devices_from_arp_nodedb(char **out, size_t *outlen) {
       /* attempt reverse DNS */
       char host[256]=""; struct in_addr ina; if(inet_aton(ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he&&he->h_name) snprintf(host,sizeof(host),"%s",he->h_name); }
       json_buf_append(&buf,&len,&cap,"\""); json_append_escaped(&buf,&len,&cap,ip); json_buf_append(&buf,&len,&cap,"\":{");
-      json_buf_append(&buf,&len,&cap,"\"n\":\"\",\"d\":\"\",\"id\":0,\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
-      json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,host);
+  json_buf_append(&buf,&len,&cap,"\"n\":\"\",\"d\":\"\",\"id\":0,\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
+  json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,host);
+  /* provide legacy alias 'name' so UI versions that only look for hostname/name see something */
+  json_buf_append(&buf,&len,&cap,",\"name\":"); json_append_escaped(&buf,&len,&cap,host);
       json_buf_append(&buf,&len,&cap,"}");
     }
   }
@@ -1502,6 +1504,31 @@ static int h_nodedb(http_request_t *r) {
     char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", ipbuf, g_nodedb_url);
     char *fresh=NULL; size_t fn=0;
     if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+      /* augment: if remote JSON is an object mapping IP -> { n:.. } ensure each has hostname/name keys */
+      int is_object_mapping = 0; /* heuristic: starts with '{' and contains '"n"' and an IPv4 pattern */
+      if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1;
+      if (is_object_mapping) {
+        /* naive single-pass insertion: for each occurrence of "n":"VALUE" inside an object that lacks hostname add "hostname":"VALUE","name":"VALUE" */
+        char *aug = malloc(fn*2 + 32); /* generous */
+        if (aug) {
+          size_t o=0; const char *p=fresh; int in_obj=0; int pending_insert=0; char last_n_val[256]; last_n_val[0]=0; int inserted_for_obj=0;
+          while (*p) {
+            if (*p=='{') { in_obj++; inserted_for_obj=0; last_n_val[0]=0; pending_insert=0; }
+            if (*p=='}') { if (pending_insert && last_n_val[0] && !inserted_for_obj) {
+                o += (size_t)snprintf(aug+o, fn*2+32 - o, ",\"hostname\":\"%s\",\"name\":\"%s\"", last_n_val, last_n_val);
+                pending_insert=0; inserted_for_obj=1; }
+              in_obj--; if (in_obj<0) in_obj=0; }
+            if (strncmp(p,"\"n\":\"",5)==0) {
+              const char *vstart = p+5; const char *q=vstart; while(*q && *q!='"') q++; size_t L=(size_t)(q-vstart); if(L>=sizeof(last_n_val)) L=sizeof(last_n_val)-1; memcpy(last_n_val,vstart,L); last_n_val[L]=0; pending_insert=1; inserted_for_obj=0;
+            }
+            if (pending_insert && strncmp(p,"\"hostname\"",10)==0) { pending_insert=0; inserted_for_obj=1; }
+            if (pending_insert && strncmp(p,"\"name\"",6)==0) { /* still add hostname later if only name appears */ }
+            aug[o++]=*p; p++; if(o>fn*2) break; }
+          aug[o]=0;
+          if (o>0) { free(fresh); fresh=aug; fn=strlen(fresh); }
+          else free(aug);
+        }
+      }
       pthread_mutex_lock(&g_nodedb_lock);
       if (g_nodedb_cached) free(g_nodedb_cached);
       g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
@@ -1509,6 +1536,7 @@ static int h_nodedb(http_request_t *r) {
       /* write a copy for external inspection */
       FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} fresh=NULL;
     } else if (fresh) { free(fresh); }
+      else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
   }
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {

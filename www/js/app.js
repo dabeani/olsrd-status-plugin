@@ -884,9 +884,20 @@ function renderConnectionsTable(c, nodedb) {
   var ipToHost = {};
   if (nodedb) {
     if (Array.isArray(nodedb)) {
-      nodedb.forEach(function(entry){ if(entry && entry.ipv4 && (entry.hostname || entry.name)) ipToHost[entry.ipv4] = entry.hostname || entry.name; });
+      nodedb.forEach(function(entry){
+        if(!entry) return;
+        var ip = entry.ipv4 || entry.ip || '';
+        if(!ip) return;
+        var h = entry.hostname || entry.name || entry.n; /* accept 'n' from external node_db */
+        if (h) ipToHost[ip] = h;
+      });
     } else if (typeof nodedb === 'object') {
-      Object.keys(nodedb).forEach(function(k){ var v = nodedb[k]; if(v && (v.hostname || v.name)) ipToHost[k] = v.hostname || v.name; });
+      Object.keys(nodedb).forEach(function(k){
+        var v = nodedb[k];
+        if(!v) return;
+        var h = v.hostname || v.name || v.n; /* accept 'n' */
+        if (h) ipToHost[k] = h;
+      });
     }
   }
   c.ports.forEach(function(p){
