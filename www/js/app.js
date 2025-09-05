@@ -407,10 +407,25 @@ function showRoutesFor(remoteIp) {
         return t;
       }).filter(function(s){ return s.length; });
       allRoutes = routesArr.map(function(line){
-        var parts = line.split(/\s+/);
+        var parts = line.split(/\s+/).filter(function(p){ return p.length; });
         var destination = parts[0] || line;
-        var device = parts.length>1 ? parts[1] : '';
-        var metric = parts.length>2 ? parts[2] : '';
+        var device = '';
+        var metric = '';
+        if (parts.length === 2) {
+          // could be either "destination device" or "destination metric"
+          var maybe = parts[1];
+          if (!isNaN(Number(maybe))) { metric = maybe; }
+          else { device = maybe; }
+        } else if (parts.length >= 3) {
+          // assume last token is metric if numeric, rest between dest and last are device
+          var last = parts[parts.length-1];
+          if (!isNaN(Number(last))) {
+            metric = last;
+            device = parts.slice(1, parts.length-1).join(' ');
+          } else {
+            device = parts.slice(1).join(' ');
+          }
+        }
         return { destination: destination, device: device, metric: metric, raw: line };
       });
       if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = (obj && typeof obj.count==='number'? obj.count : allRoutes.length); }
