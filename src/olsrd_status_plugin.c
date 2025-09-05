@@ -930,6 +930,7 @@ static int find_json_string_value(const char *start, const char *key, char **val
  * Returns 1 on success (out_name populated), 0 otherwise.
  */
 static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char *dest_ip, char *out_name, size_t out_len) {
+  (void)len; /* parameter present for future use; silence unused parameter warning */
   if (!buf || !dest_ip || !out_name || out_len == 0) return 0;
   out_name[0] = '\0';
   struct in_addr ina; if (!inet_aton(dest_ip, &ina)) return 0;
@@ -1200,8 +1201,9 @@ static int h_status(http_request_t *r) {
   long uptime_seconds = get_uptime_seconds();
 
   /* airosdata */
-  char *airos_raw = NULL; size_t airos_n = 0; int have_airos = 0;
-  if (util_read_file("/tmp/10-all.json", &airos_raw, &airos_n) == 0 && airos_raw && airos_n>0) have_airos = 1;
+  char *airos_raw = NULL; size_t airos_n = 0;
+  (void)airos_n; /* kept for symmetry with util_read_file signature */
+  util_read_file("/tmp/10-all.json", &airos_raw, &airos_n); /* ignore result; airos_raw may be NULL */
 
   /* default route */
   char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
