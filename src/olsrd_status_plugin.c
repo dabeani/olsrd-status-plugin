@@ -405,12 +405,45 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
       char destTrim[128]; snprintf(destTrim,sizeof(destTrim),"%s",dest); slash = strchr(destTrim,'/'); if (slash) *slash='\0';
       if (strcmp(destTrim, ip)==0) continue; /* don't count neighbor itself */
       if (destTrim[0]==0) continue;
-      /* linear de-dupe (counts small, keep simple) */
-      int dup=0; for (int i=0;i<ucnt;i++){ if(strcmp(uniq[i],destTrim)==0){ dup=1; break; } }
+      /* Try to resolve the destination to a node name from node_db; fall back to dest IP if unavailable. */
+      char nodename[128] = "";
+      if (g_nodedb_cached && g_nodedb_cached_len > 0) {
+        pthread_mutex_lock(&g_nodedb_lock);
+        char *nd = g_nodedb_cached; size_t ndlen = g_nodedb_cached_len;
+        /* exact key match: "<ip>":{ */
+        char pattern[512]; snprintf(pattern, sizeof(pattern), "\"%s\":{", destTrim);
+        char *kp = strstr(nd, pattern);
+        if (!kp) {
+          /* try prefix key: "<ip>/ */
+          char alt[256]; snprintf(alt, sizeof(alt), "\"%s/", destTrim);
+          kp = strstr(nd, alt);
+        }
+        if (!kp) {
+          /* last resort: any key that contains the ip string */
+          char any[256]; snprintf(any, sizeof(any), "\"%s\"", destTrim);
+          kp = strstr(nd, any);
+        }
+        if (kp) {
+          char *np = strstr(kp, "\"n\":");
+          if (np && (!strstr(kp, "}") || np < strstr(kp, "}"))) {
+            np += 5;
+            while (*np && (*np==' ' || *np=='\t' || *np=='\n' || *np=='\r' || *np==':')) np++;
+            if (*np == '"') {
+              char *vs = np+1; char *ve = strchr(vs, '"'); if (ve && ve>vs) {
+                size_t L = (size_t)(ve - vs); if (L >= sizeof(nodename)) L = sizeof(nodename)-1; memcpy(nodename, vs, L); nodename[L]=0;
+              }
+            }
+          }
+        }
+        pthread_mutex_unlock(&g_nodedb_lock);
+      }
+      if (!nodename[0]) snprintf(nodename, sizeof(nodename), "%s", destTrim);
+      /* linear de-dupe by node name */
+      int dup = 0; for (int i=0;i<ucnt;i++) { if (strcmp(uniq[i], nodename) == 0) { dup = 1; break; } }
       if (!dup) {
-        if (!uniq) uniq = (char**)calloc(MAX_UNIQUE,sizeof(char*));
+        if (!uniq) uniq = (char**)calloc(MAX_UNIQUE, sizeof(char*));
         if (uniq && ucnt < MAX_UNIQUE) {
-          uniq[ucnt] = strdup(destTrim);
+          uniq[ucnt] = strdup(nodename);
           if (uniq[ucnt]) ucnt++;
         }
       }
