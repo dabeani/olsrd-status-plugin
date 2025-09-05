@@ -477,13 +477,19 @@ function showRoutesFor(remoteIp) {
   if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Loading...</td></tr>';
   if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
   var allRoutes = [];
+  var _routeSort = { key: null, asc: true };
   function renderTable(arr){
     if (!tbody) return;
     if (!arr.length) { tbody.innerHTML='<tr><td colspan="4" class="text-muted">No matching routes</td></tr>'; return; }
+    var arr2 = arr.slice();
+    if (_routeSort.key) {
+      arr2.sort(function(a,b){ var ka=(a[_routeSort.key]||'').toString().toLowerCase(); var kb=(b[_routeSort.key]||'').toString().toLowerCase(); if(ka<kb) return _routeSort.asc?-1:1; if(ka>kb) return _routeSort.asc?1:-1; return 0; });
+    }
     var html='';
-    for (var i=0;i<arr.length;i++) {
-      var r = arr[i];
-      html += '<tr>'+
+    for (var i=0;i<arr2.length;i++) {
+      var r = arr2[i];
+      var rid = 'route-row-'+i;
+      html += '<tr id="'+rid+'" title="'+ (r.raw||'') +'">'+
         '<td style="font-family:monospace">'+ r.destination +'</td>'+
         '<td>'+ (r.device||'') +'</td>'+
         '<td>'+ (r.metric||'') +'</td>'+
@@ -491,6 +497,9 @@ function showRoutesFor(remoteIp) {
       '</tr>';
     }
     tbody.innerHTML = html;
+    // make rows focusable for keyboard nav
+    var rows = tbody.querySelectorAll('tr');
+    rows.forEach(function(r){ r.tabIndex = 0; r.style.cursor='pointer'; });
   }
   function applyFilter(){
     var q = (filterInput && filterInput.value || '').trim().toLowerCase();
@@ -520,6 +529,11 @@ function showRoutesFor(remoteIp) {
       } catch(e) {}
     };
   }
+  // route modal header sorting wiring
+  try {
+    var rheaders = document.querySelectorAll('#route-modal-table thead th[data-key]');
+    rheaders.forEach(function(h){ h.onclick = function(){ var k=h.getAttribute('data-key'); if(_routeSort.key===k) _routeSort.asc=!_routeSort.asc; else { _routeSort.key=k; _routeSort.asc=true; } renderTable(allRoutes); }; });
+  } catch(e) {}
   if (rawToggle) {
     rawToggle.onclick = function(e){ e.preventDefault(); if(!bodyPre) return; if(bodyPre.style.display==='none'){ bodyPre.style.display='block'; rawToggle.textContent='Hide raw text'; } else { bodyPre.style.display='none'; rawToggle.textContent='Show raw text'; } };
   }
@@ -574,10 +588,13 @@ window.addEventListener('load', function(){
   if (m) m.addEventListener('click', function(e){ if (e.target === m) m.style.display='none'; });
 
   var nc = document.getElementById('node-modal-close');
-  if (nc) nc.addEventListener('click', function(){ var m=document.getElementById('node-modal'); if (m) m.style.display='none'; });
+  if (nc) nc.addEventListener('click', function(){ var m=document.getElementById('node-modal'); if (m) m.style.display='none'; window._nodeModal_state = null; if (_nodeModalKeyHandler) { document.removeEventListener('keydown', _nodeModalKeyHandler); _nodeModalKeyHandler = null; } });
   var nm = document.getElementById('node-modal');
-  if (nm) nm.addEventListener('click', function(e){ if (e.target === nm) nm.style.display='none'; });
+  if (nm) nm.addEventListener('click', function(e){ if (e.target === nm) { nm.style.display='none'; window._nodeModal_state = null; if (_nodeModalKeyHandler) { document.removeEventListener('keydown', _nodeModalKeyHandler); _nodeModalKeyHandler = null; } } });
 });
+
+// keyboard nav state for node modal
+var _nodeModalKeyHandler = null;
 
 function populateNeighborsTable(neighbors) {
   var tbody = document.querySelector('#neighborsTable tbody');
