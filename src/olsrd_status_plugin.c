@@ -215,6 +215,7 @@ static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, co
 
 /* --- Helper counters for OLSR link enrichment --- */
 static int find_json_string_value(const char *start, const char *key, char **val, size_t *val_len); /* forward */
+static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char *dest_ip, char *out_name, size_t out_len); /* forward */
 static int count_routes_for_ip(const char *section, const char *ip) {
   if (!section || !ip || !ip[0]) return 0;
   const char *arr = strchr(section,'[');
@@ -409,32 +410,8 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
       char nodename[128] = "";
       if (g_nodedb_cached && g_nodedb_cached_len > 0) {
         pthread_mutex_lock(&g_nodedb_lock);
-  char *nd = g_nodedb_cached;
-        /* exact key match: "<ip>":{ */
-        char pattern[512]; snprintf(pattern, sizeof(pattern), "\"%s\":{", destTrim);
-        char *kp = strstr(nd, pattern);
-        if (!kp) {
-          /* try prefix key: "<ip>/ */
-          char alt[256]; snprintf(alt, sizeof(alt), "\"%s/", destTrim);
-          kp = strstr(nd, alt);
-        }
-        if (!kp) {
-          /* last resort: any key that contains the ip string */
-          char any[256]; snprintf(any, sizeof(any), "\"%s\"", destTrim);
-          kp = strstr(nd, any);
-        }
-        if (kp) {
-          char *np = strstr(kp, "\"n\":");
-          if (np && (!strstr(kp, "}") || np < strstr(kp, "}"))) {
-            np += 5;
-            while (*np && (*np==' ' || *np=='\t' || *np=='\n' || *np=='\r' || *np==':')) np++;
-            if (*np == '"') {
-              char *vs = np+1; char *ve = strchr(vs, '"'); if (ve && ve>vs) {
-                size_t L = (size_t)(ve - vs); if (L >= sizeof(nodename)) L = sizeof(nodename)-1; memcpy(nodename, vs, L); nodename[L]=0;
-              }
-            }
-          }
-        }
+        /* Use CIDR-aware best-match lookup */
+        find_best_nodename_in_nodedb(g_nodedb_cached, g_nodedb_cached_len, destTrim, nodename, sizeof(nodename));
         pthread_mutex_unlock(&g_nodedb_lock);
       }
       if (!nodename[0]) snprintf(nodename, sizeof(nodename), "%s", destTrim);
@@ -947,6 +924,66 @@ static int find_json_string_value(const char *start, const char *key, char **val
   return 0;
 }
 
+/* Find best matching node name for dest_ip in a node_db JSON mapping.
+ * Supports keys that are exact IPv4 or CIDR (e.g. "1.2.3.0/24"). Chooses
+ * the longest-prefix match (highest mask) when multiple entries match.
+ * Returns 1 on success (out_name populated), 0 otherwise.
+ */
+static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char *dest_ip, char *out_name, size_t out_len) {
+  if (!buf || !dest_ip || !out_name || out_len == 0) return 0;
+  out_name[0] = '\0';
+  struct in_addr ina; if (!inet_aton(dest_ip, &ina)) return 0;
+  uint32_t dest = ntohl(ina.s_addr);
+  const char *p = buf; int best_mask = -1; char best_name[256] = "";
+  while ((p = strchr(p, '"')) != NULL) {
+    const char *kstart = p + 1;
+    const char *kend = strchr(kstart, '"');
+    if (!kend) break;
+    size_t keylen = (size_t)(kend - kstart);
+    if (keylen == 0 || keylen >= 64) { p = kend + 1; continue; }
+    char keybuf[64]; memcpy(keybuf, kstart, keylen); keybuf[keylen] = '\0';
+    /* Move to ':' and then to object '{' */
+    const char *after = kend + 1;
+    while (*after && (*after == ' ' || *after == '\t' || *after == '\r' || *after == '\n')) after++;
+    if (*after != ':') { p = kend + 1; continue; }
+    after++;
+    while (*after && (*after == ' ' || *after == '\t' || *after == '\r' || *after == '\n')) after++;
+    if (*after != '{') { p = kend + 1; continue; }
+    /* find end of this object to limit search */
+    const char *objstart = after; const char *objend = objstart; int od = 0;
+    while (*objend) {
+      if (*objend == '{') od++; else if (*objend == '}') { od--; if (od == 0) { objend++; break; } }
+      objend++;
+    }
+    if (!objend || objend <= objstart) break;
+    /* Only consider keys that start with digit (ipv4) */
+    if (!(keybuf[0] >= '0' && keybuf[0] <= '9')) { p = objend; continue; }
+    /* parse key as ip[/mask] */
+    char addrpart[64]; int maskbits = 32;
+    char *s = strchr(keybuf, '/'); if (s) {
+      size_t L = (size_t)(s - keybuf); if (L >= sizeof(addrpart)) { p = objend; continue; }
+      memcpy(addrpart, keybuf, L); addrpart[L] = '\0'; maskbits = atoi(s + 1);
+    } else { snprintf(addrpart, sizeof(addrpart), "%s", keybuf); }
+    struct in_addr ina_k; if (!inet_aton(addrpart, &ina_k)) { p = objend; continue; }
+    uint32_t net = ntohl(ina_k.s_addr);
+    if (maskbits < 0) maskbits = 0; if (maskbits > 32) maskbits = 32;
+    uint32_t mask = (maskbits == 0) ? 0 : ((maskbits == 32) ? 0xFFFFFFFFu : (~((1u << (32 - maskbits)) - 1u)));
+    if ((dest & mask) != (net & mask)) { p = objend; continue; }
+    /* matched; extract "n" value inside object */
+    char *v = NULL; size_t vlen = 0;
+    if (find_json_string_value(objstart, "n", &v, &vlen)) {
+      size_t L = vlen; if (L >= sizeof(best_name)) L = sizeof(best_name) - 1;
+      memcpy(best_name, v, L); best_name[L] = '\0';
+      if (maskbits > best_mask) best_mask = maskbits;
+    }
+    p = objend;
+  }
+  if (best_mask >= 0 && best_name[0]) {
+    size_t L = strnlen(best_name, sizeof(best_name)); if (L >= out_len) L = out_len - 1; memcpy(out_name, best_name, L); out_name[L] = '\0'; return 1;
+  }
+  return 0;
+}
+
 /* forward declaration for cached hostname lookup (defined later) */
 static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
 /* forward declarations for OLSRd proxy cache helpers */
@@ -1208,37 +1245,8 @@ static int h_status(http_request_t *r) {
 
   /* default_route */
   /* attempt reverse DNS for default route IP to provide a hostname for the gateway */
-  char def_hostname[256] = "";
-  if (def_ip[0]) {
-    struct in_addr ina;
-    if (inet_aton(def_ip, &ina)) {
-      struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
-      if (he && he->h_name) snprintf(def_hostname, sizeof(def_hostname), "%s", he->h_name);
-    }
-  }
-  APPEND("\"default_route\":{");
-  APPEND("\"ip\":"); json_append_escaped(&buf, &len, &cap, def_ip); APPEND(",");
-  APPEND("\"dev\":"); json_append_escaped(&buf, &len, &cap, def_dev); APPEND(",");
-  APPEND("\"hostname\":"); json_append_escaped(&buf, &len, &cap, def_hostname);
-  APPEND("},");
-
-  /* devices will be populated below from ubnt-discover */
-
-  /* airosdata: raw JSON if present */
-  if (have_airos) {
-    APPEND("\"airosdata\":");
-    /* ensure airos_raw is valid JSON; insert raw bytes directly */
-    APPEND("%s", airos_raw);
-    APPEND(",");
-  } else {
-    APPEND("\"airosdata\":{} ,");
-  }
-
-  /* include versions.sh output under "versions" if available */
-  char *vout = NULL; size_t vn = 0;
-  int versions_loaded = 0;
-  
   /* Try EdgeRouter path first */
+  char *vout=NULL; size_t vn=0; int versions_loaded=0;
   if (path_exists("/config/custom/versions.sh")) {
     if (util_exec("/config/custom/versions.sh", &vout, &vn) == 0 && vout && vn>0) {
       APPEND("\"versions\":%s,", vout); free(vout); vout = NULL; versions_loaded = 1;
