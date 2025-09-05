@@ -610,7 +610,14 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
             if (have_name) {
               /* ensure unique per gateway */
               int dup=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) if(strcmp(gw_stats[gi].names[ni],nodename)==0){ dup=1; break; }
-              if(!dup && gw_stats[gi].name_count < 256) { snprintf(gw_stats[gi].names[gw_stats[gi].name_count],64,"%s",nodename); gw_stats[gi].name_count++; gw_stats[gi].nodes = gw_stats[gi].name_count; }
+              if(!dup && gw_stats[gi].name_count < 256) {
+                /* Cap nodename at 63 chars for storage to avoid truncation warnings */
+                nodename[63]='\0';
+                strncpy(gw_stats[gi].names[gw_stats[gi].name_count], nodename, 63);
+                gw_stats[gi].names[gw_stats[gi].name_count][63]='\0';
+                gw_stats[gi].name_count++;
+                gw_stats[gi].nodes = gw_stats[gi].name_count;
+              }
             }
           }
         }
@@ -678,11 +685,19 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
             if (gw_stats[gi].routes > 0) routes_cnt = gw_stats[gi].routes;
             if (gw_stats[gi].nodes > 0) nodes_cnt  = gw_stats[gi].nodes;
             if (gw_stats[gi].name_count > 0) {
-              size_t off=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) {
-                const char *nm = gw_stats[gi].names[ni]; if(!nm||!*nm) continue;
-                size_t need = strlen(nm) + (off?1:0) + 1; /* comma + name + nul */
+              size_t off=0;
+              for (int ni=0; ni<gw_stats[gi].name_count; ++ni) {
+                const char *nm = gw_stats[gi].names[ni];
+                if(!nm||!*nm) continue;
+                size_t nlen = strnlen(nm, 63);
+                size_t need = nlen + (off?1:0) + 1; /* comma + name + nul */
                 if (off + need >= sizeof(node_names_concat)) break;
-                if (off) node_names_concat[off++]=','; strcpy(&node_names_concat[off], nm); off += strlen(nm);
+                if (off) {
+                  node_names_concat[off++] = ',';
+                }
+                memcpy(&node_names_concat[off], nm, nlen);
+                off += nlen;
+                node_names_concat[off] = '\0';
               }
             }
             break;
