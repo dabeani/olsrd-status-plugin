@@ -652,10 +652,16 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       "ip -4 r 2>/dev/null",
       NULL
     };
-    for (int ci=0; rt_cmds[ci] && !rt_raw; ++ci) {
-      if (util_exec(rt_cmds[ci], &rt_raw, &rlen) == 0 && rt_raw && rlen>0) break;
-      if (rt_raw) { free(rt_raw); rt_raw=NULL; rlen=0; }
-    }
+      for (int ci=0; rt_cmds[ci] && !rt_raw; ++ci) {
+        /* use local HTTP helper when endpoint is loopback */
+        if (strstr(rt_cmds[ci], "127.0.0.1") || strstr(rt_cmds[ci], "localhost")) {
+          if (util_http_get_url_local(rt_cmds[ci], &rt_raw, &rlen, 1) == 0 && rt_raw && rlen>0) break;
+          if (rt_raw) { free(rt_raw); rt_raw=NULL; rlen=0; }
+        } else {
+          if (util_exec(rt_cmds[ci], &rt_raw, &rlen) == 0 && rt_raw && rlen>0) break;
+          if (rt_raw) { free(rt_raw); rt_raw=NULL; rlen=0; }
+        }
+      }
     if (!rt_raw) break; /* no routing table */
     gw_stats = calloc(MAX_GW_STATS, sizeof(struct gw_stat));
     if (!gw_stats) { free(rt_raw); break; }
@@ -1233,11 +1239,18 @@ static int h_status(http_request_t *r) {
   char *olsr_links_raw=NULL; size_t oln=0; {
     const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
     for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){
-      char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep);
       fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep);
-      if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){
-        fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
-        break;
+      if (strstr(*ep, "127.0.0.1") || strstr(*ep, "localhost")) {
+        if (util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1) == 0 && olsr_links_raw && oln > 0) {
+          fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+          break;
+        }
+      } else {
+        char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep);
+        if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){
+          fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+          break;
+        }
       }
       if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; }
     }
@@ -1245,9 +1258,9 @@ static int h_status(http_request_t *r) {
 
   /* (legacy duplicate fetch block removed after refactor) */
 
-  char *olsr_neighbors_raw=NULL; size_t olnn=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw,&olnn)!=0 && olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; olnn=0; }
-  char *olsr_routes_raw=NULL; size_t olr=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &olsr_routes_raw,&olr)!=0 && olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; olr=0; }
-  char *olsr_topology_raw=NULL; size_t olt=0; if(util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &olsr_topology_raw,&olt)!=0 && olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; olt=0; }
+  char *olsr_neighbors_raw=NULL; size_t olnn=0; if(util_http_get_url_local("http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+  char *olsr_routes_raw=NULL; size_t olr=0; if(util_http_get_url_local("http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; }
+  char *olsr_topology_raw=NULL; size_t olt=0; if(util_http_get_url_local("http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
 
   /* Build JSON */
   APPEND("{");
@@ -1410,8 +1423,13 @@ static int h_status(http_request_t *r) {
     APPEND("\"olsrd_endpoints\":[");
     int first_ep = 1;
     for (const char **ep = eps; *ep; ++ep) {
-      char cmd[256]; char *tout = NULL; size_t tlen = 0; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
-      int ok = (util_exec(cmd, &tout, &tlen) == 0 && tout && tlen>0) ? 1 : 0;
+      char *tout = NULL; size_t tlen = 0; int ok = 0;
+      if (strstr(*ep, "127.0.0.1") || strstr(*ep, "localhost")) {
+        if (util_http_get_url_local(*ep, &tout, &tlen, 1) == 0 && tout && tlen>0) ok = 1;
+      } else {
+        char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
+        if (util_exec(cmd, &tout, &tlen) == 0 && tout && tlen>0) ok = 1;
+      }
       if (!first_ep) APPEND(","); first_ep = 0;
       APPEND("{\"url\":"); json_append_escaped(&buf,&len,&cap,*ep);
       APPEND(",\"ok\":%s,\"len\":%zu,\"sample\":", ok?"true":"false", tlen);
@@ -1601,7 +1619,7 @@ static int h_olsr_routes(http_request_t *r) {
   int filter = via_ip[0] ? 1 : 0;
   /* fetch routes JSON from possible endpoints */
   char *raw=NULL; size_t rn=0; const char *eps[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
-  for(const char **ep=eps; *ep && !raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&raw,&rn)==0 && raw && rn>0) break; if(raw){ free(raw); raw=NULL; rn=0; } }
+  for(const char **ep=eps; *ep && !raw; ++ep){ if(util_http_get_url_local(*ep, &raw, &rn, 1)==0 && raw && rn>0) break; if(raw){ free(raw); raw=NULL; rn=0; } }
   if(!raw){ send_json(r, "{\"via\":\"\",\"routes\":[]}\n"); return 0; }
   char *out=NULL; size_t cap=4096,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out[0]=0;
   #define APP_R(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(_t); free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out=nb;} memcpy(out+len,_t,(size_t)_n); len+=(size_t)_n; out[len]=0; free(_t);}while(0)
@@ -1641,11 +1659,11 @@ static int h_olsr_links(http_request_t *r) {
   /* fetch links regardless of legacy vs v2 */
   char *links_raw=NULL; size_t ln=0; {
     const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-    for(const char **ep=eps; *ep && !links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&links_raw,&ln)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
+    for(const char **ep=eps; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
   }
-  char *neighbors_raw=NULL; size_t nnr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr);
-  char *routes_raw=NULL; size_t rr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &routes_raw,&rr);
-  char *topology_raw=NULL; size_t tr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &topology_raw,&tr);
+  char *neighbors_raw=NULL; size_t nnr=0; util_http_get_url_local("http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr, 1);
+  char *routes_raw=NULL; size_t rr=0; util_http_get_url_local("http://127.0.0.1:9090/routes", &routes_raw,&rr, 1);
+  char *topology_raw=NULL; size_t tr=0; util_http_get_url_local("http://127.0.0.1:9090/topology", &topology_raw,&tr, 1);
   char *norm_links=NULL; size_t nlinks=0; {
     size_t l1 = links_raw?strlen(links_raw):0;
     size_t l2 = routes_raw?strlen(routes_raw):0;
@@ -1694,11 +1712,11 @@ static int h_olsr_links_debug(http_request_t *r) {
 /* --- Debug raw OLSR data: /olsr/raw (NOT for production; helps diagnose node counting) --- */
 static int h_olsr_raw(http_request_t *r) {
   char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-  for(const char **ep=eps_links; *ep && !links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&links_raw,&ln)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
+  for(const char **ep=eps_links; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
   char *routes_raw=NULL; size_t rr=0; const char *eps_routes[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
-  for(const char **ep=eps_routes; *ep && !routes_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&routes_raw,&rr)==0 && routes_raw && rr>0) break; if(routes_raw){ free(routes_raw); routes_raw=NULL; rr=0; } }
+  for(const char **ep=eps_routes; *ep && !routes_raw; ++ep){ if(util_http_get_url_local(*ep, &routes_raw, &rr, 1)==0 && routes_raw && rr>0) break; if(routes_raw){ free(routes_raw); routes_raw=NULL; rr=0; } }
   char *topology_raw=NULL; size_t trn=0; const char *eps_topo[]={"http://127.0.0.1:9090/topology","http://127.0.0.1:2006/topology","http://127.0.0.1:8123/topology",NULL};
-  for(const char **ep=eps_topo; *ep && !topology_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&topology_raw,&trn)==0 && topology_raw && trn>0) break; if(topology_raw){ free(topology_raw); topology_raw=NULL; trn=0; } }
+  for(const char **ep=eps_topo; *ep && !topology_raw; ++ep){ if(util_http_get_url_local(*ep, &topology_raw, &trn, 1)==0 && topology_raw && trn>0) break; if(topology_raw){ free(topology_raw); topology_raw=NULL; trn=0; } }
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{\"err\":\"oom\"}\n"); goto done; } buf[0]=0;
   #define APP_RAW(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); if(buf){ free(buf);} send_json(r,"{\"err\":\"oom\"}\n"); goto done;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{\"err\":\"oom\"}\n"); goto done;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_t);}while(0)
   APP_RAW("{");
@@ -1742,10 +1760,10 @@ static int h_status_olsr(http_request_t *r) {
   /* attempt OLSR links minimal (separate flags) */
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-  for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
+  for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ if(util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
   /* also get routes & topology to enrich route/node counts like /olsr/links */
-  char *routes_raw=NULL; size_t rr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &routes_raw,&rr);
-  char *topology_raw=NULL; size_t tr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &topology_raw,&tr);
+  char *routes_raw=NULL; size_t rr=0; util_http_get_url_local("http://127.0.0.1:9090/routes", &routes_raw,&rr, 1);
+  char *topology_raw=NULL; size_t tr=0; util_http_get_url_local("http://127.0.0.1:9090/topology", &topology_raw,&tr, 1);
   APP2("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
   if(olsr_links_raw && oln>0){
@@ -1972,9 +1990,9 @@ static int h_olsrd_json(http_request_t *r) {
   /* consult in-memory cache first */
   char cached[256] = "";
   if (olsr_cache_get(q, cached, sizeof(cached))) { send_json(r, cached); return 0; }
-  char cmd[512]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/%s", q);
+  char url[512]; snprintf(url, sizeof(url), "http://127.0.0.1:9090/%s", q);
   char *out = NULL; size_t n = 0;
-  if (util_exec(cmd, &out, &n) == 0 && out && n>0) {
+  if (util_http_get_url_local(url, &out, &n, 1) == 0 && out && n>0) {
     /* cache truncated to OLSR_CACHE_VAL-1 */
     olsr_cache_set(q, out);
     send_json(r, out); free(out); return 0;
@@ -2277,10 +2295,10 @@ static int h_ipv6(http_request_t *r) {
 static int h_txtinfo(http_request_t *r) {
   char q[64]="ver";
   (void)get_query_param(r, "q", q, sizeof(q));
-  char cmd[256];
-  snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 http://127.0.0.1:2006/%s", q);
+  char url[256];
+  snprintf(url, sizeof(url), "http://127.0.0.1:2006/%s", q);
   char *out=NULL; size_t n=0;
-  if (util_exec(cmd, &out, &n)==0 && out) {
+  if (util_http_get_url_local(url, &out, &n, 1)==0 && out) {
     http_send_status(r, 200, "OK");
     http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
     http_write(r, out, n); free(out);
@@ -2290,10 +2308,9 @@ static int h_txtinfo(http_request_t *r) {
 static int h_jsoninfo(http_request_t *r) {
   char q[64]="version";
   (void)get_query_param(r, "q", q, sizeof(q));
-  char cmd[256];
-  snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/%s", q);
+  char url[256]; snprintf(url, sizeof(url), "http://127.0.0.1:9090/%s", q);
   char *out=NULL; size_t n=0;
-  if (util_exec(cmd, &out, &n)==0 && out) {
+  if (util_http_get_url_local(url, &out, &n, 1)==0 && out) {
     send_json(r, (n?out:"{}")); free(out);
   } else send_json(r, "{\"error\":\"curl failed\"}");
   return 0;

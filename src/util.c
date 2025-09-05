@@ -60,6 +60,68 @@ int util_file_exists(const char *path) {
   return stat(path, &st) == 0;
 }
 
+/* Simple local HTTP GET helper for localhost endpoints. Parses URLs of form
+ * http://127.0.0.1:PORT/path and returns the response body (headers removed).
+ * This avoids spawning curl for local requests.
+ */
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <errno.h>
+
+int util_http_get_url_local(const char *url, char **out, size_t *outlen, int timeout_sec) {
+  if (!url || !out || !outlen) return -1;
+  *out = NULL; *outlen = 0;
+  /* Quick parsing: expect prefix http://127.0.0.1[:port]/path */
+  const char *p = url;
+  if (strncmp(p, "http://", 7) == 0) p += 7; else return -1;
+  if (strncmp(p, "127.0.0.1", 9) != 0 && strncmp(p, "localhost", 9) != 0) return -1;
+  /* find port if present */
+  int port = 80; const char *q = p + 9; if (*q == ':') { q++; port = atoi(q); while(*q && *q != '/') q++; } else { while(*q && *q != '/') q++; }
+  const char *path = (*q) ? q : "/";
+
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  struct sockaddr_in sa; memset(&sa,0,sizeof(sa)); sa.sin_family = AF_INET; sa.sin_port = htons((uint16_t)port); sa.sin_addr.s_addr = inet_addr("127.0.0.1");
+  /* set non-blocking connect with timeout */
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  int res = connect(fd, (struct sockaddr*)&sa, sizeof(sa));
+  if (res < 0) {
+    if (errno != EINPROGRESS) { close(fd); return -1; }
+    fd_set wf; FD_ZERO(&wf); FD_SET(fd, &wf);
+    struct timeval tv; tv.tv_sec = timeout_sec; tv.tv_usec = 0;
+    res = select(fd+1, NULL, &wf, NULL, &tv);
+    if (res <= 0) { close(fd); return -1; }
+    int err = 0; socklen_t el = sizeof(err); if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el) < 0) { close(fd); return -1; }
+    if (err) { close(fd); return -1; }
+  }
+  /* set blocking and timeouts for recv */
+  if (flags >= 0) fcntl(fd, F_SETFL, flags);
+  struct timeval to; to.tv_sec = timeout_sec; to.tv_usec = 0; setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
+
+  char req[1024]; int rn = snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", path);
+  if (send(fd, req, rn, 0) != rn) { close(fd); return -1; }
+
+  size_t cap = 8192; char *buf = malloc(cap); if(!buf){ close(fd); return -1; }
+  size_t len = 0; ssize_t n;
+  while ((n = recv(fd, buf + len, (ssize_t)(cap - len), 0)) > 0) {
+    len += (size_t)n;
+    if (cap - len < 4096) {
+      cap *= 2; char *nb = realloc(buf, cap); if (!nb) { free(buf); close(fd); return -1; } buf = nb;
+    }
+  }
+  close(fd);
+  if (len == 0) { free(buf); return -1; }
+  /* find end of headers */
+  char *body = NULL; for (size_t i = 0; i + 3 < len; ++i) { if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n') { body = buf + i + 4; size_t body_len = len - (i + 4);
+        char *outb = malloc(body_len + 1); if (!outb) { free(buf); return -1; } memcpy(outb, body, body_len); outb[body_len] = '\0'; *out = outb; *outlen = body_len; free(buf); return 0; } }
+  /* fallback: return whole buffer as body */
+  char *outb = malloc(len + 1); if (!outb) { free(buf); return -1; } memcpy(outb, buf, len); outb[len] = '\0'; *out = outb; *outlen = len; free(buf); return 0;
+}
+
 int util_is_container(void) {
   if (util_file_exists("/.dockerenv")) return 1;
   char *c=NULL; size_t n=0;
