@@ -18,6 +18,33 @@ Light‑weight HTTP status / diagnostics plugin for legacy **olsrd (v1)** and **
 * Zero external runtime deps beyond libc + (optionally) `curl` and `ubnt-discover`; everything else is defensive / best‑effort.
 * Clean build with strict warnings; internal helpers for safe string assembly & JSON escaping.
 
+For a detailed list of recent changes and upgrade notes please see `CHANGELOG.md`.
+
+Example `/versions.json` snippet (best-effort fields shown):
+
+```json
+{
+    "host": "edge1",
+    "system": "edge-router",
+    "olsrd_running": true,
+    "olsr2_running": false,
+    "bmk_webstatus": "1.3.7",
+    "ipv4": "192.168.1.1",
+    "ipv6": "fe80::abcd",
+    "linkserial": "A4B1C2D3E4F5",
+    "olsrd": "OLSRd 0.9.8 - build x86_64",
+    "olsrd_details": {
+        "version": "0.9.8",
+        "description": "OLSRd built for x86_64",
+        "device": "EdgeRouter X",
+        "date": "2024-05-04",
+        "release": "stable",
+        "source": "/usr/sbin/olsrd"
+    }
+}
+```
+
+
 ## HTTP Endpoints (JSON unless stated)
 | Endpoint | Purpose |
 |----------|---------|
