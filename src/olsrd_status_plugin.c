@@ -1782,6 +1782,21 @@ static int h_nodedb(http_request_t *r) {
   send_json(r, debug_json); return 0;
 }
 
+/* Force a refresh of the remote node_db (bypass TTL). Returns JSON status. */
+static int h_nodedb_refresh(http_request_t *r) {
+  /* perform forced fetch: call fetch_remote_nodedb directly */
+  fetch_remote_nodedb();
+  pthread_mutex_lock(&g_nodedb_lock);
+  if (g_nodedb_cached && g_nodedb_cached_len>0) {
+    /* return a small success JSON including last_fetch */
+    char resp[256]; snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"last_fetch\":%ld,\"len\":%zu}", g_nodedb_last_fetch, g_nodedb_cached_len);
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp,strlen(resp)); pthread_mutex_unlock(&g_nodedb_lock); return 0;
+  }
+  pthread_mutex_unlock(&g_nodedb_lock);
+  send_json(r, "{\"status\":\"error\",\"message\":\"fetch failed\"}");
+  return 0;
+}
+
 /* capabilities endpoint */
 /* forward-declare globals used by capabilities endpoint (defined later) */
 extern int g_is_edgerouter;
@@ -2132,6 +2147,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "assetroot",  .set_plugin_parameter = &set_str_param, .data = g_asset_root,  .addon = {0} },
   { .name = "nodedb_url", .set_plugin_parameter = &set_str_param, .data = g_nodedb_url,  .addon = {0} },
   { .name = "nodedb_ttl", .set_plugin_parameter = &set_int_param, .data = &g_nodedb_ttl, .addon = {0} },
+  { .name = "nodedb_write_disk", .set_plugin_parameter = &set_int_param, .data = &g_nodedb_write_disk, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -2182,6 +2198,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
   http_server_register_handler("/olsrd.json", &h_olsrd_json);
   http_server_register_handler("/capabilities", &h_capabilities_local);
+  http_server_register_handler("/nodedb/refresh", &h_nodedb_refresh);
   http_server_register_handler("/txtinfo",  &h_txtinfo);
   http_server_register_handler("/jsoninfo", &h_jsoninfo);
   http_server_register_handler("/olsrd",    &h_olsrd);

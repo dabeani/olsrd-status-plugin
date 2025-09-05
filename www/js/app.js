@@ -858,6 +858,18 @@ window.addEventListener('load', function(){
       ensureTraceroutePreloaded();
     }
   });
+  // Refresh button support for OLSR Links
+  var refreshLinksBtn = document.getElementById('refresh-links');
+  if (refreshLinksBtn) {
+    refreshLinksBtn.addEventListener('click', function(){
+      var statusEl = document.getElementById('links-status'); if (statusEl) statusEl.textContent = 'Loading...';
+      fetch('/olsr/links',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){
+        if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }
+        if (statusEl) statusEl.textContent = '';
+        _olsrLoaded = true;
+      }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; });
+    });
+  }
 });
 
 // console polyfill for older browsers
