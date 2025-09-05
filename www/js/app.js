@@ -319,9 +319,104 @@ function populateOlsrLinksTable(links) {
       var names = l.node_names.split(',').slice(0,10); // cap display
       nodesDisplay += '<div style="font-size:60%;color:#555;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + l.node_names + '">' + names.join(', ') + (l.node_names.split(',').length>10?' …':'') + '</div>';
     }
-    tr.appendChild(td(nodesDisplay));
+    var nodesCell = td(nodesDisplay);
+    // make nodes clickable like routes when there are nodes
+    if (l.nodes && parseInt(l.nodes,10) > 0) {
+      nodesCell.style.cursor = 'pointer'; nodesCell.title = 'Click to view nodes behind this neighbor';
+      nodesCell.addEventListener('click', function(){ showNodesFor(l.remote, l.node_names); });
+    }
+    tr.appendChild(nodesCell);
     tbody.appendChild(tr);
   });
+}
+
+function showNodesFor(remoteIp, nodeNames) {
+  var modal = document.getElementById('node-modal'); if (!modal) return;
+  var bodyPre = document.getElementById('node-modal-body');
+  var title = document.getElementById('node-modal-title');
+  var countBadge = document.getElementById('node-modal-count');
+  var tbody = document.getElementById('node-modal-tbody');
+  var filterInput = document.getElementById('node-filter');
+  var copyBtn = document.getElementById('node-copy');
+  if (title) title.textContent = 'Nodes via ' + remoteIp;
+  if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading...</td></tr>';
+  if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
+
+  function renderRows(list) {
+    if (!tbody) return;
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No nodes found</td></tr>'; return; }
+    var html = '';
+    for (var i=0;i<list.length;i++) {
+      var n = list[i];
+      html += '<tr>'+
+        '<td style="font-family:monospace">'+ (n.ip||'') +'</td>'+
+        '<td>' + (n.n || '') + '</td>'+
+        '<td>' + (n.i || '') + '</td>'+
+        '<td>' + (n.d || '') + '</td>'+
+        '<td>' + (n.h || '') + '</td>'+
+        '<td>' + (n.m || '') + '</td>'+
+        '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function applyFilter(list){
+    var q = (filterInput && filterInput.value || '').trim().toLowerCase();
+    if (!q) { renderRows(list); return; }
+    var f = list.filter(function(n){
+      return (n.ip && n.ip.toLowerCase().indexOf(q)>=0) || (n.n && n.n.toLowerCase().indexOf(q)>=0) || (n.d && n.d.toLowerCase().indexOf(q)>=0) || (n.h && n.h.toLowerCase().indexOf(q)>=0);
+    });
+    renderRows(f);
+  }
+
+  if (filterInput) filterInput.oninput = function(){ if (window._nodedb_cache_list) applyFilter(window._nodedb_cache_list); };
+  if (copyBtn) copyBtn.onclick = function(){ try{ var visible = []; var rows = document.querySelectorAll('#node-modal-tbody tr'); for(var i=0;i<rows.length;i++){ visible.push(rows[i].textContent.trim()); } var txt = visible.join('\n'); if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt); copyBtn.classList.add('btn-success'); setTimeout(function(){ copyBtn.classList.remove('btn-success'); },900);} else { var ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } } catch(e){} };
+
+  // use cached nodedb if present, otherwise fetch
+  function findNodes(nodedb) {
+    var list = [];
+    if (!nodedb) return list;
+    // nodedb may be object keyed by ip/net -> value { n,i,d,h,m }
+    Object.keys(nodedb).forEach(function(k){
+      var v = nodedb[k];
+      // match if key equals remoteIp or if key is CIDR that contains remoteIp or if node_names hint provided and matches name
+      // simple checks: exact match, prefix with '/', or host field equals remoteIp
+      var match = false;
+      if (k === remoteIp) match = true;
+      else if (k.indexOf('/')>-1) {
+        // CIDR: check remoteIp in CIDR using a simple numeric compare
+        try{
+          var parts = k.split('/'); var net = parts[0]; var bits = parseInt(parts[1],10);
+          function ip2int(ip){ return ip.split('.').reduce(function(acc,x){return (acc<<8)+parseInt(x,10);},0) >>>0; }
+          var rip = ip2int(remoteIp); var nint = ip2int(net); var mask = bits===0?0: (~0 << (32-bits)) >>>0;
+          if ((rip & mask) === (nint & mask)) match = true;
+        }catch(e){}
+      }
+      if (!match && v) {
+        if (v.h && v.h === remoteIp) match = true;
+        if (v.m && v.m === remoteIp) match = true;
+        if (nodeNames && v.n && nodeNames.indexOf(v.n) !== -1) match = true;
+      }
+      if (match) {
+        var entry = { ip: k, n: v.n || '', i: v.i || '', d: v.d || '', h: v.h || '', m: v.m || '' };
+        list.push(entry);
+      }
+    });
+    return list;
+  }
+
+  if (window._nodedb_cache) {
+    var found = findNodes(window._nodedb_cache);
+    window._nodedb_cache_list = found;
+    if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; }
+    renderRows(found);
+    if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2);
+    modal.style.display='block';
+    return;
+  }
+
+  fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ try{ window._nodedb_cache = nb || {}; var found = findNodes(nb || {}); window._nodedb_cache_list = found; if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; } renderRows(found); if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2); modal.style.display='block'; }catch(e){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error rendering nodes</td></tr>'; if(bodyPre) bodyPre.textContent='Error'; modal.style.display='block'; } }).catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error loading nodedb.json</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading nodedb.json'; modal.style.display='block'; });
 }
 
 // Cache for parsed routes from status payload
@@ -444,6 +539,11 @@ window.addEventListener('load', function(){
   if (c) c.addEventListener('click', function(){ var m=document.getElementById('route-modal'); if (m) m.style.display='none'; });
   var m = document.getElementById('route-modal');
   if (m) m.addEventListener('click', function(e){ if (e.target === m) m.style.display='none'; });
+
+  var nc = document.getElementById('node-modal-close');
+  if (nc) nc.addEventListener('click', function(){ var m=document.getElementById('node-modal'); if (m) m.style.display='none'; });
+  var nm = document.getElementById('node-modal');
+  if (nm) nm.addEventListener('click', function(e){ if (e.target === nm) nm.style.display='none'; });
 });
 
 function populateNeighborsTable(neighbors) {
