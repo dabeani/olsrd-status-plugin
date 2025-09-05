@@ -1229,7 +1229,38 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
 
   /* linkserial */
   char linkserial[128] = "n/a"; char *ll_out = NULL; size_t ll_n = 0;
-  if (util_exec("ip -6 link show eth0 2>/dev/null | grep link/ether | awk '{gsub(\":\",\"\", $2); print toupper($2)}'", &ll_out, &ll_n) == 0 && ll_out && ll_n>0) { char *t = strndup(ll_out, ll_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl=0; strncpy(linkserial, t, sizeof(linkserial)-1); free(t); } if (ll_out) free(ll_out); }
+  if (util_exec("ip -6 link show eth0 2>/dev/null | grep link/ether | awk '{gsub(\":\",\"\", $2); print toupper($2)}'", &ll_out, &ll_n) == 0 && ll_out && ll_n>0) {
+    char *t = strndup(ll_out, ll_n);
+    if (t) { char *nl = strchr(t,'\n'); if (nl) *nl=0; strncpy(linkserial, t, sizeof(linkserial)-1); free(t); }
+    if (ll_out) free(ll_out);
+  }
+
+  /* Attempt to extract olsrd binary/version information (best-effort). Keep fields small and safe. */
+  char olsrd_ver[256] = "";
+  char olsrd_desc[256] = "";
+  char olsrd_dev[128] = "";
+  char olsrd_date[64] = "";
+  char olsrd_rel[64] = "";
+  char olsrd_src[256] = "";
+  char *ols_out = NULL; size_t ols_n = 0;
+  if (util_exec("grep -oaEm1 'olsr.org - .{1,200}' /usr/sbin/olsrd 2>/dev/null", &ols_out, &ols_n) == 0 && ols_out && ols_n>0) {
+    char *s = strndup(ols_out, ols_n);
+    if (s) {
+      for (char *p = s; *p; ++p) { if ((unsigned char)*p < 0x20) *p = ' '; }
+      /* trim leading/trailing spaces */
+      char *st = s; while (*st && isspace((unsigned char)*st)) st++;
+      char *en = s + strlen(s) - 1; while (en > st && isspace((unsigned char)*en)) *en-- = '\0';
+      strncpy(olsrd_ver, st, sizeof(olsrd_ver)-1); olsrd_ver[sizeof(olsrd_ver)-1] = '\0';
+      /* try to split into version and desc at first ' - ' occurrence */
+      char *dash = strstr(olsrd_ver, " - ");
+      if (dash) {
+        *dash = '\0'; dash += 3;
+        strncpy(olsrd_desc, dash, sizeof(olsrd_desc)-1); olsrd_desc[sizeof(olsrd_desc)-1]=0;
+      }
+      free(s);
+    }
+    free(ols_out); ols_out = NULL; ols_n = 0;
+  }
 
   /* Build JSON */
   size_t buf_sz = 4096 + (homes_n>0?homes_n:0) + (md5_n>0?md5_n:0);
@@ -1238,8 +1269,33 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   char homes_json[512] = "[]";
   if (homes_out && homes_n>0) { size_t hn = homes_n; char *tmp = strndup(homes_out, homes_n); if (tmp) { while (hn>0 && (tmp[hn-1]=='\n' || tmp[hn-1]==',')) { tmp[--hn]=0; } snprintf(homes_json,sizeof(homes_json),"[%s]", tmp[0]?tmp:"" ); free(tmp); } }
   char bootimage_md5[128] = "n/a"; if (md5_out && md5_n>0) { char *m = strndup(md5_out, md5_n); if (m) { char *nl = strchr(m,'\n'); if (nl) *nl=0; strncpy(bootimage_md5, m, sizeof(bootimage_md5)-1); free(m); } }
-  snprintf(obuf, buf_sz, "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"}}\n",
-    host, system_type, olsrd_on?"true":"false", olsr2_on?"true":"false", olsrd4watchdog?"true":"false", auon?"yes":"no", aa_on?"true":"false", aa1_on?"true":"false", aa2_on?"true":"false", aale_on?"true":"false", aaebt_on?"true":"false", aabp_on?"true":"false", homes_json, bootimage_md5
+  snprintf(obuf, buf_sz,
+    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"},\"bmk_webstatus\":\"%s\",\"ipv4\":\"%s\",\"ipv6\":\"%s\",\"linkserial\":\"%s\",\"olsrd\":\"%s\",\"olsrd_details\":{\"version\":\"%s\",\"description\":\"%s\",\"device\":\"%s\",\"date\":\"%s\",\"release\":\"%s\",\"source\":\"%s\"}}\n",
+    host,
+    system_type,
+    olsrd_on?"true":"false",
+    olsr2_on?"true":"false",
+    olsrd4watchdog?"true":"false",
+    auon?"yes":"no",
+    aa_on?"true":"false",
+    aa1_on?"true":"false",
+    aa2_on?"true":"false",
+    aale_on?"true":"false",
+    aaebt_on?"true":"false",
+    aabp_on?"true":"false",
+    homes_json,
+    bootimage_md5,
+    bmkwebstatus,
+    ipv4_addr,
+    ipv6_addr,
+    linkserial,
+    olsrd_ver[0]?olsrd_ver:"",
+    olsrd_ver[0]?olsrd_ver:"",
+    olsrd_desc[0]?olsrd_desc:"",
+    olsrd_dev[0]?olsrd_dev:"",
+    olsrd_date[0]?olsrd_date:"",
+    olsrd_rel[0]?olsrd_rel:"",
+    olsrd_src[0]?olsrd_src:""
   );
 
   if (adu_dat) free(adu_dat);

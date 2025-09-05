@@ -1187,6 +1187,16 @@ function renderVersionsPanel(v) {
   addSoftRow('firmware','Firmware');
   addSoftRow('bmk_webstatus','BMK Webstatus');
   addSoftRow('autoupdate','AutoUpdate');
+  // detailed olsrd fields
+  if (v.olsrd_details) {
+    var d = v.olsrd_details;
+    tbl2.appendChild(rowKV('glyphicon-screenshot','OLSRd Version', d.version || (v.olsrd||'-')));
+    tbl2.appendChild(rowKV('glyphicon-list-alt','OLSRd Description', d.description || '-'));
+    tbl2.appendChild(rowKV('glyphicon-phone','OLSRd Device', d.device || '-'));
+    tbl2.appendChild(rowKV('glyphicon-calendar','OLSRd Build Date', d.date || '-'));
+    tbl2.appendChild(rowKV('glyphicon-flag','OLSRd Release', d.release || '-'));
+    tbl2.appendChild(rowKV('glyphicon-file','OLSRd Source', d.source || '-'));
+  }
   // wizards may be an object/array
   if (v.wizards) tbl2.appendChild(rowKV('glyphicon-education','Wizards', (typeof v.wizards==='object')?JSON.stringify(v.wizards):v.wizards));
   if (v.bootimage && v.bootimage.md5) tbl2.appendChild(rowKV('glyphicon-lock','Boot image MD5', v.bootimage.md5));
