@@ -2496,10 +2496,171 @@ static int h_versions_json(http_request_t *r) {
     http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n");
     http_write(r,out,n); free(out); return 0;
   }
-  /* fallback minimal */
+  /* fallback: synthesize a useful versions JSON inline (no external script)
+   * Provide info useful for both EdgeRouter and container setups.
+   */
   char host[256]=""; gethostname(host,sizeof(host)); host[sizeof(host)-1]=0;
-  char buf[512]; snprintf(buf,sizeof(buf),"{\"olsrd_status_plugin\":\"%s\",\"host\":\"%s\"}\n","1.0",host);
-  send_json(r,buf);
+  int olsrd_on=0, olsr2_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+
+  /* autoupdate wizard info */
+  const char *au_path = "/etc/cron.daily/autoupdatewizards";
+  int auon = path_exists(au_path);
+  char *adu_dat = NULL; size_t adu_n = 0;
+  util_read_file("/config/user-data/autoupdate.dat", &adu_dat, &adu_n);
+  int aa_on = 0, aa1_on = 0, aa2_on = 0, aale_on = 0, aaebt_on = 0, aabp_on = 0;
+  if (adu_dat && adu_n>0) {
+    if (memmem(adu_dat, adu_n, "wizard-autoupdate=yes", 20)) aa_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-olsrd_v1=yes", 19)) aa1_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-olsrd_v2=yes", 19)) aa2_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-0xffwsle=yes", 18)) aale_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-ebtables=yes", 18)) aaebt_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-blockPrivate=yes", 24)) aabp_on = 1;
+  }
+
+  // Gather wizard versions (if present under /config/wizard/feature/*/wizard-run)
+  // We'll execute a small shell loop and parse lines like key=version to extract values.
+  char *wiz_out = NULL; size_t wiz_n = 0;
+  char olsrv1_ver[64] = "n/a", olsrv2_ver[64] = "n/a", wsle_ver[64] = "n/a", ebtables_ver[64] = "n/a", blockpriv_ver[64] = "n/a", autoupdate_ver[64] = "n/a";
+  if (path_exists("/config/wizard")) {
+  const char *wiz_cmd = "for i in /config/wizard/feature/*/wizard-run 2>/dev/null; do vers=$(head -n 10 \"$i\" | grep -ioE -m 1 'version.*' | awk -F' ' '{print $2;}' | tr -d '[]() '); if head -n 10 \"$i\" | grep -q 'OLSRd_V1'; then echo olsrv1=$vers; fi; if head -n 10 \"$i\" | grep -q 'OLSRd_V2'; then echo olsrv2=$vers; fi; if head -n 10 \"$i\" | grep -q '0xFF-BMK-Webstatus-LetsEncrypt'; then echo wsle=$vers; fi; if head -n 10 \"$i\" | grep -q 'ER-wizard-ebtables'; then echo ebtables=$vers; fi; if head -n 10 \"$i\" | grep -q 'ER-wizard-blockPrivate'; then echo blockpriv=$vers; fi; if head -n 10 \"$i\" | grep -q 'ER-wizard-AutoUpdate'; then echo autoupdate=$vers; fi; done";
+    if (util_exec(wiz_cmd, &wiz_out, &wiz_n) == 0 && wiz_out && wiz_n>0) {
+      /* parse lines */
+      char *p = wiz_out; char *line = NULL;
+      while (p && *p) {
+        line = p; char *nl = strchr(line,'\n'); if (nl) *nl = '\0';
+        if (strncmp(line, "olsrv1=", 7) == 0) strncpy(olsrv1_ver, line+7, sizeof(olsrv1_ver)-1);
+        else if (strncmp(line, "olsrv2=", 7) == 0) strncpy(olsrv2_ver, line+7, sizeof(olsrv2_ver)-1);
+        else if (strncmp(line, "wsle=", 5) == 0) strncpy(wsle_ver, line+5, sizeof(wsle_ver)-1);
+        else if (strncmp(line, "ebtables=", 9) == 0) strncpy(ebtables_ver, line+9, sizeof(ebtables_ver)-1);
+        else if (strncmp(line, "blockpriv=", 10) == 0) strncpy(blockpriv_ver, line+10, sizeof(blockpriv_ver)-1);
+        else if (strncmp(line, "autoupdate=", 11) == 0) strncpy(autoupdate_ver, line+11, sizeof(autoupdate_ver)-1);
+        if (!nl) break; p = nl + 1;
+      }
+    }
+  }
+
+  /* homes (users) - simple listing */
+  char *homes_out = NULL; size_t homes_n = 0;
+  if (util_exec("/bin/ls -1 /home 2>/dev/null | awk '{printf \"\\\"%s\\\",\", $0}' | sed 's/,$/\\n/'", &homes_out, &homes_n) != 0) {
+    if (homes_out) { free(homes_out); homes_out = NULL; homes_n = 0; }
+  }
+  if (!homes_out) {
+    /* fallback to empty array */
+    homes_out = strdup("\n"); homes_n = homes_out ? strlen(homes_out) : 0;
+  }
+
+  /* boot image md5 */
+  char *md5_out = NULL; size_t md5_n = 0;
+  if (util_exec("/usr/bin/md5sum /dev/mtdblock2 2>/dev/null | cut -f1 -d' '", &md5_out, &md5_n) != 0) {
+    if (md5_out) { free(md5_out); md5_out = NULL; md5_n = 0; }
+  }
+
+  /* Determine system type heuristically */
+  const char *system_type = path_exists("/config/wizard") ? "edge-router" : "linux-container";
+
+  /* bmk-webstatus version (if present) */
+  char *bmk_out = NULL; size_t bmk_n = 0; char bmkwebstatus[128] = "n/a";
+  if (util_exec("head -n 12 /config/custom/www/cgi-bin-status*.php 2>/dev/null | grep -m1 version= | cut -d'\"' -f2", &bmk_out, &bmk_n) == 0 && bmk_out && bmk_n>0) {
+    char *t = strndup(bmk_out, (size_t)bmk_n);
+    if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(bmkwebstatus, t, sizeof(bmkwebstatus)-1); free(t); }
+  }
+
+  /* olsrd4 watchdog flag */
+  int olsrd4watchdog = 0;
+  char *olsrd4conf = NULL; size_t olsrd4_n = 0;
+  if (util_read_file("/config/user-data/olsrd4.conf", &olsrd4conf, &olsrd4_n) == 0 && olsrd4conf && olsrd4_n>0) {
+    if (memmem(olsrd4conf, olsrd4_n, "olsrd_watchdog", 13)) olsrd4watchdog = 1;
+  }
+
+  /* local IPs: try to get a reasonable IPv4 and IPv6; prefer non-loopback addresses */
+  char ipv4_addr[64] = "n/a"; char ipv6_addr[128] = "n/a"; char originator[128] = "n/a";
+  char *tmp_out = NULL; size_t tmp_n = 0;
+  if (util_exec("ip -4 -o addr show scope global | awk '{print $4; exit}' | cut -d/ -f1", &tmp_out, &tmp_n) == 0 && tmp_out && tmp_n>0) {
+    char *t = strndup(tmp_out, tmp_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(ipv4_addr, t, sizeof(ipv4_addr)-1); free(t); }
+    free(tmp_out); tmp_out = NULL; tmp_n = 0;
+  }
+  if (util_exec("ip -6 -o addr show scope global | awk '{print $4; exit}' | cut -d/ -f1", &tmp_out, &tmp_n) == 0 && tmp_out && tmp_n>0) {
+    char *t = strndup(tmp_out, tmp_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(ipv6_addr, t, sizeof(ipv6_addr)-1); free(t); }
+    free(tmp_out); tmp_out = NULL; tmp_n = 0;
+  }
+  /* originator: if olsr2 running, try local telnet endpoint */
+  if (olsr2_on) {
+    char *orig_raw = NULL; size_t orig_n = 0;
+    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20originator", &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
+      /* take first line that contains ':' */
+      char *nl = strchr(orig_raw,'\n'); if (nl) *nl = 0; if (strchr(orig_raw,':')) strncpy(originator, orig_raw, sizeof(originator)-1);
+      free(orig_raw);
+    }
+  }
+
+  /* linklocals: capture eth0 MAC as serial-like identifier (best-effort) */
+  char linkserial[128] = "n/a";
+  char *ll_out = NULL; size_t ll_n = 0;
+  if (util_exec("ip -6 link show eth0 2>/dev/null | grep link/ether | awk '{gsub(\":\",\"\", $2); print toupper($2)}'", &ll_out, &ll_n) == 0 && ll_out && ll_n>0) {
+    char *t = strndup(ll_out, ll_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(linkserial, t, sizeof(linkserial)-1); free(t); }
+  }
+
+
+  /* Build JSON into dynamic buffer */
+  size_t buf_sz = 4096 + (homes_n>0?homes_n:0) + (md5_n>0?md5_n:0);
+  char *obuf = malloc(buf_sz);
+  if (!obuf) {
+    /* out of memory: fallback minimal */
+    char buf2[512]; snprintf(buf2,sizeof(buf2),"{\"olsrd_status_plugin\":\"%s\",\"host\":\"%s\"}\n","1.0",host);
+    send_json(r, buf2);
+    if (adu_dat) free(adu_dat);
+    return 0;
+  }
+  /* sanitize homes_out (it should contain quoted comma separated list or newline) */
+  char homes_json[512] = "[]";
+  if (homes_out && homes_n>0) {
+    /* homes_out already formatted by the ls command above ("user","user2",) */
+    size_t hn = homes_n;
+    /* remove trailing comma/newline and ensure brackets */
+    char *tmp = strndup(homes_out, homes_n);
+    if (tmp) {
+      /* strip trailing comma or newline */
+      while (hn>0 && (tmp[hn-1]=='\n' || tmp[hn-1]==',')) { tmp[--hn]=0; }
+      snprintf(homes_json, sizeof(homes_json), "[%s]", tmp[0] ? tmp : "");
+      free(tmp);
+    }
+  }
+
+  /* md5 cleanup */
+  char bootimage_md5[128] = "n/a";
+  if (md5_out && md5_n>0) {
+    /* trim newline */
+    char *m = strndup(md5_out, md5_n);
+    if (m) {
+      char *nl = strchr(m,'\n'); if (nl) *nl = 0; strncpy(bootimage_md5, m, sizeof(bootimage_md5)-1); bootimage_md5[sizeof(bootimage_md5)-1]=0; free(m);
+    }
+  }
+
+  snprintf(obuf, buf_sz,
+    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"}}\n",
+    host,
+    system_type,
+    olsrd_on?"true":"false",
+    olsr2_on?"true":"false",
+    auon?"yes":"no",
+    aa_on?"true":"false",
+    aa1_on?"true":"false",
+    aa2_on?"true":"false",
+    aale_on?"true":"false",
+    aaebt_on?"true":"false",
+    aabp_on?"true":"false",
+    homes_json,
+    bootimage_md5
+  );
+
+  http_send_status(r,200,"OK");
+  http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n");
+  http_write(r, obuf, strlen(obuf));
+  free(obuf);
+  if (adu_dat) free(adu_dat);
+  if (homes_out) free(homes_out);
+  if (md5_out) free(md5_out);
+  return 0;
   return 0;
 }
 

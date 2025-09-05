@@ -758,7 +758,7 @@ function detectPlatformAndLoad() {
           var nodedbReady = false;
           function tryRenderConnections() {
             if (!nodedbReady) return; // wait until nodedb loaded once
-            fetch('/connections.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(c){
+            return fetch('/connections.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(c){
               renderConnectionsTable(c, nodedb);
               var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = '';
             }).catch(function(e){ var el=document.getElementById('connections-status'); if(el) el.textContent='ERR: '+e; });
@@ -769,20 +769,56 @@ function detectPlatformAndLoad() {
             // force refresh after nodedb already loaded
             if (!nodedbReady) return; // will auto-run when ready
             var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = 'Loading...';
-            tryRenderConnections();
+            // Return a Promise so callers can finalize UI state
+            return new Promise(function(resolve, reject){
+              tryRenderConnections().then(function(){ if(statusEl) statusEl.textContent=''; resolve(); }).catch(function(err){ if(statusEl) statusEl.textContent='ERR: '+err; reject(err); });
+            });
           }
           loadConnections();
           function loadVersions() {
             var statusEl = document.getElementById('versions-status'); if(statusEl) statusEl.textContent = 'Loading...';
-            fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){
+            return fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){
               renderVersionsPanel(v);
               if(statusEl) statusEl.textContent = '';
-            }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
+            }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; throw e; });
           }
           loadVersions();
           document.getElementById('tr-run').addEventListener('click', function(){ runTraceroute(); });
-          document.getElementById('refresh-connections').addEventListener('click', loadConnections);
-          document.getElementById('refresh-versions').addEventListener('click', loadVersions);
+          // Wire refresh buttons with consistent spinner + disable behavior
+          var refreshConnBtn = document.getElementById('refresh-connections');
+          if (refreshConnBtn) {
+            refreshConnBtn.addEventListener('click', function(){
+              var spinner = document.getElementById('refresh-connections-spinner');
+              try { refreshConnBtn.disabled = true; } catch(e){}
+              if (spinner) spinner.classList.add('rotate');
+              // call loadConnections which returns a Promise
+              try {
+                var p = loadConnections();
+                if (p && typeof p.finally === 'function') {
+                  p.finally(function(){ try{ refreshConnBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
+                } else {
+                  // Not a promise (nodedb not ready), just re-enable
+                  try{ refreshConnBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate');
+                }
+              } catch(e){ try{ refreshConnBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); }
+            });
+          }
+          var refreshVerBtn = document.getElementById('refresh-versions');
+          if (refreshVerBtn) {
+            refreshVerBtn.addEventListener('click', function(){
+              var spinner = document.getElementById('refresh-versions-spinner');
+              try { refreshVerBtn.disabled = true; } catch(e){}
+              if (spinner) spinner.classList.add('rotate');
+              try {
+                var p = loadVersions();
+                if (p && typeof p.finally === 'function') {
+                  p.finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
+                } else {
+                  try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate');
+                }
+              } catch(e){ try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); }
+            });
+          }
           // render fixed traceroute-to-uplink results when provided by /status
           try {
             if (status.trace_to_uplink && Array.isArray(status.trace_to_uplink) && status.trace_to_uplink.length) {
