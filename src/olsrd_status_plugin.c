@@ -2365,6 +2365,83 @@ int olsrd_plugin_init(void) {
     }
   }
 
+  /* Allow override of port via environment variable for quick testing/deployment:
+   * If OLSRD_STATUS_PLUGIN_PORT is set and contains a valid port number (1-65535),
+   * it will override the configured/plugin parameter value in g_port.
+   */
+  {
+    const char *env_port = getenv("OLSRD_STATUS_PLUGIN_PORT");
+    if (env_port && env_port[0]) {
+      char *endptr = NULL; long p = strtol(env_port, &endptr, 10);
+      if (endptr && *endptr == '\0' && p > 0 && p <= 65535) {
+        g_port = (int)p;
+        fprintf(stderr, "[status-plugin] overriding port from environment: OLSRD_STATUS_PLUGIN_PORT=%s -> %d\n", env_port, g_port);
+      } else {
+        fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_PORT value: %s (ignored)\n", env_port);
+      }
+    }
+  }
+
+  /* Environment-driven overrides for additional plugin parameters.
+   * - OLSRD_STATUS_PLUGIN_NET: comma/semicolon/whitespace-separated list of CIDR/mask entries.
+   * - OLSRD_STATUS_PLUGIN_NODEDB_URL: URL string for node DB.
+   * - OLSRD_STATUS_PLUGIN_NODEDB_TTL: integer seconds TTL.
+   * - OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK: integer (0/1) to enable writing node DB to disk.
+   */
+  {
+    const char *env_net = getenv("OLSRD_STATUS_PLUGIN_NET");
+    if (env_net && env_net[0]) {
+      char *buf = strdup(env_net);
+      if (buf) {
+        char *save = NULL; char *tok = strtok_r(buf, ",; \t\n", &save);
+        while (tok) {
+          /* trim leading/trailing whitespace */
+          char *s = tok; while (*s && isspace((unsigned char)*s)) s++;
+          char *e = s + strlen(s); while (e > s && isspace((unsigned char)*(e-1))) { e--; }
+          *e = '\0';
+          if (*s) {
+            if (http_allow_cidr(s) != 0) {
+              fprintf(stderr, "[status-plugin] invalid Net value from OLSRD_STATUS_PLUGIN_NET: '%s'\n", s);
+            } else {
+              fprintf(stderr, "[status-plugin] added allow-list Net from env: %s\n", s);
+            }
+          }
+          tok = strtok_r(NULL, ",; \t\n", &save);
+        }
+        free(buf);
+      }
+    }
+
+    const char *env_nodedb = getenv("OLSRD_STATUS_PLUGIN_NODEDB_URL");
+    if (env_nodedb && env_nodedb[0]) {
+      /* copy into fixed-size buffer, truncating if necessary */
+      snprintf(g_nodedb_url, sizeof(g_nodedb_url), "%s", env_nodedb);
+      fprintf(stderr, "[status-plugin] overriding nodedb_url from environment: %s\n", g_nodedb_url);
+    }
+
+    const char *env_ttl = getenv("OLSRD_STATUS_PLUGIN_NODEDB_TTL");
+    if (env_ttl && env_ttl[0]) {
+      char *endptr = NULL; long t = strtol(env_ttl, &endptr, 10);
+      if (endptr && *endptr == '\0' && t >= 0) {
+        g_nodedb_ttl = (int)t;
+        fprintf(stderr, "[status-plugin] overriding nodedb_ttl from environment: %ld\n", t);
+      } else {
+        fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_NODEDB_TTL value: %s (ignored)\n", env_ttl);
+      }
+    }
+
+    const char *env_wd = getenv("OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK");
+    if (env_wd && env_wd[0]) {
+      char *endptr = NULL; long w = strtol(env_wd, &endptr, 10);
+      if (endptr && *endptr == '\0' && w >= 0) {
+        g_nodedb_write_disk = (int)w;
+        fprintf(stderr, "[status-plugin] overriding nodedb_write_disk from environment: %d\n", g_nodedb_write_disk);
+      } else {
+        fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK value: %s (ignored)\n", env_wd);
+      }
+    }
+  }
+
   if (http_server_start(g_bind, g_port, g_asset_root) != 0) {
     fprintf(stderr, "[status-plugin] failed to start http server on %s:%d\n", g_bind, g_port);
     return 1;
