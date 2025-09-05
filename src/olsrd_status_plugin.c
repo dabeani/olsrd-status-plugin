@@ -329,6 +329,35 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
   return count_nodes_for_ip(section, ip);
 }
 
+/* Extract twoHopNeighborCount (or linkcount as last resort) for a given neighbor IP from neighbors section */
+static int neighbor_twohop_for_ip(const char *section, const char *ip) {
+  if(!section||!ip||!ip[0]) return 0;
+  const char *arr = strchr(section,'[');
+  if(!arr) return 0;
+  const char *p = arr; int depth=0; int best=0;
+  while(*p){
+    if(*p=='['){ depth++; p++; continue; }
+    if(*p==']'){ depth--; if(depth==0) break; p++; continue; }
+    if(*p=='{'){
+      const char *obj=p; int od=1; p++;
+      while(*p && od>0){ if(*p=='{') od++; else if(*p=='}') od--; p++; }
+      const char *end=p; if(end>obj){
+        char *v; size_t vlen; char addr[128]=""; char twohop_s[32]=""; char linkcount_s[32]="";
+        if(find_json_string_value(obj,"ipAddress",&v,&vlen) || find_json_string_value(obj,"ip",&v,&vlen)) snprintf(addr,sizeof(addr),"%.*s",(int)vlen,v);
+        if(addr[0]){ char cmp[128]; snprintf(cmp,sizeof(cmp),"%s",addr); char *slash=strchr(cmp,'/'); if(slash) *slash='\0';
+          if(strcmp(cmp,ip)==0){
+            if(find_json_string_value(obj,"twoHopNeighborCount",&v,&vlen)) snprintf(twohop_s,sizeof(twohop_s),"%.*s",(int)vlen,v);
+            if(find_json_string_value(obj,"linkcount",&v,&vlen)) snprintf(linkcount_s,sizeof(linkcount_s),"%.*s",(int)vlen,v);
+            int val=0; if(twohop_s[0]) val=atoi(twohop_s); else if(linkcount_s[0]) val=atoi(linkcount_s);
+            if(val>best) best=val; /* keep largest in case of duplicates */
+          }
+        }
+      }
+      continue; }
+    p++; }
+  return best;
+}
+
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
 static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
   if (mac_out && mac_len) mac_out[0]=0;
@@ -424,6 +453,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   json_buf_append(&buf, &len, &cap, "["); int first = 1; int parsed = 0;
   const char *routes_section = strstr(raw, "\"routes\"");
   const char *topology_section = strstr(raw, "\"topology\"");
+  const char *neighbors_section = strstr(raw, "\"neighbors\"");
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
     if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
@@ -445,6 +475,12 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (topology_section) {
         nodes_cnt = count_unique_nodes_for_ip(topology_section, remote);
         if (nodes_cnt == 0) nodes_cnt = count_nodes_for_ip(topology_section, remote);
+      }
+      /* Fallback: try neighbors section two-hop counts if topology yielded nothing */
+      if (nodes_cnt == 0 && neighbors_section) {
+        int twohop = neighbor_twohop_for_ip(neighbors_section, remote);
+        if (twohop > 0) nodes_cnt = twohop;
+        if (routes_cnt == 0 && twohop > 0) routes_cnt = twohop; /* approximate */
       }
       if (nodes_cnt == 0 && routes_cnt > 0) nodes_cnt = routes_cnt;
       char routes_s[16]; snprintf(routes_s,sizeof(routes_s),"%d",routes_cnt);
