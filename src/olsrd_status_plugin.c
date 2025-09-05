@@ -1710,8 +1710,11 @@ static int h_nodedb(http_request_t *r) {
     http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
   /* Debug: return error info instead of empty JSON */
-  char debug_json[512];
-  snprintf(debug_json, sizeof(debug_json), "{\"error\":\"No remote node_db data available\",\"url\":\"%s\",\"last_fetch\":%ld,\"cached_len\":%zu}", g_nodedb_url, g_nodedb_last_fetch, g_nodedb_cached_len);
+  char debug_json[1024];
+  char url_copy[256];
+  strncpy(url_copy, g_nodedb_url, sizeof(url_copy) - 1);
+  url_copy[sizeof(url_copy) - 1] = '\0';
+  snprintf(debug_json, sizeof(debug_json), "{\"error\":\"No remote node_db data available\",\"url\":\"%s\",\"last_fetch\":%ld,\"cached_len\":%zu}", url_copy, g_nodedb_last_fetch, g_nodedb_cached_len);
   send_json(r, debug_json); return 0;
 }
 
