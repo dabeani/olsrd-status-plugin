@@ -203,8 +203,23 @@ int http_send_file(http_request_t *r, const char *asset_root, const char *relpat
   }
   const char *m = mime ? mime : guess_mime(relpath);
   fprintf(stderr, "[status-plugin] http_send_file: serving '%s' (mime=%s)\n", path, m);
-  http_send_status(r, 200, "OK");
-  http_printf(r, "Content-Type: %s\r\n\r\n", m);
+  struct stat st;
+  if (fstat(fd, &st) == 0) {
+    /* Generate Last-Modified header */
+    char lm[128];
+    struct tm *gmt = gmtime(&st.st_mtime);
+    if (gmt) strftime(lm, sizeof(lm), "%a, %d %b %Y %H:%M:%S GMT", gmt); else lm[0]=0;
+    /* Cache static assets for 1 day by default */
+    http_send_status(r, 200, "OK");
+    if (lm[0]) {
+      http_printf(r, "Content-Type: %s\r\nCache-Control: public, max-age=86400\r\nLast-Modified: %s\r\n\r\n", m, lm);
+    } else {
+      http_printf(r, "Content-Type: %s\r\nCache-Control: public, max-age=86400\r\n\r\n", m);
+    }
+  } else {
+    http_send_status(r, 200, "OK");
+    http_printf(r, "Content-Type: %s\r\n\r\n", m);
+  }
   char buf[16384];
   ssize_t n;
   while ((n = read(fd, buf, sizeof(buf))) > 0) {

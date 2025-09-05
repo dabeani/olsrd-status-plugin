@@ -769,15 +769,21 @@ function detectPlatformAndLoad() {
               tryRenderConnections().then(function(){ if(statusEl) statusEl.textContent=''; resolve(); }).catch(function(err){ if(statusEl) statusEl.textContent='ERR: '+err; reject(err); });
             });
           }
-          loadConnections();
-          function loadVersions() {
-            var statusEl = document.getElementById('versions-status'); if(statusEl) statusEl.textContent = 'Loading...';
-            return fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){
-              renderVersionsPanel(v);
-              if(statusEl) statusEl.textContent = '';
-            }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; throw e; });
+          // defer loading connections and versions until tab activation to speed initial paint
+          var _connectionsLoaded = false;
+          var _versionsLoaded = false;
+          function loadConnections() {
+            if (_connectionsLoaded) return Promise.resolve();
+            _connectionsLoaded = true;
+            var statusEl = document.getElementById('connections-status'); if(statusEl) statusEl.textContent = 'Loading...';
+            return fetch('/nodedb.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ var nodedb = nb || {}; return fetch('/connections.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(c){ renderConnectionsTable(c, nodedb); if(statusEl) statusEl.textContent=''; }).catch(function(e){ if(statusEl) statusEl.textContent='ERR: '+e; }); }).catch(function(){ if(statusEl) statusEl.textContent=''; });
           }
-          loadVersions();
+          function loadVersions() {
+            if (_versionsLoaded) return Promise.resolve();
+            _versionsLoaded = true;
+            var statusEl = document.getElementById('versions-status'); if(statusEl) statusEl.textContent = 'Loading...';
+            return fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ renderVersionsPanel(v); if(statusEl) statusEl.textContent = ''; }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
+          }
           document.getElementById('tr-run').addEventListener('click', function(){ runTraceroute(); });
           // Wire refresh buttons with consistent spinner + disable behavior
           var refreshConnBtn = document.getElementById('refresh-connections');
@@ -1026,6 +1032,11 @@ if (!document.addEventListener) {
           if (document.readyState === 'complete') {
             callback();
           }
+          // wire tab lazy-load for connections and versions
+          var connTabLink = document.querySelector('#mainTabs a[href="#tab-connections"]');
+          if (connTabLink) connTabLink.addEventListener('click', function(){ loadConnections(); });
+          var verTabLink = document.querySelector('#mainTabs a[href="#tab-versions"]');
+          if (verTabLink) verTabLink.addEventListener('click', function(){ loadVersions(); });
         });
       }
     } else {
