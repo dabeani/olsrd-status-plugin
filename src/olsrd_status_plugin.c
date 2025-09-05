@@ -510,7 +510,7 @@ static void fetch_remote_nodedb(void) {
   char *fresh=NULL; size_t fn=0;
   
   /* Try multiple curl paths and protocols */
-  const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};
+  const char *curl_paths[] = {"curl", "/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", NULL};
   const char *protocols[] = {"https", "http", NULL};
   int success = 0;
   
@@ -531,20 +531,15 @@ static void fetch_remote_nodedb(void) {
       char cmd[1024]; 
       snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, url);
       
-      fprintf(stderr, "[status-plugin] Trying: %s\n", cmd);
-      
       if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
-        fprintf(stderr, "[status-plugin] Success with %s, got %zu bytes\n", cmd, fn);
+        fprintf(stderr, "[status-plugin] nodedb fetch succeeded with %s, got %zu bytes\n", *curl_path, fn);
         success = 1;
         break;
       } else {
-        if (fresh) {
-          fprintf(stderr, "[status-plugin] Failed with %s, got %zu bytes: %.100s...\n", cmd, fn, fresh ? fresh : "(null)");
+        if (fresh) { 
           free(fresh); 
           fresh = NULL; 
           fn = 0; 
-        } else {
-          fprintf(stderr, "[status-plugin] Failed with %s, no output\n", cmd);
         }
       }
     }
