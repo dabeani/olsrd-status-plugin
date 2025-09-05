@@ -343,22 +343,45 @@ function showNodesFor(remoteIp, nodeNames) {
   if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading...</td></tr>';
   if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
 
+  // sorting state for node modal
+  var _nodeSort = { key: null, asc: true };
   function renderRows(list) {
     if (!tbody) return;
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No nodes found</td></tr>'; return; }
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-muted">No nodes found</td></tr>'; return; }
+    var arr = list.slice();
+    if (_nodeSort.key) {
+      arr.sort(function(a,b){
+        var ka = (a[_nodeSort.key]||'').toString().toLowerCase();
+        var kb = (b[_nodeSort.key]||'').toString().toLowerCase();
+        if (ka < kb) return _nodeSort.asc ? -1 : 1;
+        if (ka > kb) return _nodeSort.asc ? 1 : -1;
+        return 0;
+      });
+    }
     var html = '';
-    for (var i=0;i<list.length;i++) {
-      var n = list[i];
-      html += '<tr>'+
+    for (var i=0;i<arr.length;i++) {
+      var n = arr[i];
+      var rowId = 'node-row-' + i;
+      html += '<tr id="'+rowId+'">'+
         '<td style="font-family:monospace">'+ (n.ip||'') +'</td>'+
         '<td>' + (n.n || '') + '</td>'+
         '<td>' + (n.i || '') + '</td>'+
         '<td>' + (n.d || '') + '</td>'+
         '<td>' + (n.h || '') + '</td>'+
         '<td>' + (n.m || '') + '</td>'+
+        '<td>' +
+          '<button class="btn btn-xs btn-default node-copy-row" data-idx="'+i+'" title="Copy row"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button> '+
+          '<button class="btn btn-xs btn-default node-expand-row" data-idx="'+i+'" title="Show raw JSON"><span class="glyphicon glyphicon-resize-full" aria-hidden="true"></span></button>'+
+        '</td>'+
         '</tr>';
     }
     tbody.innerHTML = html;
+    // attach per-row handlers
+    var copies = document.querySelectorAll('.node-copy-row');
+    copies.forEach(function(btn){ btn.addEventListener('click', function(){ var idx = parseInt(btn.getAttribute('data-idx'),10); var item = arr[idx]; try{ var txt = JSON.stringify(item); if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt); btn.classList.add('btn-success'); setTimeout(function(){ btn.classList.remove('btn-success'); },900);} else { var ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);} }catch(e){} }); });
+    var expands = document.querySelectorAll('.node-expand-row');
+    expands.forEach(function(btn){ btn.addEventListener('click', function(){ var idx = parseInt(btn.getAttribute('data-idx'),10); var item = arr[idx]; try{ if (bodyPre) { bodyPre.style.display='block'; bodyPre.textContent = JSON.stringify(item, null, 2); bodyPre.scrollTop = 0; } // highlight row
+          var prev = document.querySelector('#node-modal-tbody tr.success'); if (prev) prev.classList.remove('success'); var row = document.getElementById('node-row-'+idx); if (row) row.classList.add('success'); }catch(e){} }); });
   }
 
   function applyFilter(list){
@@ -413,10 +436,20 @@ function showNodesFor(remoteIp, nodeNames) {
     renderRows(found);
     if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2);
     modal.style.display='block';
+    // wire header sort clicks
+    try {
+      var headers = document.querySelectorAll('#node-modal-table thead th[data-key]');
+      headers.forEach(function(h){ h.onclick = function(){ var k = h.getAttribute('data-key'); if (_nodeSort.key === k) _nodeSort.asc = !_nodeSort.asc; else { _nodeSort.key = k; _nodeSort.asc = true; } renderRows(window._nodedb_cache_list || found); }; });
+    } catch(e) {}
     return;
   }
 
   fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ try{ window._nodedb_cache = nb || {}; var found = findNodes(nb || {}); window._nodedb_cache_list = found; if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; } renderRows(found); if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2); modal.style.display='block'; }catch(e){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error rendering nodes</td></tr>'; if(bodyPre) bodyPre.textContent='Error'; modal.style.display='block'; } }).catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error loading nodedb.json</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading nodedb.json'; modal.style.display='block'; });
+  // attach header sort clicks for fetched path as well
+  try {
+    var headers = document.querySelectorAll('#node-modal-table thead th[data-key]');
+    headers.forEach(function(h){ h.onclick = function(){ var k = h.getAttribute('data-key'); if (_nodeSort.key === k) _nodeSort.asc = !_nodeSort.asc; else { _nodeSort.key = k; _nodeSort.asc = true; } renderRows(window._nodedb_cache_list || []); }; });
+  } catch(e) {}
 }
 
 // Cache for parsed routes from status payload
