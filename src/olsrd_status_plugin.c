@@ -1151,6 +1151,83 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
 static void send_text(http_request_t *r, const char *text);
 static void send_json(http_request_t *r, const char *json);
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
+static void detect_olsr_processes(int *out_olsrd, int *out_olsr2);
+
+/* Generate versions JSON into an allocated buffer (caller frees) */
+static int generate_versions_json(char **outbuf, size_t *outlen) {
+  if (!outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  char host[256] = ""; gethostname(host, sizeof(host)); host[sizeof(host)-1]=0;
+  int olsrd_on=0, olsr2_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+
+  /* autoupdate wizard info */
+  const char *au_path = "/etc/cron.daily/autoupdatewizards";
+  int auon = path_exists(au_path);
+  char *adu_dat = NULL; size_t adu_n = 0;
+  util_read_file("/config/user-data/autoupdate.dat", &adu_dat, &adu_n);
+  int aa_on = 0, aa1_on = 0, aa2_on = 0, aale_on = 0, aaebt_on = 0, aabp_on = 0;
+  if (adu_dat && adu_n>0) {
+    if (memmem(adu_dat, adu_n, "wizard-autoupdate=yes", 20)) aa_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-olsrd_v1=yes", 19)) aa1_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-olsrd_v2=yes", 19)) aa2_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-0xffwsle=yes", 18)) aale_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-ebtables=yes", 18)) aaebt_on = 1;
+    if (memmem(adu_dat, adu_n, "wizard-blockPrivate=yes", 24)) aabp_on = 1;
+  }
+
+  /* homes */
+  char *homes_out = NULL; size_t homes_n = 0;
+  if (util_exec("/bin/ls -1 /home 2>/dev/null | awk '{printf \"\\\"%s\\\",\", $0}' | sed 's/,$/\\n/'", &homes_out, &homes_n) != 0) {
+    if (homes_out) { free(homes_out); homes_out = NULL; homes_n = 0; }
+  }
+  if (!homes_out) { homes_out = strdup("\n"); homes_n = homes_out ? strlen(homes_out) : 0; }
+
+  /* md5 */
+  char *md5_out = NULL; size_t md5_n = 0;
+  if (util_exec("/usr/bin/md5sum /dev/mtdblock2 2>/dev/null | cut -f1 -d' '", &md5_out, &md5_n) != 0) { if (md5_out) { free(md5_out); md5_out = NULL; md5_n = 0; } }
+
+  const char *system_type = path_exists("/config/wizard") ? "edge-router" : "linux-container";
+
+  /* bmk-webstatus */
+  char *bmk_out = NULL; size_t bmk_n = 0; char bmkwebstatus[128] = "n/a";
+  if (util_exec("head -n 12 /config/custom/www/cgi-bin-status*.php 2>/dev/null | grep -m1 version= | cut -d'\"' -f2", &bmk_out, &bmk_n) == 0 && bmk_out && bmk_n>0) {
+    char *t = strndup(bmk_out, (size_t)bmk_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(bmkwebstatus, t, sizeof(bmkwebstatus)-1); free(t); }
+  }
+
+  /* olsrd4watchdog */
+  int olsrd4watchdog = 0; char *olsrd4conf = NULL; size_t olsrd4_n = 0;
+  if (util_read_file("/config/user-data/olsrd4.conf", &olsrd4conf, &olsrd4_n) != 0) {
+    if (util_read_file("/etc/olsrd/olsrd.conf", &olsrd4conf, &olsrd4_n) != 0) { olsrd4conf = NULL; olsrd4_n = 0; }
+  }
+  if (olsrd4conf && olsrd4_n>0) { if (memmem(olsrd4conf, olsrd4_n, "olsrd_watchdog", 13) || memmem(olsrd4conf, olsrd4_n, "LoadPlugin.*olsrd_watchdog", 22)) olsrd4watchdog = 1; free(olsrd4conf); }
+
+  /* ips */
+  char ipv4_addr[64] = "n/a", ipv6_addr[128] = "n/a", originator[128] = "n/a";
+  char *tmp_out = NULL; size_t tmp_n = 0;
+  if (util_exec("ip -4 -o addr show scope global | awk '{print $4; exit}' | cut -d/ -f1", &tmp_out, &tmp_n) == 0 && tmp_out && tmp_n>0) { char *t = strndup(tmp_out, tmp_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(ipv4_addr, t, sizeof(ipv4_addr)-1); free(t); } free(tmp_out); tmp_out=NULL; tmp_n=0; }
+  if (util_exec("ip -6 -o addr show scope global | awk '{print $4; exit}' | cut -d/ -f1", &tmp_out, &tmp_n) == 0 && tmp_out && tmp_n>0) { char *t = strndup(tmp_out, tmp_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(ipv6_addr, t, sizeof(ipv6_addr)-1); free(t); } free(tmp_out); tmp_out=NULL; tmp_n=0; }
+
+  /* linkserial */
+  char linkserial[128] = "n/a"; char *ll_out = NULL; size_t ll_n = 0;
+  if (util_exec("ip -6 link show eth0 2>/dev/null | grep link/ether | awk '{gsub(\":\",\"\", $2); print toupper($2)}'", &ll_out, &ll_n) == 0 && ll_out && ll_n>0) { char *t = strndup(ll_out, ll_n); if (t) { char *nl = strchr(t,'\n'); if (nl) *nl=0; strncpy(linkserial, t, sizeof(linkserial)-1); free(t); } if (ll_out) free(ll_out); }
+
+  /* Build JSON */
+  size_t buf_sz = 4096 + (homes_n>0?homes_n:0) + (md5_n>0?md5_n:0);
+  char *obuf = malloc(buf_sz);
+  if (!obuf) { if (adu_dat) free(adu_dat); if (homes_out) free(homes_out); if (md5_out) free(md5_out); return -1; }
+  char homes_json[512] = "[]";
+  if (homes_out && homes_n>0) { size_t hn = homes_n; char *tmp = strndup(homes_out, homes_n); if (tmp) { while (hn>0 && (tmp[hn-1]=='\n' || tmp[hn-1]==',')) { tmp[--hn]=0; } snprintf(homes_json,sizeof(homes_json),"[%s]", tmp[0]?tmp:"" ); free(tmp); } }
+  char bootimage_md5[128] = "n/a"; if (md5_out && md5_n>0) { char *m = strndup(md5_out, md5_n); if (m) { char *nl = strchr(m,'\n'); if (nl) *nl=0; strncpy(bootimage_md5, m, sizeof(bootimage_md5)-1); free(m); } }
+  snprintf(obuf, buf_sz, "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"}}\n",
+    host, system_type, olsrd_on?"true":"false", olsr2_on?"true":"false", olsrd4watchdog?"true":"false", auon?"yes":"no", aa_on?"true":"false", aa1_on?"true":"false", aa2_on?"true":"false", aale_on?"true":"false", aaebt_on?"true":"false", aabp_on?"true":"false", homes_json, bootimage_md5
+  );
+
+  if (adu_dat) free(adu_dat);
+  if (homes_out) free(homes_out);
+  if (md5_out) free(md5_out);
+  *outbuf = obuf; *outlen = strlen(obuf);
+  return 0;
+}
 
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
 static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
@@ -2434,30 +2511,7 @@ static int h_connections(http_request_t *r) {
     free(out);
     return 0;
   }
-
-  // Fallback to custom external script for compatibility
-  if (util_exec("/config/custom/connections.sh", &out, &n) == 0 && out && n > 0) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    http_write(r, out, n);
-    free(out);
-    return 0;
-  }
-  // Try Linux container paths
-  if (util_exec("/usr/share/olsrd-status-plugin/connections.sh", &out, &n) == 0 && out && n > 0) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    http_write(r, out, n);
-    free(out);
-    return 0;
-  }
-  if (util_exec("./connections.sh", &out, &n) == 0 && out && n > 0) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    http_write(r, out, n);
-    free(out);
-    return 0;
-  }
+  // External scripts removed: rely on internal renderer only
 
   // Nothing available
   send_text(r, "n/a\n");
@@ -2479,19 +2533,9 @@ static int h_connections_json(http_request_t *r) {
 }
 
 static int h_versions_json(http_request_t *r) {
-  char *out=NULL; size_t n=0; int ok=0;
-  if(path_exists("/config/custom/versions.sh")) {
-    if(util_exec("/config/custom/versions.sh", &out,&n)==0 && out && buffer_has_content(out,n)) ok=1;
-  }
-  if(!ok && out){ free(out); out=NULL; n=0; }
-  if(!ok && path_exists("/usr/share/olsrd-status-plugin/versions.sh")) {
-    if(util_exec("/usr/share/olsrd-status-plugin/versions.sh", &out,&n)==0 && out && buffer_has_content(out,n)) ok=1;
-  }
-  if(!ok && out){ free(out); out=NULL; n=0; }
-  if(!ok && path_exists("./versions.sh")) {
-    if(util_exec("./versions.sh", &out,&n)==0 && out && buffer_has_content(out,n)) ok=1;
-  }
-  if(ok) {
+  /* Use internal generator rather than an external shell script */
+  char *out = NULL; size_t n = 0;
+  if (generate_versions_json(&out, &n) == 0 && out && n>0) {
     http_send_status(r,200,"OK");
     http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n");
     http_write(r,out,n); free(out); return 0;
@@ -2565,11 +2609,18 @@ static int h_versions_json(http_request_t *r) {
     if (t) { char *nl = strchr(t,'\n'); if (nl) *nl = 0; strncpy(bmkwebstatus, t, sizeof(bmkwebstatus)-1); free(t); }
   }
 
-  /* olsrd4 watchdog flag */
+  /* olsrd4 watchdog flag: check EdgeRouter path first, then container path */
   int olsrd4watchdog = 0;
   char *olsrd4conf = NULL; size_t olsrd4_n = 0;
-  if (util_read_file("/config/user-data/olsrd4.conf", &olsrd4conf, &olsrd4_n) == 0 && olsrd4conf && olsrd4_n>0) {
-    if (memmem(olsrd4conf, olsrd4_n, "olsrd_watchdog", 13)) olsrd4watchdog = 1;
+  if (util_read_file("/config/user-data/olsrd4.conf", &olsrd4conf, &olsrd4_n) != 0) {
+    /* fallback to common linux container path */
+    if (util_read_file("/etc/olsrd/olsrd.conf", &olsrd4conf, &olsrd4_n) != 0) {
+      olsrd4conf = NULL; olsrd4_n = 0;
+    }
+  }
+  if (olsrd4conf && olsrd4_n>0) {
+    if (memmem(olsrd4conf, olsrd4_n, "olsrd_watchdog", 13) || memmem(olsrd4conf, olsrd4_n, "LoadPlugin.*olsrd_watchdog", 22)) olsrd4watchdog = 1;
+    free(olsrd4conf); olsrd4conf = NULL; olsrd4_n = 0;
   }
 
   /* local IPs: try to get a reasonable IPv4 and IPv6; prefer non-loopback addresses */
@@ -2637,11 +2688,12 @@ static int h_versions_json(http_request_t *r) {
   }
 
   snprintf(obuf, buf_sz,
-    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"}}\n",
+    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"}}\n",
     host,
     system_type,
     olsrd_on?"true":"false",
     olsr2_on?"true":"false",
+    olsrd4watchdog?"true":"false",
     auon?"yes":"no",
     aa_on?"true":"false",
     aa1_on?"true":"false",
