@@ -611,10 +611,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
               /* ensure unique per gateway */
               int dup=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) if(strcmp(gw_stats[gi].names[ni],nodename)==0){ dup=1; break; }
               if(!dup && gw_stats[gi].name_count < 256) {
-                /* Cap nodename at 63 chars for storage to avoid truncation warnings */
+                /* Cap and copy safely */
                 nodename[63]='\0';
-                strncpy(gw_stats[gi].names[gw_stats[gi].name_count], nodename, 63);
-                gw_stats[gi].names[gw_stats[gi].name_count][63]='\0';
+                snprintf(gw_stats[gi].names[gw_stats[gi].name_count], sizeof(gw_stats[gi].names[0]), "%s", nodename);
                 gw_stats[gi].name_count++;
                 gw_stats[gi].nodes = gw_stats[gi].name_count;
               }
