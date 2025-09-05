@@ -507,9 +507,26 @@ static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) r
 /* Fetch remote node_db and update cache */
 static void fetch_remote_nodedb(void) {
   char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
-  char cmd[1024]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 2 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", ipbuf, g_nodedb_url);
   char *fresh=NULL; size_t fn=0;
-  if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+  
+  /* Try multiple curl paths */
+  const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};
+  int success = 0;
+  
+  for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) {
+    char cmd[1024]; 
+    snprintf(cmd,sizeof(cmd),"%s -s --max-time 2 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, g_nodedb_url);
+    if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+      success = 1;
+      break;
+    } else if (fresh) { 
+      free(fresh); 
+      fresh = NULL; 
+      fn = 0; 
+    }
+  }
+  
+  if (success) {
     /* augment: if remote JSON is an object mapping IP -> { n:.. } ensure each has hostname/name keys */
     int is_object_mapping = 0; /* heuristic: starts with '{' and contains '"n"' and an IPv4 pattern */
     if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1;
@@ -1668,8 +1685,10 @@ static int h_nodedb(http_request_t *r) {
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
     http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
-  /* No fallback - return empty if no remote data available */
-  send_json(r,"{}\n"); return 0;
+  /* Debug: return error info instead of empty JSON */
+  char debug_json[512];
+  snprintf(debug_json, sizeof(debug_json), "{\"error\":\"No remote node_db data available\",\"url\":\"%s\",\"last_fetch\":%ld,\"cached_len\":%zu}", g_nodedb_url, g_nodedb_last_fetch, g_nodedb_cached_len);
+  send_json(r, debug_json); return 0;
 }
 
 /* capabilities endpoint */
