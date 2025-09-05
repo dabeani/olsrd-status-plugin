@@ -409,7 +409,7 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
       char nodename[128] = "";
       if (g_nodedb_cached && g_nodedb_cached_len > 0) {
         pthread_mutex_lock(&g_nodedb_lock);
-        char *nd = g_nodedb_cached; size_t ndlen = g_nodedb_cached_len;
+  char *nd = g_nodedb_cached;
         /* exact key match: "<ip>":{ */
         char pattern[512]; snprintf(pattern, sizeof(pattern), "\"%s\":{", destTrim);
         char *kp = strstr(nd, pattern);
