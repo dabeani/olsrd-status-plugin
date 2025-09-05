@@ -761,6 +761,36 @@ static void send_text(http_request_t *r, const char *text);
 static void send_json(http_request_t *r, const char *json);
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
 
+/* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
+static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
+  if(out_olsrd) *out_olsrd = 0; if(out_olsr2) *out_olsr2 = 0;
+  char *out=NULL; size_t on=0;
+  if(out_olsr2 && util_exec("pidof olsrd2 2>/dev/null", &out,&on)==0 && out && on>0){ *out_olsr2=1; }
+  if(out){ free(out); out=NULL; on=0; }
+  if(out_olsrd && util_exec("pidof olsrd 2>/dev/null", &out,&on)==0 && out && on>0){ *out_olsrd=1; }
+  if(out){ free(out); out=NULL; on=0; }
+  if( (out_olsrd && *out_olsrd) || (out_olsr2 && *out_olsr2) ) return;
+  /* Fallback: parse ps output (works even when pidof missing or wrapper used) */
+  if(util_exec("ps -o pid= -o comm= -o args= 2>/dev/null", &out,&on)!=0 || !out){
+    if(out){ free(out); out=NULL; on=0; }
+    util_exec("ps 2>/dev/null", &out,&on); /* busybox minimal */
+  }
+  if(out){
+    const char *needle2="olsrd2"; const char *needle1="olsrd"; /* order: check olsrd2 first to avoid substring confusion */
+    const char *p=out;
+    while(p && *p){
+      const char *line_end=strchr(p,'\n'); if(!line_end) line_end=p+strlen(p);
+      if(line_end>p){
+        if(out_olsr2 && !*out_olsr2){ if(strstr(p,needle2)) *out_olsr2=1; }
+        if(out_olsrd && !*out_olsrd){ if(strstr(p,needle1) && !strstr(p,needle2)) *out_olsrd=1; }
+        if( (out_olsrd && *out_olsrd) && (out_olsr2 && *out_olsr2) ) break;
+      }
+      if(*line_end==0) break; else p=line_end+1;
+    }
+    free(out);
+  }
+}
+
 static int h_airos(http_request_t *r);
 
 /* Full /status endpoint */
@@ -803,23 +833,10 @@ static int h_status(http_request_t *r) {
   }
 
 
-  /* detect olsrd2 vs legacy olsrd processes separately; only set olsr2_on when olsrd2 found */
-  int olsr2_on = 0; /* true only for olsrd2 */
-  int olsrd_on = 0; /* legacy olsrd */
-  char *pout=NULL; size_t pn=0;
-  if (util_exec("pidof olsrd2 2>/dev/null", &pout,&pn)==0 && pout && pn>0) {
-    olsr2_on = 1;
-    fprintf(stderr,"[status-plugin] detected olsrd2 process: %s\n", pout);
-  }
-  if (pout) { free(pout); pout=NULL; pn=0; }
-  if (util_exec("pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout && pn>0) {
-    olsrd_on = 1;
-    fprintf(stderr,"[status-plugin] detected legacy olsrd process: %s\n", pout);
-  }
-  if (pout) { free(pout); pout=NULL; }
-  if (!olsrd_on && !olsr2_on) {
-    fprintf(stderr,"[status-plugin] no OLSR process detected\n");
-  }
+  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+  if(olsr2_on) fprintf(stderr,"[status-plugin] detected olsrd2 (robust)\n");
+  if(olsrd_on) fprintf(stderr,"[status-plugin] detected olsrd (robust)\n");
+  if(!olsrd_on && !olsr2_on) fprintf(stderr,"[status-plugin] no OLSR process detected (robust path)\n");
 
   /* fetch links (for either implementation); do not toggle olsr2_on based on HTTP success */
   char *olsr_links_raw=NULL; size_t oln=0; {
@@ -1021,11 +1038,6 @@ static int h_status(http_request_t *r) {
   if (olsr_routes_raw && olr>0) { APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw); }
   if (olsr_topology_raw && olt>0) { APPEND(",\"olsr_topology_raw\":%s", olsr_topology_raw); }
 
-  /* include pidof output for diagnostics when present */
-  if (pout && pn>0) {
-    APPEND(",\"olsrd_pidof\":"); json_append_escaped(&buf, &len, &cap, pout);
-    free(pout); pout = NULL;
-  }
   if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; }
 
   /* diagnostics: report which local olsrd endpoints were probed and traceroute info */
@@ -1214,7 +1226,9 @@ static int h_status_lite(http_request_t *r) {
   if(path_exists("/tmp/10-all.json")){ char *ar=NULL; size_t an=0; if(util_read_file("/tmp/10-all.json",&ar,&an)==0 && ar){ APP_L("\"airosdata\":%s,", ar); free(ar);} else APP_L("\"airosdata\":{},"); } else APP_L("\"airosdata\":{},");
   /* versions (fast attempt) */
   char *vout=NULL; size_t vn=0; int versions_loaded=0; if(path_exists("/config/custom/versions.sh")){ if(util_exec("/config/custom/versions.sh",&vout,&vn)==0 && vout){ APP_L("\"versions\":%s,", vout); free(vout); versions_loaded=1; }} else if(path_exists("/usr/share/olsrd-status-plugin/versions.sh")){ if(util_exec("/usr/share/olsrd-status-plugin/versions.sh",&vout,&vn)==0 && vout){ APP_L("\"versions\":%s,", vout); free(vout); versions_loaded=1; }} if(!versions_loaded) APP_L("\"versions\":{\"olsrd\":\"unknown\"},");
-  APP_L("\"olsr2_on\":false,\"olsrd_on\":false"); /* not probed here */
+  /* detect olsrd / olsrd2 (previously skipped in lite) */
+  int lite_olsr2_on=0, lite_olsrd_on=0; detect_olsr_processes(&lite_olsrd_on,&lite_olsr2_on);
+  APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false");
   APP_L("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
@@ -1254,13 +1268,7 @@ static int h_olsr_routes(http_request_t *r) {
 
 /* --- OLSR links endpoint with minimal neighbors --- */
 static int h_olsr_links(http_request_t *r) {
-  int olsr2_on=0; /* only true if olsrd2 running */
-  int olsrd_on=0; /* legacy flag */
-  char *tmp=NULL; size_t tmplen=0;
-  if(util_exec("pidof olsrd2 2>/dev/null", &tmp,&tmplen)==0 && tmp && tmplen>0){ olsr2_on=1; }
-  if(tmp){ free(tmp); tmp=NULL; }
-  if(util_exec("pidof olsrd 2>/dev/null", &tmp,&tmplen)==0 && tmp && tmplen>0){ olsrd_on=1; }
-  if(tmp){ free(tmp); tmp=NULL; }
+  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   /* fetch links regardless of legacy vs v2 */
   char *links_raw=NULL; size_t ln=0; {
     const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
@@ -1354,11 +1362,7 @@ static int h_status_olsr(http_request_t *r) {
     free(rout); }
   APP2("\"default_route\":{"); APP2("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip); APP2(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev); APP2("},");
   /* attempt OLSR links minimal (separate flags) */
-  int olsr2_on=0, olsrd_on=0; char *pout=NULL; size_t pn=0;
-  if(util_exec("pidof olsrd2 2>/dev/null", &pout,&pn)==0 && pout && pn>0) { olsr2_on=1; }
-  if(pout){ free(pout); pout=NULL; pn=0; }
-  if(util_exec("pidof olsrd 2>/dev/null", &pout,&pn)==0 && pout && pn>0) { olsrd_on=1; }
-  if(pout){ free(pout); pout=NULL; }
+  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
   for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep); if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
   APP2("\"olsr2_on\":%s,", olsr2_on?"true":"false");
@@ -1369,7 +1373,7 @@ static int h_status_olsr(http_request_t *r) {
     if(combined_raw) free(combined_raw);
   } else { APP2("\"links\":[]"); }
   APP2("}\n");
-  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(pout) free(pout); return 0; }
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); return 0; }
 
 static int h_nodedb(http_request_t *r) {
   /* Auto-update strategy with caching & configurable URL.
