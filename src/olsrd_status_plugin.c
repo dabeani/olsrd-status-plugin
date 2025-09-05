@@ -775,8 +775,6 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
         if (twohop > 0) nodes_cnt = twohop;
         if (routes_cnt == 0 && twohop > 0) routes_cnt = twohop; /* approximate */
       }
-  /* Use the larger of topology-derived unique nodes and route fan-out as approximation */
-  if (routes_cnt > nodes_cnt) nodes_cnt = routes_cnt;
       char routes_s[16]; snprintf(routes_s,sizeof(routes_s),"%d",routes_cnt);
       char nodes_s[16]; snprintf(nodes_s,sizeof(nodes_s),"%d",nodes_cnt);
       static char def_ip_cached[64];
