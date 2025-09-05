@@ -42,6 +42,8 @@ static time_t g_nodedb_last_fetch = 0; /* epoch of last successful fetch */
 static char  *g_nodedb_cached = NULL; /* malloc'ed JSON blob */
 static size_t g_nodedb_cached_len = 0;
 static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
+/* If set to 1, write a copy of the node_db to disk (disabled by default to protect flash) */
+static int g_nodedb_write_disk = 0;
 
 /* Paths to optional external tools (detected at init) */
 #ifndef PATHLEN
@@ -517,6 +519,32 @@ static void get_primary_ipv4(char *out, size_t outlen){ if(out&&outlen) out[0]=0
 static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) return 0; /* skip leading ws */ size_t i=0; while(i<len && (buf[i]==' '||buf[i]=='\n'||buf[i]=='\r'||buf[i]=='\t')) i++; if(i>=len) return 0; if(buf[i] != '{') return 0; /* look for some indicative keys */ if(strstr(buf,"\"v6-to-v4\"")||strstr(buf,"\"v6-to-id\"")||strstr(buf,"\"v6-hna-at\"")) return 1; if(strstr(buf,"\"n\"")) return 1; return 1; }
 
 /* Fetch remote node_db and update cache */
+/* TTL-aware wrapper: only fetch if cache is stale or empty */
+/* forward-declare actual fetch implementation so wrapper can call it */
+static void fetch_remote_nodedb(void);
+
+/* RFC1123 time formatter for HTTP Last-Modified header */
+static void format_rfc1123_time(time_t t, char *out, size_t outlen) {
+  if (!out || outlen==0) return;
+  struct tm tm;
+  if (gmtime_r(&t, &tm) == NULL) { out[0]=0; return; }
+  /* Example: Sun, 06 Nov 1994 08:49:37 GMT */
+  strftime(out, outlen, "%a, %d %b %Y %H:%M:%S GMT", &tm);
+}
+
+static void fetch_remote_nodedb_if_needed(void) {
+  time_t now = time(NULL);
+  pthread_mutex_lock(&g_nodedb_lock);
+  int need = 0;
+  if (!g_nodedb_cached || g_nodedb_cached_len == 0) need = 1;
+  else if (g_nodedb_last_fetch == 0) need = 1;
+  else if ((now - g_nodedb_last_fetch) >= g_nodedb_ttl) need = 1;
+  pthread_mutex_unlock(&g_nodedb_lock);
+  if (!need) return;
+  /* fall through to actual fetch implementation */
+  fetch_remote_nodedb();
+}
+
 static void fetch_remote_nodedb(void) {
   char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
   char *fresh=NULL; size_t fn=0;
@@ -587,8 +615,11 @@ static void fetch_remote_nodedb(void) {
     if (g_nodedb_cached) free(g_nodedb_cached);
     g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
     pthread_mutex_unlock(&g_nodedb_lock);
-    /* write a copy for external inspection */
-    FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} fresh=NULL;
+    /* write a copy for external inspection if explicitly enabled (avoid frequent flash writes) */
+    if (g_nodedb_write_disk) {
+      FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} 
+    }
+    fresh=NULL;
   } else if (fresh) { free(fresh); }
     else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
 }
@@ -597,8 +628,8 @@ static void fetch_remote_nodedb(void) {
 static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen) {
   if (!raw || !outbuf || !outlen) return -1;
   *outbuf = NULL; *outlen = 0;
-  /* Always fetch remote node_db for fresh data */
-  fetch_remote_nodedb();
+  /* Fetch remote node_db only if cache is stale or empty */
+  fetch_remote_nodedb_if_needed();
   /* --- Route & node name fan-out (Python legacy parity) ------------------
    * The original bmk-webstatus.py derives per-neighbor route counts and node
    * counts exclusively from the Linux IPv4 routing table plus node_db names:
@@ -1725,11 +1756,22 @@ static int h_status_olsr(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(routes_raw) free(routes_raw); if(topology_raw) free(topology_raw); return 0; }
 
 static int h_nodedb(http_request_t *r) {
-  /* Always fetch remote node_db */
-  fetch_remote_nodedb();
+  /* Only fetch if needed (respect TTL) */
+  fetch_remote_nodedb_if_needed();
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
-    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
+  /* Add basic caching headers to reduce client revalidation frequency */
+  http_send_status(r,200,"OK");
+  http_printf(r,"Content-Type: application/json; charset=utf-8\r\n");
+  /* Cache-Control: client-side TTL aligns with server-side TTL */
+  http_printf(r,"Cache-Control: public, max-age=%d\r\n", g_nodedb_ttl);
+  /* Last-Modified: use last fetch time */
+    if (g_nodedb_last_fetch) {
+      char tbuf[64]; format_rfc1123_time(g_nodedb_last_fetch, tbuf, sizeof(tbuf)); http_printf(r, "Last-Modified: %s\r\n", tbuf);
+    }
+    /* ETag: weak tag based on length + last_fetch to allow conditional GET */
+    http_printf(r,"ETag: \"%zx-%ld\"\r\n\r\n", g_nodedb_cached_len, g_nodedb_last_fetch);
+  http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
   /* Debug: return error info instead of empty JSON */
   char debug_json[1024];
@@ -2047,7 +2089,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
     }
   }
   /* try cached remote node_db first */
-  fetch_remote_nodedb();
+  fetch_remote_nodedb_if_needed();
   if (g_nodedb_cached && g_nodedb_cached_len > 0) {
     char needle[256]; 
     if (snprintf(needle, sizeof(needle), "\"%s\":", ipv4) >= (int)sizeof(needle)) {
