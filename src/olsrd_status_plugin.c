@@ -459,6 +459,8 @@ static int neighbor_twohop_for_ip(const char *section, const char *ip) {
       }
       continue; }
     p++; }
+  /* Fallback: if no object entries matched, try legacy array-of-strings under "routes" key */
+  /* no legacy array-of-strings fallback here */
   return best;
 }
 
@@ -1582,7 +1584,14 @@ static int h_olsr_routes(http_request_t *r) {
         if(find_json_string_value(obj,"via",&v,&vlen) || find_json_string_value(obj,"gateway",&v,&vlen) || find_json_string_value(obj,"gatewayIP",&v,&vlen) || find_json_string_value(obj,"nextHop",&v,&vlen)) snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v);
         if(find_json_string_value(obj,"destination",&v,&vlen) || find_json_string_value(obj,"destinationIPNet",&v,&vlen) || find_json_string_value(obj,"dst",&v,&vlen)) snprintf(dst,sizeof(dst),"%.*s",(int)vlen,v);
         if(find_json_string_value(obj,"device",&v,&vlen) || find_json_string_value(obj,"dev",&v,&vlen) || find_json_string_value(obj,"interface",&v,&vlen)) snprintf(dev,sizeof(dev),"%.*s",(int)vlen,v);
-        if(find_json_string_value(obj,"metric",&v,&vlen) || find_json_string_value(obj,"rtpMetricCost",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
+  if(find_json_string_value(obj,"metric",&v,&vlen) ||
+     find_json_string_value(obj,"rtpMetricCost",&v,&vlen) ||
+     find_json_string_value(obj,"pathCost",&v,&vlen) ||
+     find_json_string_value(obj,"pathcost",&v,&vlen) ||
+     find_json_string_value(obj,"tcEdgeCost",&v,&vlen) ||
+     find_json_string_value(obj,"cost",&v,&vlen) ||
+     find_json_string_value(obj,"metricCost",&v,&vlen) ||
+     find_json_string_value(obj,"metrics",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
         int match=1; if(filter){ if(!gw[0]) match=0; else { char gw_ip[128]; snprintf(gw_ip,sizeof(gw_ip),"%s",gw); char *slash=strchr(gw_ip,'/'); if(slash) *slash=0; if(strcmp(gw_ip,via_ip)!=0) match=0; } }
         if(match && dst[0]){
           if(!first) APP_R(","); first=0; count++;
