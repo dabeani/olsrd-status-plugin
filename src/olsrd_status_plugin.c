@@ -57,6 +57,7 @@ static int h_root(http_request_t *r);
 static int h_ipv4(http_request_t *r); static int h_ipv6(http_request_t *r);
 static int h_status(http_request_t *r); static int h_status_summary(http_request_t *r); static int h_status_olsr(http_request_t *r); static int h_status_lite(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
+static int h_olsr_links_debug(http_request_t *r);
 static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
 static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r); static int h_olsrd(http_request_t *r);
 static int h_discover(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
@@ -537,6 +538,88 @@ static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) r
 static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen) {
   if (!raw || !outbuf || !outlen) return -1;
   *outbuf = NULL; *outlen = 0;
+  /* --- Route & node name fan-out (Python legacy parity) ------------------
+   * The original bmk-webstatus.py derives per-neighbor route counts and node
+   * counts exclusively from the Linux IPv4 routing table plus node_db names:
+   *   /sbin/ip -4 r | grep -vE 'scope|default' | awk '{print $3,$1,$5}'
+   * It builds:
+   *   gatewaylist[gateway_ip] -> list of destination prefixes (count = routes)
+   *   nodelist[gateway_ip]   -> unique node names (from node_db[dest]['n'])
+   * We replicate that logic here before parsing OLSR link JSON so we can
+   * prefer these authoritative counts. Only if unavailable / zero do we
+   * fall back to topology / neighbors heuristic logic.
+   */
+  struct gw_stat { char gw[64]; int routes; int nodes; int name_count; char names[256][64]; };
+  #define MAX_GW_STATS 512
+  static struct gw_stat *gw_stats = NULL; static int gw_stats_count = 0; /* not cached between calls */
+  do {
+    char *rt_raw=NULL; size_t rlen=0;
+    const char *rt_cmds[] = {
+      "/sbin/ip -4 r 2>/dev/null",
+      "/usr/sbin/ip -4 r 2>/dev/null",
+      "ip -4 r 2>/dev/null",
+      NULL
+    };
+    for (int ci=0; rt_cmds[ci] && !rt_raw; ++ci) {
+      if (util_exec(rt_cmds[ci], &rt_raw, &rlen) == 0 && rt_raw && rlen>0) break;
+      if (rt_raw) { free(rt_raw); rt_raw=NULL; rlen=0; }
+    }
+    if (!rt_raw) break; /* no routing table */
+    gw_stats = calloc(MAX_GW_STATS, sizeof(struct gw_stat));
+    if (!gw_stats) { free(rt_raw); break; }
+    char *saveptr=NULL; char *line = strtok_r(rt_raw, "\n", &saveptr);
+    while(line) {
+      if (strstr(line, "default") || strstr(line, "scope")) { line=strtok_r(NULL,"\n",&saveptr); continue; }
+      /* Expect host routes of form: <dest> via <gateway> dev <if> ... */
+      char dest[64]="", via[64]="";
+      if (sscanf(line, "%63s via %63s", dest, via) == 2) {
+        /* strip trailing characters like ',' if any */
+        for (int i=0; via[i]; ++i) if (via[i]==','||via[i]==' ') { via[i]='\0'; break; }
+        if (dest[0] && via[0]) {
+          /* locate / create gw_stat */
+          int gi=-1; for(int i=0;i<gw_stats_count;i++){ if(strcmp(gw_stats[i].gw,via)==0){ gi=i; break; } }
+          if (gi==-1 && gw_stats_count < MAX_GW_STATS) { gi=gw_stats_count++; snprintf(gw_stats[gi].gw,sizeof(gw_stats[gi].gw),"%s",via); }
+          if (gi>=0) {
+            gw_stats[gi].routes++;
+            /* node name lookup: find node_db[dest]['n'] */
+            char nodename[128]="";
+            int have_name = 0;
+            /* Acquire node_db under lock (may be updated asynchronously) */
+            if (g_nodedb_cached && g_nodedb_cached_len>0) {
+              pthread_mutex_lock(&g_nodedb_lock);
+              if (g_nodedb_cached && g_nodedb_cached_len>0) {
+                char pattern[256]; snprintf(pattern,sizeof(pattern),"\"%s\":{", dest);
+                char *kp = strstr(g_nodedb_cached, pattern);
+                if (kp) {
+                  char *np = strstr(kp, "\"n\":");
+                  if (np && np < strstr(kp, "}")) { /* within object */
+                    np = strchr(np, '"'); /* first quote of key maybe; move to value */
+                    if (np) { /* find first '"' after 'n":' */
+                      np = strchr(np+1,'"');
+                      if (np) {
+                        char *val_start = np+1; char *val_end = strchr(val_start,'"');
+                        if (val_end && val_end>val_start) {
+                          size_t L = (size_t)(val_end-val_start); if (L >= sizeof(nodename)) L = sizeof(nodename)-1; memcpy(nodename,val_start,L); nodename[L]='\0'; if(nodename[0]) have_name=1; }
+                      }
+                    }
+                  }
+                }
+              }
+              pthread_mutex_unlock(&g_nodedb_lock);
+            }
+            if (have_name) {
+              /* ensure unique per gateway */
+              int dup=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) if(strcmp(gw_stats[gi].names[ni],nodename)==0){ dup=1; break; }
+              if(!dup && gw_stats[gi].name_count < 256) { snprintf(gw_stats[gi].names[gw_stats[gi].name_count],64,"%s",nodename); gw_stats[gi].name_count++; gw_stats[gi].nodes = gw_stats[gi].name_count; }
+            }
+          }
+        }
+      }
+      line = strtok_r(NULL, "\n", &saveptr);
+    }
+    free(rt_raw);
+  } while(0);
+
   const char *p = strstr(raw, "\"links\"");
   const char *arr = NULL;
   if (p) arr = strchr(p, '[');
@@ -587,9 +670,30 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
       int routes_cnt = routes_section ? count_routes_for_ip(routes_section, remote) : 0;
       int nodes_cnt = 0;
+      char node_names_concat[1024]; node_names_concat[0]='\0';
+      /* Prefer Python-style route table fan-out first (exact parity) */
+      if (gw_stats_count > 0) {
+        for (int gi=0; gi<gw_stats_count; ++gi) {
+          if (strcmp(gw_stats[gi].gw, remote)==0) {
+            if (gw_stats[gi].routes > 0) routes_cnt = gw_stats[gi].routes;
+            if (gw_stats[gi].nodes > 0) nodes_cnt  = gw_stats[gi].nodes;
+            if (gw_stats[gi].name_count > 0) {
+              size_t off=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) {
+                const char *nm = gw_stats[gi].names[ni]; if(!nm||!*nm) continue;
+                size_t need = strlen(nm) + (off?1:0) + 1; /* comma + name + nul */
+                if (off + need >= sizeof(node_names_concat)) break;
+                if (off) node_names_concat[off++]=','; strcpy(&node_names_concat[off], nm); off += strlen(nm);
+              }
+            }
+            break;
+          }
+        }
+      }
       if (topology_section) {
-        nodes_cnt = count_unique_nodes_for_ip(topology_section, remote);
-        if (nodes_cnt == 0) nodes_cnt = count_nodes_for_ip(topology_section, remote);
+        if (nodes_cnt == 0) {
+          nodes_cnt = count_unique_nodes_for_ip(topology_section, remote);
+          if (nodes_cnt == 0) nodes_cnt = count_nodes_for_ip(topology_section, remote);
+        }
       }
       /* Fallback: try neighbors section two-hop counts if topology yielded nothing */
       if (nodes_cnt == 0 && neighbors_section) {
@@ -615,6 +719,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
       json_buf_append(&buf,&len,&cap,",\"routes\":"); json_append_escaped(&buf,&len,&cap,routes_s);
       json_buf_append(&buf,&len,&cap,",\"nodes\":"); json_append_escaped(&buf,&len,&cap,nodes_s);
+  if (node_names_concat[0]) { json_buf_append(&buf,&len,&cap,",\"node_names\":"); json_append_escaped(&buf,&len,&cap,node_names_concat); }
       json_buf_append(&buf,&len,&cap,",\"is_default\":%s", is_default?"true":"false");
       json_buf_append(&buf,&len,&cap,"}");
       parsed++;
@@ -1473,6 +1578,12 @@ done:
   return 0;
 }
 
+/* Debug endpoint: expose per-neighbor unique destination list to verify node counting */
+static int h_olsr_links_debug(http_request_t *r) {
+  send_json(r, "{\"error\":\"debug disabled pending fix\"}\n");
+  return 0;
+}
+
 /* --- Debug raw OLSR data: /olsr/raw (NOT for production; helps diagnose node counting) --- */
 static int h_olsr_raw(http_request_t *r) {
   char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
@@ -2018,6 +2129,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/olsr", &h_status_olsr);
   http_server_register_handler("/status/lite", &h_status_lite);
   http_server_register_handler("/olsr/links", &h_olsr_links);
+  http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
   http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
   http_server_register_handler("/olsrd.json", &h_olsrd_json);

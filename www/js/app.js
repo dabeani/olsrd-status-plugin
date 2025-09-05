@@ -296,9 +296,7 @@ function populateOlsrLinksTable(links) {
   }
   links.forEach(function(l){
     var tr = document.createElement('tr');
-    if (l.is_default) {
-      tr.style.backgroundColor = '#fff8d5'; /* soft yellow */
-    }
+    if (l.is_default) { tr.style.backgroundColor = '#fff8d5'; }
     function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
     tr.appendChild(td(l.intf));
     tr.appendChild(td(l.local));
@@ -306,9 +304,7 @@ function populateOlsrLinksTable(links) {
     if (l.remote_host) {
       var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
       tr.appendChild(td(linkHtml));
-    } else {
-      tr.appendChild(td(l.remote_host));
-    }
+    } else { tr.appendChild(td(l.remote_host)); }
     tr.appendChild(td(l.lq));
     tr.appendChild(td(l.nlq));
     tr.appendChild(td(l.cost));
@@ -318,7 +314,12 @@ function populateOlsrLinksTable(links) {
       routesCell.addEventListener('click', function(){ showRoutesFor(l.remote); });
     }
     tr.appendChild(routesCell);
-    tr.appendChild(td(l.nodes || ''));
+    var nodesDisplay = l.nodes || '';
+    if (l.node_names) {
+      var names = l.node_names.split(',').slice(0,10); // cap display
+      nodesDisplay += '<div style="font-size:60%;color:#555;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + l.node_names + '">' + names.join(', ') + (l.node_names.split(',').length>10?' …':'') + '</div>';
+    }
+    tr.appendChild(td(nodesDisplay));
     tbody.appendChild(tr);
   });
 }
