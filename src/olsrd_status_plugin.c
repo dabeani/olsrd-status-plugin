@@ -763,7 +763,12 @@ static int get_query_param(http_request_t *r, const char *key, char *out, size_t
 
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
 static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
-  if(out_olsrd) *out_olsrd = 0; if(out_olsr2) *out_olsr2 = 0;
+  if(out_olsrd) {
+    *out_olsrd = 0;
+  }
+  if(out_olsr2) {
+    *out_olsr2 = 0;
+  }
   char *out=NULL; size_t on=0;
   if(out_olsr2 && util_exec("pidof olsrd2 2>/dev/null", &out,&on)==0 && out && on>0){ *out_olsr2=1; }
   if(out){ free(out); out=NULL; on=0; }
