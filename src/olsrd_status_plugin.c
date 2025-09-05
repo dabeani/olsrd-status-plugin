@@ -281,6 +281,27 @@ static int count_routes_for_ip(const char *section, const char *ip) {
       }
     }
   }
+  /* Last-resort fallback: simple pattern scan for '"gateway":"<ip>' inside the provided section.
+     This catches cases where JSON structure variations prevented earlier logic from matching (e.g. nested objects,
+     slight field name changes, or concatenated JSON documents without separators). */
+  if (cnt == 0) {
+    char pattern[96]; snprintf(pattern,sizeof(pattern),"\"gateway\":\"%s", ip);
+    const char *scan = section; int safety = 0;
+    while ((scan = strstr(scan, pattern)) && safety < 100000) { cnt++; scan += strlen(pattern); safety++; }
+    if (cnt == 0) {
+      /* also try common alt key nextHop */
+      snprintf(pattern,sizeof(pattern),"\"nextHop\":\"%s", ip);
+      scan = section; safety = 0;
+      while ((scan = strstr(scan, pattern)) && safety < 100000) { cnt++; scan += strlen(pattern); safety++; }
+    }
+  }
+  /* Optional debug: enable by exporting OLSR_DEBUG_LINK_COUNTS=1 in environment. */
+  if (cnt == 0) {
+    const char *dbg = getenv("OLSR_DEBUG_LINK_COUNTS");
+    if (dbg && *dbg=='1') {
+      fprintf(stderr, "[status-plugin][debug] route count fallback still zero for ip=%s (section head=%.40s)\n", ip, section);
+    }
+  }
   return cnt;
 }
 static int count_nodes_for_ip(const char *section, const char *ip) {
@@ -319,6 +340,20 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
       continue;
     }
     p++;
+  }
+  if (cnt == 0) {
+    /* Fallback pattern scan for lastHopIP / lastHop / gateway occurrences. Unlike routes, topology objects
+       may differ; we count occurrences of any matching key directly referencing ip. */
+    const char *keys[] = { "\"lastHopIP\":\"", "\"lastHopIp\":\"", "\"lastHop\":\"", "\"gateway\":\"", "\"via\":\"", NULL };
+    for (int ki=0; keys[ki]; ++ki) {
+      char pattern[96]; snprintf(pattern,sizeof(pattern),"%s%s", keys[ki], ip);
+      const char *scan = section; int safety=0; while ((scan = strstr(scan, pattern)) && safety < 100000) { cnt++; scan += strlen(pattern); safety++; }
+      if (cnt) break; /* stop on first key that yields hits */
+    }
+    if (cnt == 0) {
+      const char *dbg = getenv("OLSR_DEBUG_LINK_COUNTS");
+      if (dbg && *dbg=='1') fprintf(stderr, "[status-plugin][debug] node count fallback still zero for ip=%s (section head=%.40s)\n", ip, section);
+    }
   }
   return cnt;
 }
