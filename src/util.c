@@ -73,11 +73,9 @@ int util_is_container(void) {
 
 #include <sys/stat.h>
 int path_exists(const char *p){ struct stat st; return stat(p,&st)==0; }
-static int _x_ok(const char *p){ return access(p,X_OK)==0; }
 int env_is_edgerouter(void){
   if (path_exists("/etc/edgeos-release")) return 1;
   if (path_exists("/etc/version") && path_exists("/etc/ubnt")) return 1;
-  if (_x_ok("/usr/sbin/ubnt-discover") || _x_ok("/sbin/ubnt-discover")) return 1;
   if (path_exists("/tmp/10-all.json")) return 1;
   return 0;
 }

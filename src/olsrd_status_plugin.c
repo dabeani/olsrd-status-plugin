@@ -27,7 +27,6 @@
 
 /* Global configuration/state (single authoritative definitions) */
 int g_is_edgerouter = 0;
-int g_has_ubnt_discover = 0;
 int g_has_traceroute = 0;
 int g_is_linux_container = 0;
 
@@ -48,7 +47,6 @@ static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
 #ifndef PATHLEN
 #define PATHLEN 512
 #endif
-char g_ubnt_discover_path[PATHLEN] = "";
 char g_traceroute_path[PATHLEN] = "";
 char g_olsrd_path[PATHLEN] = "";
 
@@ -822,7 +820,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len; return 0;
 }
 
-/* UBNT discover output acquisition with multi-strategy fallback + caching */
+/* UBNT discover output acquisition using internal discovery only */
 static int ubnt_discover_output(char **out, size_t *outlen) {
   if (!out || !outlen) return -1;
   *out = NULL; *outlen = 0;
@@ -831,32 +829,7 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   if (cache_buf && cache_len > 0 && nowt - cache_time < CACHE_TTL) {
     *out = malloc(cache_len+1); if(!*out) return -1; memcpy(*out, cache_buf, cache_len+1); *outlen = cache_len; return 0;
   }
-  /* helper to find existing executable path */
-  const char *ubnt_candidates[] = { g_ubnt_discover_path[0]?g_ubnt_discover_path:NULL, "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", "/usr/local/sbin/ubnt-discover", "/usr/local/bin/ubnt-discover", "/opt/ubnt/ubnt-discover", NULL };
-  const char *first = NULL; for (const char **p = ubnt_candidates; *p; ++p) { if (*p && path_exists(*p)) { first = *p; break; } }
-  if (first) {
-    fprintf(stderr, "[status-plugin] found ubnt-discover at: %s\n", first);
-  char cmd[1024]; /* enlarged to silence potential truncation warning */
-  snprintf(cmd, sizeof(cmd), "%s -d 150 -V -i none -j", first);
-    if (util_exec(cmd, out, outlen) == 0 && *out && *outlen > 0) {
-      fprintf(stderr, "[status-plugin] ubnt-discover succeeded (%zu bytes)\n", *outlen);
-      /* cache */
-      free(cache_buf); cache_buf = malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=nowt; }
-      return 0;
-    } else {
-      if (*out) { free(*out); *out=NULL; }
-      fprintf(stderr, "[status-plugin] ubnt-discover failed\n");
-    }
-  } else {
-    fprintf(stderr, "[status-plugin] ubnt-discover not found (skipping external tool)\n");
-  }
-  /* Preexisting dump */
-  if (path_exists("/tmp/10-all.json")) {
-    if (util_read_file("/tmp/10-all.json", out, outlen) == 0 && *out && *outlen>0) {
-      free(cache_buf); cache_buf = malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=nowt; }
-      return 0;
-    }
-  }
+  /* Skip external tool - use internal broadcast discovery only */
   /* Internal broadcast discovery */
   int s = ubnt_open_broadcast_socket(0);
   if (s >= 0) {
@@ -1733,13 +1706,12 @@ static int h_nodedb(http_request_t *r) {
 /* capabilities endpoint */
 /* forward-declare globals used by capabilities endpoint (defined later) */
 extern int g_is_edgerouter;
-extern int g_has_ubnt_discover;
 extern int g_has_traceroute;
 
 /* capabilities endpoint */
 static int h_capabilities_local(http_request_t *r) {
   int airos = path_exists("/tmp/10-all.json");
-  int discover = g_has_ubnt_discover ? 1 : 0;
+  int discover = 1; /* Internal discovery always available */
   int tracer = g_has_traceroute ? 1 : 0;
   /* also expose show_link_to_adminlogin if set in settings.inc */
   int show_admin = 0;
@@ -2091,10 +2063,8 @@ void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, 
 int olsrd_plugin_init(void) {
   log_asset_permissions();
   /* detect availability of optional external tools without failing startup */
-  const char *ubnt_candidates[] = { "/usr/sbin/ubnt-discover", "/sbin/ubnt-discover", "/usr/bin/ubnt-discover", "/usr/local/sbin/ubnt-discover", "/usr/local/bin/ubnt-discover", "/opt/ubnt/ubnt-discover", NULL };
   const char *tracer_candidates[] = { "/usr/sbin/traceroute", "/bin/traceroute", "/usr/bin/traceroute", "/usr/local/bin/traceroute", NULL };
   const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
-  for (const char **p = ubnt_candidates; *p; ++p) { if (path_exists(*p)) { g_has_ubnt_discover = 1; snprintf(g_ubnt_discover_path, sizeof(g_ubnt_discover_path), "%s", *p); break; } }
   for (const char **p = tracer_candidates; *p; ++p) { if (path_exists(*p)) { g_has_traceroute = 1; snprintf(g_traceroute_path, sizeof(g_traceroute_path), "%s", *p); break; } }
   for (const char **p = olsrd_candidates; *p; ++p) { if (path_exists(*p)) { snprintf(g_olsrd_path, sizeof(g_olsrd_path), "%s", *p); break; } }
   g_is_edgerouter = env_is_edgerouter();
@@ -2331,15 +2301,13 @@ static int h_olsrd(http_request_t *r) {
 }
 
 static int h_discover(http_request_t *r) {
-  char ifs[256]="";
-  (void)get_query_param(r, "q", ifs, sizeof(ifs));
-  char cmd[1024];
-  if (!g_has_ubnt_discover || !g_ubnt_discover_path[0]) { send_json(r, "{}"); return 0; }
-  if (ifs[0]) snprintf(cmd, sizeof(cmd), "%s -d 900 -V -i %s -j", g_ubnt_discover_path, ifs);
-  else snprintf(cmd, sizeof(cmd), "%s -d 150 -V -j", g_ubnt_discover_path);
   char *out=NULL; size_t n=0;
-  if (util_exec(cmd, &out, &n)==0 && out && n>0) { send_json(r, out); free(out); }
-  else { send_json(r, "{}"); }
+  if (ubnt_discover_output(&out, &n) == 0 && out && n > 0) {
+    send_json(r, out);
+    free(out);
+  } else {
+    send_json(r, "{}");
+  }
   return 0;
 }
 
