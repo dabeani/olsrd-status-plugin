@@ -451,8 +451,26 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   const char *q = arr; int depth = 0;
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
   json_buf_append(&buf, &len, &cap, "["); int first = 1; int parsed = 0;
+  /* Detect legacy (olsrd) or v2 (olsr2 json embedded) route/topology sections. We first look for plain
+   * "routes" / "topology" keys; if not found, fall back to the wrapper keys we emit in /status (olsr_routes_raw / olsr_topology_raw).
+   */
   const char *routes_section = strstr(raw, "\"routes\"");
   const char *topology_section = strstr(raw, "\"topology\"");
+  if (!routes_section) {
+    const char *alt = strstr(raw, "\"olsr_routes_raw\"");
+    if (alt) {
+      /* Skip to first '[' after this key so counting helpers work */
+      const char *arrp = strchr(alt, '[');
+      if (arrp) routes_section = arrp - 10 > alt ? alt : arrp; /* provide pointer inside block */
+    }
+  }
+  if (!topology_section) {
+    const char *alt = strstr(raw, "\"olsr_topology_raw\"");
+    if (alt) {
+      const char *arrp = strchr(alt, '[');
+      if (arrp) topology_section = arrp - 10 > alt ? alt : arrp;
+    }
+  }
   const char *neighbors_section = strstr(raw, "\"neighbors\"");
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
