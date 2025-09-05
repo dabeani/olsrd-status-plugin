@@ -38,7 +38,6 @@
         <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
         <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
         <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
-        <li role="presentation"><a href="#tab-json"><span class="glyphicon glyphicon-file" aria-hidden="true"></span> Raw JSON</a></li>
         <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
         <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
         <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
@@ -194,7 +193,7 @@
             </div>
             <div style="margin-top:8px; font-size:11px; color:#666; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
               <div>Click a column header to sort (coming soon) • Filter supports simple substring match.</div>
-              <div><button id="route-raw-toggle" class="btn btn-link btn-xs" style="padding:0">Show raw text</button></div>
+              <div></div>
             </div>
             <pre id="route-modal-body" style="display:none; margin-top:10px; font-family:monospace; font-size:11px; max-height:320px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px;"></pre>
           </div>
@@ -231,8 +230,8 @@
                 </table>
               </div>
               <div style="margin-top:8px; font-size:11px; color:#666; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-                <div>Filter supports simple substring match. • Click a row for raw JSON (coming soon)</div>
-                <div><button id="node-raw-toggle" class="btn btn-link btn-xs" style="padding:0">Show raw text</button></div>
+                <div>Filter supports simple substring match.</div>
+                <div></div>
               </div>
               <pre id="node-modal-body" style="display:none; margin-top:10px; font-family:monospace; font-size:11px; max-height:320px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px;"></pre>
             </div>
@@ -245,11 +244,7 @@
           <div id="versions-wrap"></div>
         </div>
 
-        <!-- Raw JSON -->
-        <div id="tab-json" class="tab-pane">
-          <h3>Raw JSON</h3>
-          <pre id="p-json">Loading…</pre>
-        </div>
+  <!-- Raw JSON tab removed -->
 
         <!-- Traceroute -->
         <div id="tab-traceroute" class="tab-pane">

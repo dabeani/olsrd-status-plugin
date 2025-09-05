@@ -199,16 +199,14 @@ if (!window.fetch) {
 window.refreshTab = function(id, url) {
   var el = document.getElementById(id);
   if (el) el.textContent = 'Loading…';
-  if (id === 'p-json') {
-    fetch(url, {cache:"no-store"}).then(function(r){ return r.text(); }).then(function(t){
-      try{ el.textContent = JSON.stringify(JSON.parse(t), null, 2); }
-      catch(e){ el.textContent = t; }
-    }).catch(function(e){ el.textContent = "ERR: "+e; });
-    return;
-  }
   fetch(url, {cache:"no-store"}).then(function(r){
-    if(!r.ok) return r.text().then(function(t){ el.textContent="HTTP "+r.status+"\n"+t; });
-    return r.text().then(function(t){ el.textContent = t; });
+    return r.text().then(function(t){
+      if (!r.ok) {
+        el.textContent = "HTTP " + r.status + "\n" + t;
+        return;
+      }
+      el.textContent = t;
+    });
   }).catch(function(e){ el.textContent = "ERR: "+e; });
 };
 
@@ -371,7 +369,7 @@ function showNodesFor(remoteIp, nodeNames) {
         '<td>' + (n.m || '') + '</td>'+
         '<td>' +
           '<button class="btn btn-xs btn-default node-copy-row" data-idx="'+i+'" title="Copy row"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button> '+
-          '<button class="btn btn-xs btn-default node-expand-row" data-idx="'+i+'" title="Show raw JSON"><span class="glyphicon glyphicon-resize-full" aria-hidden="true"></span></button>'+
+          '<button class="btn btn-xs btn-default node-expand-row" data-idx="'+i+'" title="Show details"><span class="glyphicon glyphicon-resize-full" aria-hidden="true"></span></button>'+
         '</td>'+
         '</tr>';
     }
@@ -471,7 +469,6 @@ function showRoutesFor(remoteIp) {
   var tbody = document.getElementById('route-modal-tbody');
   var filterInput = document.getElementById('route-filter');
   var copyBtn = document.getElementById('route-copy');
-  var rawToggle = document.getElementById('route-raw-toggle');
   if (title) title.textContent = 'Routes via ' + remoteIp;
   if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
   if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Loading...</td></tr>';
@@ -534,9 +531,7 @@ function showRoutesFor(remoteIp) {
     var rheaders = document.querySelectorAll('#route-modal-table thead th[data-key]');
     rheaders.forEach(function(h){ h.onclick = function(){ var k=h.getAttribute('data-key'); if(_routeSort.key===k) _routeSort.asc=!_routeSort.asc; else { _routeSort.key=k; _routeSort.asc=true; } renderTable(allRoutes); }; });
   } catch(e) {}
-  if (rawToggle) {
-    rawToggle.onclick = function(e){ e.preventDefault(); if(!bodyPre) return; if(bodyPre.style.display==='none'){ bodyPre.style.display='block'; rawToggle.textContent='Hide raw text'; } else { bodyPre.style.display='none'; rawToggle.textContent='Show raw text'; } };
-  }
+  // route raw-toggle removed from UI
   fetch('/olsr/routes?via=' + encodeURIComponent(remoteIp), {cache:'no-store'})
     .then(function(r){ return r.json ? r.json() : r; })
     .then(function(obj){
