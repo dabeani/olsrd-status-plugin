@@ -1140,22 +1140,74 @@ function renderConnectionsTable(c, nodedb) {
 function renderVersionsPanel(v) {
   var wrap = document.getElementById('versions-wrap'); if(!wrap) return; wrap.innerHTML='';
   if(!v) { wrap.textContent = 'No versions data'; return; }
-  var dl = document.createElement('dl'); dl.className='dl-horizontal';
-  function add(k,label){ var dt=document.createElement('dt'); dt.textContent=label||k; var dd=document.createElement('dd');
-    var val = v[k];
-    if (val === undefined) dd.textContent = '-';
-    else if (typeof val === 'object') dd.textContent = JSON.stringify(val);
-    else dd.textContent = String(val);
-    dl.appendChild(dt); dl.appendChild(dd); }
 
-  // preferred ordering to match bmk-webstatus.py output when present
-  var preferred = ['hostname','firmware','kernel','model','autoupdate','wizards','local_ips'];
-  var used = {};
-  preferred.forEach(function(k){ if (v[k] !== undefined) { add(k, k==='local_ips' ? 'Local IPs' : (k==='wizards' ? 'Wizards' : (k==='autoupdate' ? 'AutoUpdate' : k.charAt(0).toUpperCase()+k.slice(1)))); used[k]=1; } });
-  // add remaining keys
-  Object.keys(v).sort().forEach(function(k){ if (!used[k]) add(k); });
-  var pre = document.createElement('pre'); pre.style.maxHeight='240px'; pre.style.overflow='auto'; pre.textContent = JSON.stringify(v,null,2);
-  wrap.appendChild(dl); wrap.appendChild(pre);
+  // Top-level header with hostname and small badges
+  var header = document.createElement('div'); header.className = 'row';
+  var hleft = document.createElement('div'); hleft.className = 'col-sm-8';
+  var htitle = document.createElement('h4'); htitle.innerHTML = '<span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions & System Info';
+  hleft.appendChild(htitle);
+  var hright = document.createElement('div'); hright.className = 'col-sm-4 text-right';
+  var hostSpan = document.createElement('div'); hostSpan.className = 'small-muted'; hostSpan.style.marginTop='8px'; hostSpan.textContent = (v.hostname?('Host: '+v.hostname):'');
+  hright.appendChild(hostSpan);
+  header.appendChild(hleft); header.appendChild(hright);
+  wrap.appendChild(header);
+
+  // Create two columns: System / Software
+  var row = document.createElement('div'); row.className = 'row';
+
+  var col1 = document.createElement('div'); col1.className = 'col-sm-6';
+  var panel1 = document.createElement('div'); panel1.className = 'panel panel-default';
+  var panel1b = document.createElement('div'); panel1b.className = 'panel-body';
+  panel1b.innerHTML = '<h5><span class="glyphicon glyphicon-hdd" aria-hidden="true"></span> System</h5>';
+  var tbl1 = document.createElement('table'); tbl1.className = 'table table-condensed';
+  function rowKV(icon, label, value) {
+    var tr = document.createElement('tr');
+    var th = document.createElement('th'); th.style.width='35%'; th.style.fontWeight='600'; th.innerHTML = (icon?('<span class="glyphicon '+icon+'" aria-hidden="true"></span> '):'') + label;
+    var td = document.createElement('td'); td.innerHTML = value===undefined || value===null ? '<span class="text-muted">-</span>' : String(value);
+    tr.appendChild(th); tr.appendChild(td); return tr;
+  }
+  tbl1.appendChild(rowKV('glyphicon-tag','System', v.system || '-'));
+  tbl1.appendChild(rowKV('glyphicon-info-sign','Model', v.model || v.product || '-'));
+  tbl1.appendChild(rowKV('glyphicon-tasks','Kernel', v.kernel || '-'));
+  tbl1.appendChild(rowKV('glyphicon-time','Uptime', v.uptime || v.uptime_str || '-'));
+  if (v.local_ips) tbl1.appendChild(rowKV('glyphicon-globe','Local IPs', Array.isArray(v.local_ips)?v.local_ips.join(', '):String(v.local_ips)));
+  panel1b.appendChild(tbl1); panel1.appendChild(panel1b); col1.appendChild(panel1);
+
+  var col2 = document.createElement('div'); col2.className = 'col-sm-6';
+  var panel2 = document.createElement('div'); panel2.className = 'panel panel-default';
+  var panel2b = document.createElement('div'); panel2b.className = 'panel-body';
+  panel2b.innerHTML = '<h5><span class="glyphicon glyphicon-cloud" aria-hidden="true"></span> Software</h5>';
+  var tbl2 = document.createElement('table'); tbl2.className = 'table table-condensed';
+  // prefer common fields
+  function addSoftRow(key, label) {
+    if (v[key] !== undefined) tbl2.appendChild(rowKV('glyphicon-cog', label||key, (typeof v[key] === 'object')?JSON.stringify(v[key]):v[key]));
+  }
+  addSoftRow('olsrd', 'OLSRd');
+  addSoftRow('olsr2', 'OLSRv2');
+  addSoftRow('firmware','Firmware');
+  addSoftRow('bmk_webstatus','BMK Webstatus');
+  addSoftRow('autoupdate','AutoUpdate');
+  // wizards may be an object/array
+  if (v.wizards) tbl2.appendChild(rowKV('glyphicon-education','Wizards', (typeof v.wizards==='object')?JSON.stringify(v.wizards):v.wizards));
+  if (v.bootimage && v.bootimage.md5) tbl2.appendChild(rowKV('glyphicon-lock','Boot image MD5', v.bootimage.md5));
+  panel2b.appendChild(tbl2); panel2.appendChild(panel2b); col2.appendChild(panel2);
+
+  row.appendChild(col1); row.appendChild(col2); wrap.appendChild(row);
+
+  // Small summary badges row
+  var badgeRow = document.createElement('div'); badgeRow.className = 'row'; badgeRow.style.marginTop='6px';
+  var brc = document.createElement('div'); brc.className = 'col-sm-12';
+  var badges = document.createElement('div');
+  function addBadge(label, val, cls) { var s = document.createElement('span'); s.className = 'label '+(cls||'label-default'); s.style.marginRight='6px'; s.textContent = label+': '+String(val); badges.appendChild(s); }
+  if (v.system) addBadge('System', v.system, 'label-primary');
+  if (v.olsrd_running !== undefined) addBadge('OLSRd', v.olsrd_running?'running':'stopped', v.olsrd_running?'label-success':'label-danger');
+  if (v.olsr2_running !== undefined) addBadge('OLSRv2', v.olsr2_running?'running':'stopped', v.olsr2_running?'label-success':'label-danger');
+  if (v.autoupdate_wizards_installed) addBadge('AutoUpdate wizards', v.autoupdate_wizards_installed, 'label-info');
+  brc.appendChild(badges); badgeRow.appendChild(brc); wrap.appendChild(badgeRow);
+
+  // Full JSON dump (collapsible)
+  var pre = document.createElement('pre'); pre.style.maxHeight='260px'; pre.style.overflow='auto'; pre.style.marginTop='10px'; pre.textContent = JSON.stringify(v,null,2);
+  wrap.appendChild(pre);
 }
 
 function sortTableByColumn(key) {
