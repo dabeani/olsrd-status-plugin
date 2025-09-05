@@ -640,41 +640,14 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
           if (gi==-1 && gw_stats_count < MAX_GW_STATS) { gi=gw_stats_count++; snprintf(gw_stats[gi].gw,sizeof(gw_stats[gi].gw),"%s",via); }
           if (gi>=0) {
             gw_stats[gi].routes++;
-            /* node name lookup: find node_db[dest]['n'] */
-            char nodename[128]="";
+            /* node name lookup: use CIDR-aware best-match from node_db */
+            char nodename[128] = "";
             int have_name = 0;
-            /* Acquire node_db under lock (may be updated asynchronously) */
-            char *nodedb_buf = NULL; size_t nodedb_len = 0;
-            if (g_nodedb_cached && g_nodedb_cached_len>0) {
+            if (g_nodedb_cached && g_nodedb_cached_len > 0) {
               pthread_mutex_lock(&g_nodedb_lock);
-              nodedb_buf = g_nodedb_cached;
-              nodedb_len = g_nodedb_cached_len;
+              if (find_best_nodename_in_nodedb(g_nodedb_cached, g_nodedb_cached_len, dest, nodename, sizeof(nodename))) have_name = 1;
               pthread_mutex_unlock(&g_nodedb_lock);
             }
-            if (nodedb_buf && nodedb_len > 0) {
-              char pattern[256]; snprintf(pattern,sizeof(pattern),"\"%s\":{", dest);
-              char *kp = strstr(nodedb_buf, pattern);
-              if (kp) {
-                char *np = strstr(kp, "\"n\":");
-                if (np && np < strstr(kp, "}")) { /* within object */
-                  np += 5; /* skip "\"n\":" */
-                  /* skip whitespace */
-                  while (*np && (*np == ' ' || *np == '\t' || *np == '\n' || *np == '\r')) np++;
-                  if (*np == '"') {
-                    char *val_start = np + 1;
-                    char *val_end = strchr(val_start, '"');
-                    if (val_end && val_end > val_start) {
-                      size_t L = (size_t)(val_end - val_start);
-                      if (L >= sizeof(nodename)) L = sizeof(nodename) - 1;
-                      memcpy(nodename, val_start, L);
-                      nodename[L] = '\0';
-                      if (nodename[0]) have_name = 1;
-                    }
-                  }
-                }
-              }
-            }
-            if (nodedb_buf && nodedb_buf != g_nodedb_cached) free(nodedb_buf);
             if (have_name) {
               /* ensure unique per gateway */
               int dup=0; for (int ni=0; ni<gw_stats[gi].name_count; ++ni) if(strcmp(gw_stats[gi].names[ni],nodename)==0){ dup=1; break; }
@@ -831,9 +804,12 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf,&len,&cap,",\"lq\":\"\",\"nlq\":\"\",\"cost\":\"\",\"routes\":\"0\",\"nodes\":\"0\",\"is_default\":false}");
       scan=r;
     }
-    json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len; return 0;
+  json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len;
+  if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
+  return 0;
   }
   json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len; return 0;
+  if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
 }
 
 /* UBNT discover output acquisition using internal discovery only */
