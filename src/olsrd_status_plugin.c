@@ -597,7 +597,8 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
         if (twohop > 0) nodes_cnt = twohop;
         if (routes_cnt == 0 && twohop > 0) routes_cnt = twohop; /* approximate */
       }
-      if (nodes_cnt == 0 && routes_cnt > 0) nodes_cnt = routes_cnt;
+  /* Use the larger of topology-derived unique nodes and route fan-out as approximation */
+  if (routes_cnt > nodes_cnt) nodes_cnt = routes_cnt;
       char routes_s[16]; snprintf(routes_s,sizeof(routes_s),"%d",routes_cnt);
       char nodes_s[16]; snprintf(nodes_s,sizeof(nodes_s),"%d",nodes_cnt);
       static char def_ip_cached[64];
@@ -1433,18 +1434,21 @@ static int h_olsr_links(http_request_t *r) {
   char *neighbors_raw=NULL; size_t nnr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr);
   char *routes_raw=NULL; size_t rr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/routes", &routes_raw,&rr);
   char *topology_raw=NULL; size_t tr=0; util_exec("/usr/bin/curl -s --max-time 1 http://127.0.0.1:9090/topology", &topology_raw,&tr);
-  char *norm_links=NULL; size_t nlinks=0; if(links_raw){
-    size_t l1=strlen(links_raw);
-    size_t l2=routes_raw?strlen(routes_raw):0;
-    size_t l3=topology_raw?strlen(topology_raw):0;
-    char *combined_raw=malloc(l1+l2+l3+16);
-    if(combined_raw){
-      size_t off=0; memcpy(combined_raw+off,links_raw,l1); off+=l1; combined_raw[off++]='\n';
-      if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; }
-      if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
-      combined_raw[off]=0;
-      if(normalize_olsrd_links(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
-      free(combined_raw);
+  char *norm_links=NULL; size_t nlinks=0; {
+    size_t l1 = links_raw?strlen(links_raw):0;
+    size_t l2 = routes_raw?strlen(routes_raw):0;
+    size_t l3 = topology_raw?strlen(topology_raw):0;
+    if (l1||l2||l3) {
+      char *combined_raw = malloc(l1+l2+l3+16);
+      if (combined_raw) {
+        size_t off=0;
+        if (l1){ memcpy(combined_raw+off,links_raw,l1); off+=l1; combined_raw[off++]='\n'; }
+        if (l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; }
+        if (l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
+        combined_raw[off]=0;
+        if(normalize_olsrd_links(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
+        free(combined_raw);
+      }
     }
   }
   char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
