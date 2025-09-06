@@ -35,6 +35,10 @@ int  http_send_file(http_request_t *r, const char *asset_root, const char *relpa
  */
 int http_allow_cidr(const char *cidr_or_addr_mask);
 int http_is_client_allowed(const char *client_ip);
+/* Clear all registered allow-list entries. Useful when env overrides should replace config. */
+void http_clear_allowlist(void);
+/* Log all currently registered allow-list entries in a user-friendly form. */
+void http_log_allowlist(void);
 #ifdef __cplusplus
 }
 #endif

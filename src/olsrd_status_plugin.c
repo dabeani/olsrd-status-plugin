@@ -2412,7 +2412,11 @@ int olsrd_plugin_init(void) {
    */
   {
   const char *env_net = getenv("OLSRD_STATUS_PLUGIN_NET");
-  if (env_net && env_net[0] && g_cfg_net_count == 0) {
+  if (env_net && env_net[0]) {
+    /* If environment-specified networks are present we treat them as authoritative
+     * and replace any PlParam-provided Net entries. */
+    http_clear_allowlist();
+    fprintf(stderr, "[status-plugin] OLSRD_STATUS_PLUGIN_NET set in environment; replacing configured Net entries\n");
       char *buf = strdup(env_net);
       if (buf) {
         char *save = NULL; char *tok = strtok_r(buf, ",; \t\n", &save);
@@ -2432,7 +2436,9 @@ int olsrd_plugin_init(void) {
         }
         free(buf);
       }
-    }
+    /* Log the allow-list we ended up with */
+    http_log_allowlist();
+  }
 
   const char *env_nodedb = getenv("OLSRD_STATUS_PLUGIN_NODEDB_URL");
   if (env_nodedb && env_nodedb[0] && !g_cfg_nodedb_url_set) {

@@ -1134,9 +1134,19 @@ function renderConnectionsTable(c, nodedb) {
     tr.appendChild(td(p.bridge || ''));
     tr.appendChild(td((p.macs || []).join('<br>')));
     tr.appendChild(td((p.ips || []).join('<br>')));
-    var hostnames = [];
-    (p.ips || []).forEach(function(ip){ if(ipToHost[ip]) hostnames.push(ipToHost[ip]); });
-    tr.appendChild(td(hostnames.join('<br>')));
+    /* Hostname: attempt reverse/hostname lookup for first IP using nodedb mapping or fallback to empty */
+    var hostnameVal = '';
+    if (p.ips && p.ips.length > 0) {
+      for (var i=0;i<p.ips.length;i++){
+        var ip = p.ips[i];
+        if (ipToHost[ip]) { hostnameVal = ipToHost[ip]; break; }
+      }
+    }
+    tr.appendChild(td(hostnameVal));
+    /* Node: show node name(s) derived from nodedb (may differ from hostname); join multiple entries */
+    var nodeNames = [];
+    (p.ips || []).forEach(function(ip){ if(ipToHost[ip] && ipToHost[ip] !== hostnameVal) nodeNames.push(ipToHost[ip]); });
+    tr.appendChild(td(nodeNames.join('<br>')));
     tbody.appendChild(tr);
   });
   var headers = document.querySelectorAll('#connectionsTable th');
@@ -1409,3 +1419,77 @@ function runTraceroute(){
     }).catch(function(){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) linkTab.parentElement.style.display='none'; if(cb) cb(false); });
   }
   detectLegacyOlsrd();
+
+// --- Per-table search & generic sorting wiring (applies to main tables, avoids modal tables) ---
+;(function(){
+  function normalizeText(s){ return (s||'').toString().toLowerCase(); }
+
+  function filterTableByQuery(table, q){
+    if (!table) return;
+    q = normalizeText(q || '');
+    var tbody = table.tBodies[0]; if(!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.rows || []);
+    rows.forEach(function(r){ var txt = normalizeText(r.textContent || ''); r.style.display = (q === '' || txt.indexOf(q) !== -1) ? '' : 'none'; });
+  }
+
+  function sortTable(table, colIndex){
+    if (!table) return;
+    var tbody = table.tBodies[0]; if(!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    var asc = true;
+    var prevIdx = table.getAttribute('data-sort-col');
+    if (prevIdx !== null && prevIdx !== undefined && String(prevIdx) === String(colIndex)) {
+      asc = table.getAttribute('data-sort-asc') !== 'true';
+    }
+    // store new state
+    table.setAttribute('data-sort-col', String(colIndex));
+    table.setAttribute('data-sort-asc', asc ? 'true' : 'false');
+
+    rows.sort(function(a,b){
+      var aCell = a.cells[colIndex] ? (a.cells[colIndex].textContent || '') : '';
+      var bCell = b.cells[colIndex] ? (b.cells[colIndex].textContent || '') : '';
+      var an = parseFloat(aCell.replace(/[^0-9\.\-]/g,''));
+      var bn = parseFloat(bCell.replace(/[^0-9\.\-]/g,''));
+      if (!isNaN(an) && !isNaN(bn)) {
+        return asc ? (an - bn) : (bn - an);
+      }
+      var av = normalizeText(aCell);
+      var bv = normalizeText(bCell);
+      if (av < bv) return asc ? -1 : 1;
+      if (av > bv) return asc ? 1 : -1;
+      return 0;
+    });
+    rows.forEach(function(r){ tbody.appendChild(r); });
+  }
+
+  // wire search inputs
+  try {
+    var inputs = document.querySelectorAll('.table-search-input');
+    inputs.forEach(function(inp){
+      var tgt = inp.getAttribute('data-target');
+      if (!tgt) return;
+      var table = document.querySelector(tgt);
+      inp.addEventListener('input', function(){ filterTableByQuery(table, inp.value); });
+    });
+  } catch(e) {}
+
+  // wire generic header sorting for non-modal tables
+  try {
+    var allTables = document.querySelectorAll('table');
+    allTables.forEach(function(table){
+      if (!table.id) return;
+      // skip modal/internal tables that already have dedicated sorting
+      if (table.id === 'route-modal-table' || table.id === 'node-modal-table') return;
+      var thead = table.tHead; if(!thead) return;
+      var ths = thead.querySelectorAll('th');
+      ths.forEach(function(th, idx){
+        // avoid overriding if an explicit onclick exists
+        if (th.getAttribute('data-key') || th.onclick) {
+          // still attach a pointer cursor for clarity
+          th.style.cursor = 'pointer';
+        }
+        th.addEventListener('click', function(){ sortTable(table, idx); });
+      });
+    });
+  } catch(e) {}
+})();

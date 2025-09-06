@@ -108,21 +108,51 @@ LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
 * `assetroot` – directory containing `www/` assets (index.html, CSS, JS).
 
 ## Environment overrides
-The plugin also accepts a small set of environment variables which, if set before the plugin is started, will override the equivalent `PlParam` values. These are useful for quick testing or when deploying the plugin from container images or scripts.
+The plugin supports a small set of environment variables that can supply runtime defaults or override configuration in specific cases. Use these from systemd unit files, container run commands, or shell wrappers.
 
-Supported variables:
+Precedence summary
+* For `port`, `nodedb_url`, `nodedb_ttl`, and `nodedb_write_disk`: configuration file `PlParam` (olsrd.conf) wins. Environment variables are used only when no `PlParam` is supplied.
+* For network allow-list (`Net`): if `OLSRD_STATUS_PLUGIN_NET` is present in the environment it is treated as authoritative and replaces any `PlParam "Net"` entries.
 
-* `OLSRD_STATUS_PLUGIN_PORT` – numeric TCP port (1-65535). If set and valid it replaces the `port` parameter.
-* `OLSRD_STATUS_PLUGIN_NET` – allow-list entries for HTTP access control; this may contain multiple entries separated by commas, semicolons or whitespace. Each token must be a CIDR (e.g. `192.168.0.0/24`) or an address/mask pair. Valid entries are registered using the plugin's allow-list logic; invalid tokens are ignored and logged.
-* `OLSRD_STATUS_PLUGIN_NODEDB_URL` – URL string for the remote node DB used to populate `nodedb.json` (overrides `nodedb_url`).
-* `OLSRD_STATUS_PLUGIN_NODEDB_TTL` – integer seconds TTL for the cached node DB (overrides `nodedb_ttl`).
-* `OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK` – integer (0 or 1) controlling whether the node DB is written to disk (overrides `nodedb_write_disk`).
+Supported environment variables
 
-Notes:
+* `OLSRD_STATUS_PLUGIN_PORT` – numeric TCP port (1-65535). Example:
 
-* Environment values are applied at plugin initialization but will only be used when the equivalent `PlParam` was not supplied in the configuration file. In other words: explicit `PlParam` values in `olsrd.conf` take precedence; environment variables act as defaults when no `PlParam` exists.
-* `OLSRD_STATUS_PLUGIN_NET` supports multiple entries in one variable (for example: `192.168.1.0/24,10.0.0.0/8`). Each valid entry is added to the HTTP allow-list. Invalid entries are ignored but logged to stderr.
-* The plugin logs overrides and invalid environment values to stderr so they are discoverable during startup.
+```bash
+export OLSRD_STATUS_PLUGIN_PORT=8080
+```
+
+* `OLSRD_STATUS_PLUGIN_NET` – allow-list entries for HTTP access control. Can contain multiple entries separated by commas, semicolons or whitespace. Each token must be a CIDR (e.g. `192.168.0.0/24`), a single address (`10.0.0.5`) or an address+mask (`192.168.0.0 255.255.252.0`). Example:
+
+```bash
+export OLSRD_STATUS_PLUGIN_NET="192.168.1.0/24,10.0.0.0/8"
+```
+
+Note: when this env var is present it replaces any `PlParam "Net"` entries from `olsrd.conf`.
+
+* `OLSRD_STATUS_PLUGIN_NODEDB_URL` – URL string for the remote node DB used to populate `nodedb.json`.
+
+```bash
+export OLSRD_STATUS_PLUGIN_NODEDB_URL="https://example.com/nodedb.json"
+```
+
+* `OLSRD_STATUS_PLUGIN_NODEDB_TTL` – integer seconds TTL for the cached node DB.
+
+```bash
+export OLSRD_STATUS_PLUGIN_NODEDB_TTL=600
+```
+
+* `OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK` – integer (0 or 1) controlling whether the node DB is written to disk.
+
+```bash
+export OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK=1
+```
+
+Logging and debugging
+
+* The plugin logs which environment values are applied or ignored during startup to stderr.
+* For verbose allow-list tracing set `OLSR_DEBUG_ALLOWLIST=1` to see per-entry add/match traces.
+* When `OLSRD_STATUS_PLUGIN_NET` is used the plugin prints a friendly list of the final allow-list entries at startup.
 
 ## Security Notes
 * Endpoint intentionally unauthenticated for embedded deployment simplicity; place behind firewall or restrict `bind` to management network if needed.

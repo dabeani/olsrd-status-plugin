@@ -1,0 +1,27 @@
+/* Custom tweaks for olsrd-status-plugin UI */
+/* Prevent very long node names from wrapping; instead allow horizontal scrolling inside the cell */
+#connectionsTable td:nth-child(7),
+#neighborsTable td:nth-child(5),
+#devicesTable td:nth-child(4) {
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Small search box container above tables */
+.table-search-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.table-search-input {
+  width: 220px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+/* Make table header clickable pointer more obvious */
+#connectionsTable th, #neighborsTable th, #devicesTable th, #olsrLinksTable th {
+  cursor: pointer;
+}

@@ -4,8 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Web Status</title>
-    <!-- Bootstrap CSS (CDN) -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css">
+  <!-- Bootstrap CSS (CDN) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css">
+  <!-- Custom tweaks -->
+  <link rel="stylesheet" href="/css/custom.css">
     <style>
   body { padding: 20px; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
   .tab-pane { display: none; }
@@ -56,6 +58,7 @@
             <dt>mgmt Devices <span class="glyphicon glyphicon-signal" aria-hidden="true"></span></dt>
             <dd>&nbsp;</dd>
           </dl>
+          <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#devicesTable" placeholder="Search..."></div>
           <div class="table-responsive">
             <table id="devicesTable" class="table table-hover table-bordered table-condensed">
               <thead>
@@ -103,6 +106,7 @@
   <div id="tab-olsr" class="tab-pane">
       <h3>OLSR Links <button id="refresh-links" class="btn btn-xs btn-default"><span class="spin" id="refresh-links-spinner"></span>Refresh</button>
             <span id="links-status" class="small-muted"></span></h3>
+          <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#olsrLinksTable" placeholder="Search..."></div>
           <div class="table-responsive">
             <table id="olsrLinksTable" class="table table-bordered table-condensed">
               <thead>
@@ -126,6 +130,7 @@
         <!-- Neighbors -->
         <div id="tab-neighbors" class="tab-pane">
           <h3>Neighbors</h3>
+          <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#neighborsTable" placeholder="Search..."></div>
           <div class="table-responsive">
             <table id="neighborsTable" class="table table-bordered table-condensed">
               <thead>
@@ -148,6 +153,7 @@
         <div id="tab-connections" class="tab-pane">
           <h3>Connections <button id="refresh-connections" class="btn btn-xs btn-default"><span class="spin" id="refresh-connections-spinner"></span>Refresh</button>
             <span id="connections-status" class="small-muted"></span></h3>
+          <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#connectionsTable" placeholder="Search..."></div>
           <div class="table-responsive">
             <table id="connectionsTable" class="table table-condensed table-striped">
               <thead>
@@ -156,7 +162,8 @@
                   <th data-key="bridge">Bridge</th>
                   <th data-key="macs">MACs</th>
                   <th data-key="ips">IPs</th>
-                  <th data-key="hostnames">Hostnames</th>
+                  <th data-key="hostname">Hostname</th>
+                  <th data-key="node">Node</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -254,6 +261,7 @@
             <button id="tr-run" class="btn btn-sm btn-primary">Run</button>
           </div>
           <pre id="p-traceroute" style="display:none;">Traceroute output will appear here</pre>
+          <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#tracerouteTable" placeholder="Search..."></div>
           <div class="table-responsive" style="margin-top:8px">
             <table id="tracerouteTable" class="table table-condensed table-striped">
               <thead>
