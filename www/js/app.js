@@ -1167,17 +1167,25 @@ function renderConnectionsTable(c, nodedb) {
       nodeNames.forEach(function(nm){ if (uniq.indexOf(nm) === -1) uniq.push(nm); });
       nodeNames = uniq;
     }
-    // Build full hostname: resolved hostname + ".<node>.funkfeuer.at" when node present
+    // Build full hostname: resolved hostname + ".<node>.wien.funkfeuer.at" when node present
     var fullHostname = (hostnameVal || '').toString();
     var primaryNode = (nodeNames && nodeNames.length) ? nodeNames[0] : '';
     // sanitize trailing dot
     if (fullHostname && fullHostname.slice(-1) === '.') fullHostname = fullHostname.slice(0, -1);
     if (primaryNode) {
-      if (fullHostname) fullHostname = fullHostname + '.' + primaryNode + '.funkfeuer.at';
-      else fullHostname = primaryNode + '.funkfeuer.at';
+      if (fullHostname) fullHostname = fullHostname + '.' + primaryNode + '.wien.funkfeuer.at';
+      else fullHostname = primaryNode + '.wien.funkfeuer.at';
     }
-    // Append Hostname first (constructed fullHostname or fallback), then Node column (node names)
-    tr.appendChild(td(fullHostname || hostnameVal || ''));
+    // Build host cell HTML: prefer clickable anchor when we have a fullHostname
+    var hostCellHtml = '';
+    if (fullHostname) {
+      // escape fullHostname minimally for href/text
+      var safeHost = String(fullHostname).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      hostCellHtml = '<a target="_blank" href="https://' + safeHost + '">' + safeHost + '</a>';
+    } else if (hostnameVal) {
+      hostCellHtml = String(hostnameVal).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    tr.appendChild(td(hostCellHtml || ''));
     tr.appendChild(td(nodeNames.join('<br>')));
     tbody.appendChild(tr);
   });
