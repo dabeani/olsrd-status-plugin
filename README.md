@@ -120,7 +120,7 @@ Supported variables:
 
 Notes:
 
-* Environment values are applied at plugin initialization and take precedence over `PlParam` values (i.e. env overrides config). If you prefer configuration file values to take precedence, tell me and I can flip the order.
+* Environment values are applied at plugin initialization but will only be used when the equivalent `PlParam` was not supplied in the configuration file. In other words: explicit `PlParam` values in `olsrd.conf` take precedence; environment variables act as defaults when no `PlParam` exists.
 * `OLSRD_STATUS_PLUGIN_NET` supports multiple entries in one variable (for example: `192.168.1.0/24,10.0.0.0/8`). Each valid entry is added to the HTTP allow-list. Invalid entries are ignored but logged to stderr.
 * The plugin logs overrides and invalid environment values to stderr so they are discoverable during startup.
 

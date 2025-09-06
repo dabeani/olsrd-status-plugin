@@ -34,6 +34,14 @@ static char   g_bind[64] = "0.0.0.0";
 static int    g_port = 11080;
 static int    g_enable_ipv6 = 0;
 static char   g_asset_root[512] = "/usr/share/olsrd-status-plugin/www";
+/* Flags to record whether a plugin parameter was supplied via PlParam
+ * If set, configuration file values take precedence over environment vars.
+ */
+static int g_cfg_port_set = 0;
+static int g_cfg_nodedb_ttl_set = 0;
+static int g_cfg_nodedb_write_disk_set = 0;
+static int g_cfg_nodedb_url_set = 0;
+static int g_cfg_net_count = 0;
 
 /* Node DB remote auto-update cache */
 static char   g_nodedb_url[512] = "https://ff.cybercomm.at/node_db.json"; /* override via plugin param nodedb_url */
@@ -2303,11 +2311,17 @@ nothing_found:
 static int set_str_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
   if (!value || !data) return 1;
   snprintf((char*)data, 511, "%s", value);
+  /* If the caller provided nodedb_url via PlParam, mark it as set */
+  if (data == g_nodedb_url) g_cfg_nodedb_url_set = 1;
   return 0;
 }
 static int set_int_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
   if (!value || !data) return 1;
   *(int*)data = atoi(value);
+  /* Track which integer config fields are explicitly set via PlParam */
+  if (data == &g_port) g_cfg_port_set = 1;
+  if (data == &g_nodedb_ttl) g_cfg_nodedb_ttl_set = 1;
+  if (data == &g_nodedb_write_disk) g_cfg_nodedb_write_disk_set = 1;
   return 0;
 }
 
@@ -2321,6 +2335,8 @@ static int set_net_param(const char *value, void *data __attribute__((unused)), 
     fprintf(stderr, "[status-plugin] invalid Net parameter: %s\n", value);
     return 1;
   }
+  /* count that at least one Net was supplied in config */
+  g_cfg_net_count++;
   return 0;
 }
 
@@ -2369,15 +2385,21 @@ int olsrd_plugin_init(void) {
    * If OLSRD_STATUS_PLUGIN_PORT is set and contains a valid port number (1-65535),
    * it will override the configured/plugin parameter value in g_port.
    */
+  /* Apply environment overrides only when the corresponding plugin parameter was not set.
+   * This lets olsrd.conf PlParam explicitly win over env vars while still allowing
+   * env vars to provide defaults when no PlParam exists.
+   */
   {
-    const char *env_port = getenv("OLSRD_STATUS_PLUGIN_PORT");
-    if (env_port && env_port[0]) {
-      char *endptr = NULL; long p = strtol(env_port, &endptr, 10);
-      if (endptr && *endptr == '\0' && p > 0 && p <= 65535) {
-        g_port = (int)p;
-        fprintf(stderr, "[status-plugin] overriding port from environment: OLSRD_STATUS_PLUGIN_PORT=%s -> %d\n", env_port, g_port);
-      } else {
-        fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_PORT value: %s (ignored)\n", env_port);
+    if (!g_cfg_port_set) {
+      const char *env_port = getenv("OLSRD_STATUS_PLUGIN_PORT");
+      if (env_port && env_port[0]) {
+        char *endptr = NULL; long p = strtol(env_port, &endptr, 10);
+        if (endptr && *endptr == '\0' && p > 0 && p <= 65535) {
+          g_port = (int)p;
+          fprintf(stderr, "[status-plugin] setting port from environment: OLSRD_STATUS_PLUGIN_PORT=%s -> %d\n", env_port, g_port);
+        } else {
+          fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_PORT value: %s (ignored)\n", env_port);
+        }
       }
     }
   }
@@ -2389,8 +2411,8 @@ int olsrd_plugin_init(void) {
    * - OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK: integer (0/1) to enable writing node DB to disk.
    */
   {
-    const char *env_net = getenv("OLSRD_STATUS_PLUGIN_NET");
-    if (env_net && env_net[0]) {
+  const char *env_net = getenv("OLSRD_STATUS_PLUGIN_NET");
+  if (env_net && env_net[0] && g_cfg_net_count == 0) {
       char *buf = strdup(env_net);
       if (buf) {
         char *save = NULL; char *tok = strtok_r(buf, ",; \t\n", &save);
@@ -2412,15 +2434,15 @@ int olsrd_plugin_init(void) {
       }
     }
 
-    const char *env_nodedb = getenv("OLSRD_STATUS_PLUGIN_NODEDB_URL");
-    if (env_nodedb && env_nodedb[0]) {
+  const char *env_nodedb = getenv("OLSRD_STATUS_PLUGIN_NODEDB_URL");
+  if (env_nodedb && env_nodedb[0] && !g_cfg_nodedb_url_set) {
       /* copy into fixed-size buffer, truncating if necessary */
       snprintf(g_nodedb_url, sizeof(g_nodedb_url), "%s", env_nodedb);
       fprintf(stderr, "[status-plugin] overriding nodedb_url from environment: %s\n", g_nodedb_url);
     }
 
-    const char *env_ttl = getenv("OLSRD_STATUS_PLUGIN_NODEDB_TTL");
-    if (env_ttl && env_ttl[0]) {
+  const char *env_ttl = getenv("OLSRD_STATUS_PLUGIN_NODEDB_TTL");
+  if (env_ttl && env_ttl[0] && !g_cfg_nodedb_ttl_set) {
       char *endptr = NULL; long t = strtol(env_ttl, &endptr, 10);
       if (endptr && *endptr == '\0' && t >= 0) {
         g_nodedb_ttl = (int)t;
@@ -2430,8 +2452,8 @@ int olsrd_plugin_init(void) {
       }
     }
 
-    const char *env_wd = getenv("OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK");
-    if (env_wd && env_wd[0]) {
+  const char *env_wd = getenv("OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK");
+  if (env_wd && env_wd[0] && !g_cfg_nodedb_write_disk_set) {
       char *endptr = NULL; long w = strtol(env_wd, &endptr, 10);
       if (endptr && *endptr == '\0' && w >= 0) {
         g_nodedb_write_disk = (int)w;
