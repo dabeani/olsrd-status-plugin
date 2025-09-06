@@ -1167,8 +1167,17 @@ function renderConnectionsTable(c, nodedb) {
       nodeNames.forEach(function(nm){ if (uniq.indexOf(nm) === -1) uniq.push(nm); });
       nodeNames = uniq;
     }
-    // Append Hostname first (resolved hostname or fallback), then Node column (node names)
-    tr.appendChild(td(hostnameVal));
+    // Build full hostname: resolved hostname + ".<node>.funkfeuer.at" when node present
+    var fullHostname = (hostnameVal || '').toString();
+    var primaryNode = (nodeNames && nodeNames.length) ? nodeNames[0] : '';
+    // sanitize trailing dot
+    if (fullHostname && fullHostname.slice(-1) === '.') fullHostname = fullHostname.slice(0, -1);
+    if (primaryNode) {
+      if (fullHostname) fullHostname = fullHostname + '.' + primaryNode + '.funkfeuer.at';
+      else fullHostname = primaryNode + '.funkfeuer.at';
+    }
+    // Append Hostname first (constructed fullHostname or fallback), then Node column (node names)
+    tr.appendChild(td(fullHostname || hostnameVal || ''));
     tr.appendChild(td(nodeNames.join('<br>')));
     tbody.appendChild(tr);
   });
