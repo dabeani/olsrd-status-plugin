@@ -25,3 +25,6 @@
 #connectionsTable th, #neighborsTable th, #devicesTable th, #olsrLinksTable th {
   cursor: pointer;
 }
+
+/* small sort mark (▲/▼) */
+.sort-mark { font-size: 11px; color: #666; }

@@ -1108,22 +1108,26 @@ function renderConnectionsTable(c, nodedb) {
   tbody.innerHTML = '';
   if (!c || !c.ports) return;
   // Build simple IP->hostname map if nodedb given as array
+  // Build IP -> { hostname, node, any } mapping to allow separating hostname vs node name
   var ipToHost = {};
   if (nodedb) {
     if (Array.isArray(nodedb)) {
       nodedb.forEach(function(entry){
-        if(!entry) return;
+        if (!entry) return;
         var ip = entry.ipv4 || entry.ip || '';
-        if(!ip) return;
-        var h = entry.hostname || entry.name || entry.n; /* accept 'n' from external node_db */
-        if (h) ipToHost[ip] = h;
+        if (!ip) return;
+        var hostname = entry.hostname || '';
+        var node = entry.name || entry.n || '';
+        var any = hostname || node || '';
+        ipToHost[ip] = { hostname: hostname, node: node, any: any };
       });
     } else if (typeof nodedb === 'object') {
       Object.keys(nodedb).forEach(function(k){
-        var v = nodedb[k];
-        if(!v) return;
-        var h = v.hostname || v.name || v.n; /* accept 'n' */
-        if (h) ipToHost[k] = h;
+        var v = nodedb[k]; if (!v) return;
+        var hostname = v.hostname || '';
+        var node = v.name || v.n || '';
+        var any = hostname || node || '';
+        ipToHost[k] = { hostname: hostname, node: node, any: any };
       });
     }
   }
@@ -1134,18 +1138,32 @@ function renderConnectionsTable(c, nodedb) {
     tr.appendChild(td(p.bridge || ''));
     tr.appendChild(td((p.macs || []).join('<br>')));
     tr.appendChild(td((p.ips || []).join('<br>')));
-    /* Hostname: attempt reverse/hostname lookup for first IP using nodedb mapping or fallback to empty */
+    /* Resolve Hostname and Node separately from nodedb mapping (prefer explicit hostname field) */
     var hostnameVal = '';
+    var nodeNames = [];
     if (p.ips && p.ips.length > 0) {
-      for (var i=0;i<p.ips.length;i++){
-        var ip = p.ips[i];
-        if (ipToHost[ip]) { hostnameVal = ipToHost[ip]; break; }
+      p.ips.forEach(function(ip){
+        var m = ipToHost[ip];
+        if (!m) return;
+        // prefer an explicit hostname for the Hostname column
+        if (!hostnameVal && m.hostname) hostnameVal = m.hostname;
+        // collect node names (if present)
+        if (m.node) nodeNames.push(m.node);
+        // if no explicit node name but we have a hostname and no hostnameVal yet, fallback will have used it
+      });
+      // if we still have no hostnameVal but some mapping exists, fallback to first available 'any' value
+      if (!hostnameVal) {
+        for (var ii=0; ii<p.ips.length; ii++) { var mm = ipToHost[p.ips[ii]]; if (mm && mm.any) { hostnameVal = mm.any; break; } }
       }
     }
+    // dedupe nodeNames
+    if (nodeNames.length) {
+      var uniq = [];
+      nodeNames.forEach(function(nm){ if (uniq.indexOf(nm) === -1) uniq.push(nm); });
+      nodeNames = uniq;
+    }
+    // Append Hostname first (resolved hostname or fallback), then Node column (node names)
     tr.appendChild(td(hostnameVal));
-    /* Node: show node name(s) derived from nodedb (may differ from hostname); join multiple entries */
-    var nodeNames = [];
-    (p.ips || []).forEach(function(ip){ if(ipToHost[ip] && ipToHost[ip] !== hostnameVal) nodeNames.push(ipToHost[ip]); });
     tr.appendChild(td(nodeNames.join('<br>')));
     tbody.appendChild(tr);
   });
@@ -1460,6 +1478,15 @@ function runTraceroute(){
       return 0;
     });
     rows.forEach(function(r){ tbody.appendChild(r); });
+    // update header indicators
+    try {
+      var ths = table.tHead.querySelectorAll('th');
+      ths.forEach(function(th, i){
+        var mark = th.querySelector('.sort-mark'); if (!mark) { mark = document.createElement('span'); mark.className='sort-mark'; mark.style.marginLeft='6px'; mark.textContent='↕'; th.appendChild(mark); }
+        if (i === colIndex) { mark.textContent = table.getAttribute('data-sort-asc') === 'true' ? '▲' : '▼'; }
+        else { mark.textContent = '↕'; }
+      });
+    } catch(e) {}
   }
 
   // wire search inputs
@@ -1483,11 +1510,10 @@ function runTraceroute(){
       var thead = table.tHead; if(!thead) return;
       var ths = thead.querySelectorAll('th');
       ths.forEach(function(th, idx){
-        // avoid overriding if an explicit onclick exists
-        if (th.getAttribute('data-key') || th.onclick) {
-          // still attach a pointer cursor for clarity
-          th.style.cursor = 'pointer';
-        }
+        // attach pointer cursor
+        th.style.cursor = 'pointer';
+  // ensure a small sort mark element exists (default hint '↕')
+  if (!th.querySelector('.sort-mark')) { var sm = document.createElement('span'); sm.className='sort-mark'; sm.style.marginLeft='6px'; sm.textContent='↕'; th.appendChild(sm); }
         th.addEventListener('click', function(){ sortTable(table, idx); });
       });
     });
