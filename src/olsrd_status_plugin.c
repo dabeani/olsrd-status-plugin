@@ -64,6 +64,7 @@ char g_olsrd_path[PATHLEN] = "";
 static int h_root(http_request_t *r);
 static int h_ipv4(http_request_t *r); static int h_ipv6(http_request_t *r);
 static int h_status(http_request_t *r); static int h_status_summary(http_request_t *r); static int h_status_olsr(http_request_t *r); static int h_status_lite(http_request_t *r);
+static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
 static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
@@ -1976,6 +1977,32 @@ static int h_nodedb_refresh(http_request_t *r) {
   return 0;
 }
 
+/* /status.py dispatch endpoint: map ?get=<name> to existing handlers without reimplementing them */
+static int h_status_py(http_request_t *r) {
+  char v[128] = "";
+  if (!get_query_param(r, "get", v, sizeof(v))) {
+    /* default to full status */
+    return h_status(r);
+  }
+  /* Map known values (match bmk-webstatus.py supported ?get values) */
+  if (strcmp(v, "status") == 0) return h_status(r);
+  if (strcmp(v, "connections") == 0) return h_connections(r);
+  if (strcmp(v, "discover") == 0) return h_discover(r);
+  if (strcmp(v, "airos") == 0) return h_airos(r);
+  if (strcmp(v, "ipv6") == 0) return h_ipv6(r);
+  if (strcmp(v, "ipv4") == 0) return h_ipv4(r);
+  if (strcmp(v, "olsrd") == 0) return h_olsrd(r);
+  if (strcmp(v, "jsoninfo") == 0) return h_jsoninfo(r);
+  if (strcmp(v, "txtinfo") == 0) return h_txtinfo(r);
+  if (strcmp(v, "traffic") == 0) return h_traffic(r);
+  if (strcmp(v, "test") == 0) {
+    /* no equivalent h_test handler in plugin; emulate small test output */
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: text/plain; charset=utf-8\r\n\r\n"); http_printf(r,"test\n"); return 0;
+  }
+  /* unknown -> default to full status to preserve backward compatibility */
+  return h_status(r);
+}
+
 /* capabilities endpoint */
 /* forward-declare globals used by capabilities endpoint (defined later) */
 extern int g_is_edgerouter;
@@ -2482,6 +2509,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/summary", &h_status_summary);
   http_server_register_handler("/status/olsr", &h_status_olsr);
   http_server_register_handler("/status/lite", &h_status_lite);
+  http_server_register_handler("/status.py", &h_status_py);
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
