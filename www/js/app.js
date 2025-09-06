@@ -1116,17 +1116,22 @@ function renderConnectionsTable(c, nodedb) {
         if (!entry) return;
         var ip = entry.ipv4 || entry.ip || '';
         if (!ip) return;
-        var hostname = entry.hostname || '';
-        var node = entry.name || entry.n || '';
-        var any = hostname || node || '';
+  // nodedb array entries may provide device/name/id fields.
+  // Prefer device (d) or hostname field for the Hostname column,
+  // and the node/group name (n or name) for the Node column.
+  var hostname = entry.d || entry.hostname || entry.h || '';
+  var node = entry.name || entry.n || '';
+  var any = hostname || node || entry.m || '';
         ipToHost[ip] = { hostname: hostname, node: node, any: any };
       });
     } else if (typeof nodedb === 'object') {
       Object.keys(nodedb).forEach(function(k){
         var v = nodedb[k]; if (!v) return;
-        var hostname = v.hostname || '';
+        // The live nodedb uses keys like 'n' (node name), 'd' (device/hostname),
+        // 'h' (host hint) and 'm' (master). Prefer device/host fields for Hostname.
+        var hostname = v.d || v.hostname || v.h || '';
         var node = v.name || v.n || '';
-        var any = hostname || node || '';
+        var any = hostname || node || v.m || '';
         ipToHost[k] = { hostname: hostname, node: node, any: any };
       });
     }
