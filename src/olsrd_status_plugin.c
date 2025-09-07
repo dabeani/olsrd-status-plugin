@@ -162,14 +162,46 @@ static int g_fetch_worker_running = 0;
 static int g_fetch_wait_timeout = 30;
 
 /* Debug counters for diagnostics */
+/* Debug counters for diagnostics: use C11 atomics when available for lock-free updates */
+#if HAVE_C11_ATOMICS
+static _Atomic unsigned long atom_debug_enqueue_count = 0;
+static _Atomic unsigned long atom_debug_enqueue_count_nodedb = 0;
+static _Atomic unsigned long atom_debug_enqueue_count_discover = 0;
+static _Atomic unsigned long atom_debug_processed_count = 0;
+static _Atomic unsigned long atom_debug_processed_count_nodedb = 0;
+static _Atomic unsigned long atom_debug_processed_count_discover = 0;
+#define DEBUG_INC_ENQUEUED() atomic_fetch_add_explicit(&atom_debug_enqueue_count, 1UL, memory_order_relaxed)
+#define DEBUG_INC_ENQUEUED_NODEDB() atomic_fetch_add_explicit(&atom_debug_enqueue_count_nodedb, 1UL, memory_order_relaxed)
+#define DEBUG_INC_ENQUEUED_DISCOVER() atomic_fetch_add_explicit(&atom_debug_enqueue_count_discover, 1UL, memory_order_relaxed)
+#define DEBUG_INC_PROCESSED() atomic_fetch_add_explicit(&atom_debug_processed_count, 1UL, memory_order_relaxed)
+#define DEBUG_INC_PROCESSED_NODEDB() atomic_fetch_add_explicit(&atom_debug_processed_count_nodedb, 1UL, memory_order_relaxed)
+#define DEBUG_INC_PROCESSED_DISCOVER() atomic_fetch_add_explicit(&atom_debug_processed_count_discover, 1UL, memory_order_relaxed)
+#define DEBUG_LOAD_ALL(e,en,ed,p,pn,pd) do { \
+    e = atomic_load_explicit(&atom_debug_enqueue_count, memory_order_relaxed); \
+    en = atomic_load_explicit(&atom_debug_enqueue_count_nodedb, memory_order_relaxed); \
+    ed = atomic_load_explicit(&atom_debug_enqueue_count_discover, memory_order_relaxed); \
+    p = atomic_load_explicit(&atom_debug_processed_count, memory_order_relaxed); \
+    pn = atomic_load_explicit(&atom_debug_processed_count_nodedb, memory_order_relaxed); \
+    pd = atomic_load_explicit(&atom_debug_processed_count_discover, memory_order_relaxed); \
+  } while(0)
+#else
 static unsigned long g_debug_enqueue_count = 0;
-/* per-type enqueue counters */
 static unsigned long g_debug_enqueue_count_nodedb = 0;
 static unsigned long g_debug_enqueue_count_discover = 0;
 static unsigned long g_debug_processed_count = 0;
-/* per-type processed counters */
 static unsigned long g_debug_processed_count_nodedb = 0;
 static unsigned long g_debug_processed_count_discover = 0;
+#define DEBUG_INC_ENQUEUED() (g_debug_enqueue_count++)
+#define DEBUG_INC_ENQUEUED_NODEDB() (g_debug_enqueue_count_nodedb++)
+#define DEBUG_INC_ENQUEUED_DISCOVER() (g_debug_enqueue_count_discover++)
+#define DEBUG_INC_PROCESSED() (g_debug_processed_count++)
+#define DEBUG_INC_PROCESSED_NODEDB() (g_debug_processed_count_nodedb++)
+#define DEBUG_INC_PROCESSED_DISCOVER() (g_debug_processed_count_discover++)
+#define DEBUG_LOAD_ALL(e,en,ed,p,pn,pd) do { \
+    e = g_debug_enqueue_count; en = g_debug_enqueue_count_nodedb; ed = g_debug_enqueue_count_discover; \
+    p = g_debug_processed_count; pn = g_debug_processed_count_nodedb; pd = g_debug_processed_count_discover; \
+  } while(0)
+#endif
 static char g_debug_last_fetch_msg[256] = "";
 
 /* Queue / retry tunables */
@@ -456,9 +488,9 @@ static void enqueue_fetch_request(int force, int wait, int type) {
   if (g_fetch_q_tail) g_fetch_q_tail->next = rq; else g_fetch_q_head = rq;
   g_fetch_q_tail = rq;
   /* update enqueue debug counter while holding queue lock */
-  g_debug_enqueue_count++;
-  if (rq->type & FETCH_TYPE_NODEDB) g_debug_enqueue_count_nodedb++;
-  if (rq->type & FETCH_TYPE_DISCOVER) g_debug_enqueue_count_discover++;
+  DEBUG_INC_ENQUEUED();
+  if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_ENQUEUED_NODEDB();
+  if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_ENQUEUED_DISCOVER();
   pthread_cond_signal(&g_fetch_q_cv);
   fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
   pthread_mutex_unlock(&g_fetch_q_lock);
@@ -528,11 +560,10 @@ static void *fetch_worker_thread(void *arg) {
     if (!rq) continue;
 
   /* update processed counters in a thread-safe way */
-  pthread_mutex_lock(&g_fetch_q_lock);
-  g_debug_processed_count++;
-  if (rq->type & FETCH_TYPE_NODEDB) g_debug_processed_count_nodedb++;
-  if (rq->type & FETCH_TYPE_DISCOVER) g_debug_processed_count_discover++;
-  pthread_mutex_unlock(&g_fetch_q_lock);
+  /* increment processed counters (use macros that may be atomic) */
+  DEBUG_INC_PROCESSED();
+  if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_PROCESSED_NODEDB();
+  if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_PROCESSED_DISCOVER();
   fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
     /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
      * same retry/backoff logic so they benefit from the same robustness.
@@ -3045,7 +3076,9 @@ static int h_fetch_debug(http_request_t *r) {
     len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
     it = it->next;
   }
-  len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\"}}", g_debug_enqueue_count, g_debug_enqueue_count_nodedb, g_debug_enqueue_count_discover, g_debug_processed_count, g_debug_processed_count_nodedb, g_debug_processed_count_discover, g_debug_last_fetch_msg);
+  unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
+  DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
+  len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\"}}", _de, _den, _ded, _dp, _dpn, _dpd, g_debug_last_fetch_msg);
   pthread_mutex_unlock(&g_fetch_q_lock);
   send_json(r, buf);
   free(buf);
