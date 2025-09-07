@@ -139,10 +139,15 @@ static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
 #endif
 
 /* Simple fetch queue structures */
+/* fetch request types (bitmask) */
+#define FETCH_TYPE_NODEDB   0x1
+#define FETCH_TYPE_DISCOVER 0x2
+
 struct fetch_req {
   int force; /* bypass TTL */
   int wait;  /* block caller until done */
   int done;
+  int type;  /* FETCH_TYPE_* */
   pthread_mutex_t m;
   pthread_cond_t  cv;
   struct fetch_req *next;
@@ -258,7 +263,7 @@ static void *fetch_reporter(void *arg) {
 static void enqueue_fetch_request(int force, int wait) {
   struct fetch_req *rq = calloc(1, sizeof(*rq));
   if (!rq) return;
-  rq->force = force; rq->wait = wait; rq->done = 0; rq->next = NULL;
+  rq->force = force; rq->wait = wait; rq->done = 0; rq->type = FETCH_TYPE_NODEDB; rq->next = NULL;
   pthread_mutex_init(&rq->m, NULL); pthread_cond_init(&rq->cv, NULL);
 
   pthread_mutex_lock(&g_fetch_q_lock);
@@ -281,24 +286,18 @@ static void enqueue_fetch_request(int force, int wait) {
 
   /* Queue size limiting: if full, either perform a synchronous fetch for waiters or drop the request */
   if (qlen >= g_fetch_queue_max) {
-    pthread_mutex_unlock(&g_fetch_q_lock);
     if (wait) {
-      /* Synchronous fallback: perform fetch inline so caller sees result immediately. Protect with fetch_in_progress guard. */
-      pthread_mutex_lock(&g_nodedb_fetch_lock);
-      while (g_nodedb_fetch_in_progress) pthread_cond_wait(&g_nodedb_fetch_cv, &g_nodedb_fetch_lock);
-      g_nodedb_fetch_in_progress = 1;
-      pthread_mutex_unlock(&g_nodedb_fetch_lock);
-      /* perform canonical fetch once */
+      /* Caller requested to block; perform a synchronous fetch inline to satisfy them. */
+      pthread_mutex_unlock(&g_fetch_q_lock);
       fetch_remote_nodedb();
-      /* fetch_remote_nodedb clears g_nodedb_fetch_in_progress and broadcasts */
       pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
       return;
     }
+    /* Drop non-waiting requests when the queue is full */
     METRIC_INC_DROPPED();
-    {
-      unsigned long td, tr, ts; METRIC_LOAD_ALL(td, tr, ts);
-      fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
-    }
+    unsigned long td, tr, ts; METRIC_LOAD_ALL(td, tr, ts);
+    fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
+    pthread_mutex_unlock(&g_fetch_q_lock);
     pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
   }
@@ -318,6 +317,29 @@ static void enqueue_fetch_request(int force, int wait) {
   }
 }
 
+/* Perform a single discovery pass (called from fetch worker context). This mirrors the
+ * previous inline logic but runs inside the fetch worker so discovery is serialized
+ * with node_db fetches and benefits from backoff/retries if desired.
+ */
+static void fetch_discover_once(void) {
+  char *ud = NULL; size_t udn = 0;
+  if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
+    char *normalized = NULL; size_t nlen = 0;
+    if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
+      /* transform to legacy to keep h_status_compat expectations */
+      char *legacy = NULL; size_t legacy_len = 0;
+      if (transform_devices_to_legacy(normalized, &legacy, &legacy_len) == 0 && legacy) {
+        pthread_mutex_lock(&g_devices_cache_lock);
+        if (g_devices_cache) free(g_devices_cache);
+        g_devices_cache = legacy; g_devices_cache_len = legacy_len; g_devices_cache_ts = time(NULL);
+        pthread_mutex_unlock(&g_devices_cache_lock);
+      } else { if (legacy) free(legacy); }
+      free(normalized);
+    }
+  }
+  if (ud) free(ud);
+}
+
 static void *fetch_worker_thread(void *arg) {
   (void)arg;
   while (g_fetch_worker_running) {
@@ -331,27 +353,36 @@ static void *fetch_worker_thread(void *arg) {
     pthread_mutex_unlock(&g_fetch_q_lock);
     if (!rq) continue;
 
-    /* Process the request by invoking the canonical fetch path with retries/backoff. */
+    /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
+     * same retry/backoff logic so they benefit from the same robustness.
+     */
     int attempt;
     int succeeded = 0;
-  for (attempt = 0; attempt < g_fetch_retries; ++attempt) {
-      /* Wait for any in-progress fetch to finish, then mark in-progress and call the fetch */
+    for (attempt = 0; attempt < g_fetch_retries; ++attempt) {
+      /* Ensure only one fetch-like action runs at a time (protects shared resources) */
       pthread_mutex_lock(&g_nodedb_fetch_lock);
       while (g_nodedb_fetch_in_progress) pthread_cond_wait(&g_nodedb_fetch_cv, &g_nodedb_fetch_lock);
       g_nodedb_fetch_in_progress = 1;
       pthread_mutex_unlock(&g_nodedb_fetch_lock);
 
-      time_t prev = g_nodedb_last_fetch;
-      fetch_remote_nodedb();
-      /* If fetch_remote_nodedb updated the last_fetch timestamp we consider it a success */
-      if (g_nodedb_last_fetch > prev) { succeeded = 1; break; }
+      if (rq->type & FETCH_TYPE_DISCOVER) {
+        /* discovery action */
+        time_t prev = g_devices_cache_ts;
+        fetch_discover_once();
+        if (g_devices_cache_ts > prev) { succeeded = 1; break; }
+      } else {
+        /* default: node_db fetch */
+        time_t prev = g_nodedb_last_fetch;
+        fetch_remote_nodedb();
+        if (g_nodedb_last_fetch > prev) { succeeded = 1; break; }
+      }
 
       /* Backoff before next attempt (if any) */
-  METRIC_INC_RETRIES();
-  if (attempt + 1 < g_fetch_retries) sleep(g_fetch_backoff_initial << attempt);
+      METRIC_INC_RETRIES();
+      if (attempt + 1 < g_fetch_retries) sleep(g_fetch_backoff_initial << attempt);
     }
 
-  if (succeeded) { METRIC_INC_SUCCESS(); }
+    if (succeeded) { METRIC_INC_SUCCESS(); }
 
   /* Notify any waiter(s) attached to this request */
     pthread_mutex_lock(&rq->m);

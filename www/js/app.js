@@ -1298,12 +1298,21 @@ function populateNavHost(host, ip) {
       // prefer the immediate parent so we keep styling wrappers
       if (iconElem.parentNode && iconElem.parentNode.outerHTML) iconHtml = iconElem.parentNode.outerHTML; else iconHtml = iconElem.outerHTML || '';
     }
-  // Always show OLSRD IP prefix followed by the node FQDN. If IP absent, leave blank after prefix.
-  var ipPart = (ip ? (ip) : '');
-  var newInner = '';
-  // prefix label (explicit "OLSRDIP - ")
-  var prefixLabel = 'OLSRDIP - ';
-  newInner = prefixLabel + (ipPart ? (ipPart + ' ') : '') + (iconHtml || '') + '<span id="hostname">' + (host || '') + '</span>';
+    // Show IP then hostname; if the hostname contains the literal token 'nodename'
+    // try to replace it with the real nodename from the cached nodedb (if available).
+    var ipPart = (ip ? ip : '');
+    var displayHost = (host || '');
+    try {
+      if (ipPart && window._nodedb_cache && window._nodedb_cache[ipPart] && window._nodedb_cache[ipPart].n) {
+        var realNode = window._nodedb_cache[ipPart].n;
+        if (realNode && typeof displayHost === 'string') {
+          displayHost = displayHost.replace(/\bnodename\b/g, realNode);
+        }
+      }
+    } catch(e) { /* ignore lookup errors */ }
+
+    var newInner = '';
+    newInner = (ipPart ? (ipPart + ' ') : '') + (iconHtml || '') + '<span id="hostname">' + (displayHost || '') + '</span>';
     // Replace contents atomically
     el.innerHTML = newInner;
   } catch (e) {
