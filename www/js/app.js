@@ -711,8 +711,8 @@ function populateFetchStats(fs) {
       if (dl && dl.parentNode) dl.parentNode.insertBefore(container, dl.nextSibling);
       else tab.insertBefore(container, tab.firstChild);
     }
-    if (!fs || (typeof fs === 'object' && Object.keys(fs).length === 0)) { container.style.display = 'none'; return; }
-    container.style.display = '';
+  if (!fs || (typeof fs === 'object' && Object.keys(fs).length === 0)) { container.style.display = 'none'; return; }
+  container.style.display = '';
 
     // Normalize likely field names from backend
     var queued = fs.queued_count || fs.queue_length || fs.queue_len || fs.queued || 0;
@@ -776,13 +776,11 @@ function populateFetchStats(fs) {
   var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
   // single progress bar (controls live in the header to avoid duplicate IDs)
   html += '<div class="progress" style="height:16px; margin-bottom:6px">';
-  html += '<div class="progress-bar '+progClass+'" role="progressbar" aria-valuenow="'+pct+'" aria-valuemin="0" aria-valuemax="100" style="width:'+pct+'%;">';
+  html += '<div class="progress-bar '+progClass+'" role="progressbar" aria-valuenow="'+pct+'" aria-valuemin="0" aria-valuemax="100" style="width:'+pct+'%;">'; // close left column only
   html += '</div></div>';
   html += '<div style="margin-top:4px">'+pct+'%</div>';
-    html += '</div></div>';
-    html += '<div class="small-muted">Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn+'</div>';
-    html += '</div>';
-    // right: small table with values
+    html += '</div>'; // close left column
+    // right: small table with values (inside same row)
     html += '<div class="col-xs-4">';
     html += '<table class="table table-condensed" style="margin:0">';
     html += '<tbody>';
@@ -793,10 +791,11 @@ function populateFetchStats(fs) {
     html += '<tr><th>Processed</th><td>'+processed+'</td></tr>';
     html += '<tr><th>Successes</th><td>'+successes+'</td></tr>';
     html += '</tbody></table>';
-    html += '</div>'; // col
-    html += '</div>'; // row
-    html += '</div>'; // panel-body
-    html += '</div>'; // panel
+  html += '</div>'; // col
+  html += '</div>'; // row
+  html += '<div class="small-muted">Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn+'</div>';
+  html += '</div>'; // panel-body
+  html += '</div>'; // panel
 
     container.innerHTML = html;
 
