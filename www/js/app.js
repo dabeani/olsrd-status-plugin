@@ -190,6 +190,35 @@ function setText(id, text) {
     } else {
       el.innerHTML = text;
     }
+    // If we're setting the hostname, attempt to replace the literal token 'nodename'
+    // with the real nodename from the cached nodedb (if available). This ensures
+    // any codepath that writes the hostname benefits from enrichment.
+    try {
+      if (id === 'hostname' && text && typeof text === 'string' && /\bnodename\b/.test(text)) {
+        var ip = '';
+        var ipEl = document.getElementById('ip');
+        if (ipEl && ipEl.textContent) ip = ipEl.textContent.trim();
+        if (!ip) {
+          // fallback: try to extract first token from nav-host which usually starts with IP
+          var nav = document.getElementById('nav-host');
+          if (nav && nav.textContent) {
+            var tok = nav.textContent.trim().split(/\s+/)[0];
+            if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tok)) ip = tok;
+          }
+        }
+        if (ip && window._nodedb_cache && window._nodedb_cache[ip] && window._nodedb_cache[ip].n) {
+          var real = window._nodedb_cache[ip].n;
+          if (real) {
+            // only replace whole-word occurrences of 'nodename'
+            var newText = text.replace(/\bnodename\b/g, real);
+            // write back preserving textContent/innerText/innerHTML whichever was used
+            if (typeof el.textContent !== 'undefined') el.textContent = newText;
+            else if (typeof el.innerText !== 'undefined') el.innerText = newText;
+            else el.innerHTML = newText;
+          }
+        }
+      }
+    } catch (e) { /* ignore enrichment errors */ }
   }
 }
 
