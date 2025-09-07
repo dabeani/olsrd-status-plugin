@@ -190,6 +190,8 @@ static int transform_devices_to_legacy(const char *devices_json, char **out, siz
 static void get_primary_ipv4(char *out, size_t outlen);
 static int buffer_has_content(const char *b, size_t n);
 static int validate_nodedb_json(const char *buf, size_t len);
+/* forward-declare cached helper and mark unused to avoid warning when not referenced */
+static void get_primary_ipv4_cached(char *out, size_t outlen) __attribute__((unused));
 
 /* Small helper: append formatted text directly into growing buffer to avoid asprintf churn */
 static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
@@ -198,7 +200,14 @@ static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const cha
   va_start(ap, fmt);
   va_list ap2;
   va_copy(ap2, ap);
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
   int needed = vsnprintf(NULL, 0, fmt, ap2);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
   va_end(ap2);
   if (needed < 0) { va_end(ap); return -1; }
   size_t need_total = *lenptr + (size_t)needed + 1;
@@ -209,7 +218,14 @@ static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const cha
     if (!nb) { va_end(ap); return -1; }
     *bufptr = nb; *capptr = nc;
   }
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
   vsnprintf((*bufptr) + *lenptr, (size_t)needed + 1, fmt, ap);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
   *lenptr += (size_t)needed;
   (*bufptr)[*lenptr] = '\0';
   va_end(ap);
@@ -277,6 +293,7 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
 #define util_http_get_url_local(url,out,outlen,timeout_sec) cached_util_http_get_url_local(url,out,outlen,timeout_sec)
 
 /* Cache primary IPv4 for short TTL to avoid repeated getifaddrs */
+static void get_primary_ipv4_cached(char *out, size_t outlen);
 static void get_primary_ipv4_cached(char *out, size_t outlen) {
   static char cached[128] = "";
   static time_t ts = 0;
@@ -3698,6 +3715,7 @@ static void ringbuf_push(const char *s) {
 }
 
 static void *stderr_reader_thread(void *arg) {
+  (void)arg;
   int fd = g_stderr_pipe_rd;
   char inbuf[1024]; char line[LOG_LINE_MAX]; size_t lp = 0;
   g_stderr_thread_running = 1;
