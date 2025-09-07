@@ -163,7 +163,13 @@ static int g_fetch_wait_timeout = 30;
 
 /* Debug counters for diagnostics */
 static unsigned long g_debug_enqueue_count = 0;
+/* per-type enqueue counters */
+static unsigned long g_debug_enqueue_count_nodedb = 0;
+static unsigned long g_debug_enqueue_count_discover = 0;
 static unsigned long g_debug_processed_count = 0;
+/* per-type processed counters */
+static unsigned long g_debug_processed_count_nodedb = 0;
+static unsigned long g_debug_processed_count_discover = 0;
 static char g_debug_last_fetch_msg[256] = "";
 
 /* Queue / retry tunables */
@@ -451,6 +457,8 @@ static void enqueue_fetch_request(int force, int wait, int type) {
   g_fetch_q_tail = rq;
   /* update enqueue debug counter while holding queue lock */
   g_debug_enqueue_count++;
+  if (rq->type & FETCH_TYPE_NODEDB) g_debug_enqueue_count_nodedb++;
+  if (rq->type & FETCH_TYPE_DISCOVER) g_debug_enqueue_count_discover++;
   pthread_cond_signal(&g_fetch_q_cv);
   fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
   pthread_mutex_unlock(&g_fetch_q_lock);
@@ -519,7 +527,12 @@ static void *fetch_worker_thread(void *arg) {
     pthread_mutex_unlock(&g_fetch_q_lock);
     if (!rq) continue;
 
+  /* update processed counters in a thread-safe way */
+  pthread_mutex_lock(&g_fetch_q_lock);
   g_debug_processed_count++;
+  if (rq->type & FETCH_TYPE_NODEDB) g_debug_processed_count_nodedb++;
+  if (rq->type & FETCH_TYPE_DISCOVER) g_debug_processed_count_discover++;
+  pthread_mutex_unlock(&g_fetch_q_lock);
   fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
     /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
      * same retry/backoff logic so they benefit from the same robustness.
@@ -3032,7 +3045,7 @@ static int h_fetch_debug(http_request_t *r) {
     len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
     it = it->next;
   }
-  len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"processed\":%lu,\"last_fetch_msg\":\"%s\"}}", g_debug_enqueue_count, g_debug_processed_count, g_debug_last_fetch_msg);
+  len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\"}}", g_debug_enqueue_count, g_debug_enqueue_count_nodedb, g_debug_enqueue_count_discover, g_debug_processed_count, g_debug_processed_count_nodedb, g_debug_processed_count_discover, g_debug_last_fetch_msg);
   pthread_mutex_unlock(&g_fetch_q_lock);
   send_json(r, buf);
   free(buf);
