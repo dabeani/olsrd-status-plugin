@@ -188,6 +188,121 @@ static void get_primary_ipv4(char *out, size_t outlen);
 static int buffer_has_content(const char *b, size_t n);
 static int validate_nodedb_json(const char *buf, size_t len);
 
+/* Small helper: append formatted text directly into growing buffer to avoid asprintf churn */
+static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
+  if (!bufptr || !lenptr || !capptr || !fmt) return -1;
+  va_list ap;
+  va_start(ap, fmt);
+  va_list ap2;
+  va_copy(ap2, ap);
+  int needed = vsnprintf(NULL, 0, fmt, ap2);
+  va_end(ap2);
+  if (needed < 0) { va_end(ap); return -1; }
+  size_t need_total = *lenptr + (size_t)needed + 1;
+  if (need_total > *capptr) {
+    size_t nc = *capptr ? *capptr : 1024;
+    while (nc < need_total) nc *= 2;
+    char *nb = realloc(*bufptr, nc);
+    if (!nb) { va_end(ap); return -1; }
+    *bufptr = nb; *capptr = nc;
+  }
+  vsnprintf((*bufptr) + *lenptr, (size_t)needed + 1, fmt, ap);
+  *lenptr += (size_t)needed;
+  (*bufptr)[*lenptr] = '\0';
+  va_end(ap);
+  return 0;
+}
+
+/* Global short-lived cache for local HTTP calls (thread-safe, small TTL) */
+#define LOCAL_CACHE_ENTRIES 64
+#define LOCAL_CACHE_TTL_SEC 1
+typedef struct { char *url; char *body; size_t len; time_t ts; } local_cache_entry_t;
+static local_cache_entry_t g_local_cache[LOCAL_CACHE_ENTRIES];
+static pthread_mutex_t g_local_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int cached_util_http_get_url_local(const char *url, char **out, size_t *outlen, int timeout_sec) {
+  if (!url || !out || !outlen) return -1;
+  time_t nowt = time(NULL);
+  pthread_mutex_lock(&g_local_cache_lock);
+  for (int i = 0; i < LOCAL_CACHE_ENTRIES; ++i) {
+    if (g_local_cache[i].url && strcmp(g_local_cache[i].url, url) == 0) {
+      if (nowt - g_local_cache[i].ts <= LOCAL_CACHE_TTL_SEC) {
+        *out = malloc(g_local_cache[i].len + 1);
+        if (!*out) { pthread_mutex_unlock(&g_local_cache_lock); return -1; }
+        memcpy(*out, g_local_cache[i].body, g_local_cache[i].len + 1);
+        *outlen = g_local_cache[i].len;
+        pthread_mutex_unlock(&g_local_cache_lock);
+        return 0;
+      }
+      free(g_local_cache[i].url); g_local_cache[i].url = NULL;
+      free(g_local_cache[i].body); g_local_cache[i].body = NULL;
+      g_local_cache[i].len = 0; g_local_cache[i].ts = 0;
+    }
+  }
+  pthread_mutex_unlock(&g_local_cache_lock);
+
+  char *tmp = NULL; size_t tlen = 0;
+  int rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+  if (rc != 0 || !tmp) { if (tmp) { free(tmp); } return rc; }
+
+  pthread_mutex_lock(&g_local_cache_lock);
+  int sel = 0; time_t oldest = nowt;
+  for (int i = 0; i < LOCAL_CACHE_ENTRIES; ++i) {
+    if (!g_local_cache[i].url) { sel = i; break; }
+    if (g_local_cache[i].ts < oldest) { oldest = g_local_cache[i].ts; sel = i; }
+  }
+  if (g_local_cache[sel].url) free(g_local_cache[sel].url);
+  if (g_local_cache[sel].body) free(g_local_cache[sel].body);
+  g_local_cache[sel].url = strdup(url);
+  g_local_cache[sel].body = malloc(tlen + 1);
+  if (g_local_cache[sel].body) {
+    memcpy(g_local_cache[sel].body, tmp, tlen + 1);
+    g_local_cache[sel].len = tlen;
+    g_local_cache[sel].ts = nowt;
+  } else {
+    free(g_local_cache[sel].url); g_local_cache[sel].url = NULL;
+    g_local_cache[sel].len = 0; g_local_cache[sel].ts = 0;
+  }
+  pthread_mutex_unlock(&g_local_cache_lock);
+
+  *out = tmp; *outlen = tlen;
+  return 0;
+}
+
+/* Use cached wrapper in this compilation unit */
+#undef util_http_get_url_local
+#define util_http_get_url_local(url,out,outlen,timeout_sec) cached_util_http_get_url_local(url,out,outlen,timeout_sec)
+
+/* Cache primary IPv4 for short TTL to avoid repeated getifaddrs */
+static void get_primary_ipv4_cached(char *out, size_t outlen) {
+  static char cached[128] = "";
+  static time_t ts = 0;
+  time_t nowt = time(NULL);
+  if (out && outlen) out[0] = 0;
+  if (nowt - ts <= LOCAL_CACHE_TTL_SEC && cached[0]) {
+    if (out && outlen) snprintf(out, outlen, "%s", cached);
+    return;
+  }
+  struct ifaddrs *ifap = NULL, *ifa = NULL;
+  if (getifaddrs(&ifap) == 0) {
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+      if (!ifa->ifa_addr) continue;
+      if (ifa->ifa_addr->sa_family == AF_INET) {
+        struct sockaddr_in sa; memcpy(&sa, ifa->ifa_addr, sizeof(sa));
+        char b[INET_ADDRSTRLEN]; if (inet_ntop(AF_INET, &sa.sin_addr, b, sizeof(b))) {
+          if (strcmp(b, "127.0.0.1") != 0) {
+            snprintf(cached, sizeof(cached), "%s", b);
+            ts = nowt;
+            break;
+          }
+        }
+      }
+    }
+    if (ifap) freeifaddrs(ifap);
+  }
+  if (out && outlen) snprintf(out, outlen, "%s", cached);
+}
+
 /* Worker: periodically refresh devices cache using ubnt_discover_output + normalize_ubnt_devices */
 static void *devices_cache_worker(void *arg) {
   (void)arg;
@@ -1966,7 +2081,7 @@ static int h_airos(http_request_t *r);
 /* Full /status endpoint */
 static int h_status(http_request_t *r) {
   char *buf = NULL; size_t cap = 16384, len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); return 0; } buf[0]=0;
-  #define APPEND(fmt,...) do { char *_tmp=NULL; int _n=asprintf(&_tmp,fmt,##__VA_ARGS__); if(_n<0||!_tmp){ if(_tmp) free(_tmp); free(buf); send_json(r,"{}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_tmp); free(buf); send_json(r,"{}\n"); return 0;} buf=nb;} memcpy(buf+len,_tmp,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_tmp);}while(0)
+  #define APPEND(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
   /* hostname */
   char hostname[256] = ""; if (gethostname(hostname, sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0;
 
@@ -2432,7 +2547,7 @@ static int h_status_compat(http_request_t *r) {
 
   char *out = NULL; size_t outcap = 4096, outlen = 0; out = malloc(outcap); if(!out){ send_json(r, "{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0; } out[0]=0;
   /* helper to append safely */
-  #define CAPPEND(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0;} if(outlen+(size_t)_n+1>outcap){ while(outcap<outlen+(size_t)_n+1) outcap*=2; char *nb=realloc(out,outcap); if(!nb){ free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0;} out=nb;} memcpy(out+outlen,_t,(size_t)_n); outlen+=(size_t)_n; out[outlen]=0; free(_t);} while(0)
+  #define CAPPEND(fmt,...) do { if (json_appendf(&out, &outlen, &outcap, fmt, ##__VA_ARGS__) != 0) { free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0; } } while(0)
 
   CAPPEND("{");
   /* airosdata */
@@ -2502,7 +2617,7 @@ static int h_status_compat(http_request_t *r) {
 /* --- Lightweight /status/lite (omit OLSR link/neighbor discovery for faster initial load) --- */
 static int h_status_lite(http_request_t *r) {
   char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if(!buf){ send_json(r,"{}\n"); return 0; } buf[0]=0;
-  #define APP_L(fmt,...) do { char *_tmp=NULL; int _n=asprintf(&_tmp,fmt,##__VA_ARGS__); if(_n<0||!_tmp){ if(_tmp) free(_tmp); free(buf); send_json(r,"{}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_tmp); free(buf); send_json(r,"{}\n"); return 0;} buf=nb;} memcpy(buf+len,_tmp,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_tmp);}while(0)
+  #define APP_L(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
   APP_L("{");
   char hostname[256]=""; if(gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; APP_L("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APP_L(",");
   /* primary IPv4 */
@@ -2563,7 +2678,7 @@ static int h_olsr_routes(http_request_t *r) {
   for(const char **ep=eps; *ep && !raw; ++ep){ if(util_http_get_url_local(*ep, &raw, &rn, 1)==0 && raw && rn>0) break; if(raw){ free(raw); raw=NULL; rn=0; } }
   if(!raw){ send_json(r, "{\"via\":\"\",\"routes\":[]}\n"); return 0; }
   char *out=NULL; size_t cap=4096,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out[0]=0;
-  #define APP_R(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(_t); free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out=nb;} memcpy(out+len,_t,(size_t)_n); len+=(size_t)_n; out[len]=0; free(_t);}while(0)
+  #define APP_R(fmt,...) do { if (json_appendf(&out, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0; } } while(0)
   APP_R("{\"via\":"); json_append_escaped(&out,&len,&cap, via_ip); APP_R(",\"routes\":["); int first=1; int count=0;
   const char *p=strchr(raw,'['); if(!p) p=raw;
   while(*p){
@@ -2625,7 +2740,7 @@ static int h_olsr_links(http_request_t *r) {
   char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
   /* Build JSON */
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{}\n"); goto done; } buf[0]=0;
-  #define APP_O(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); if(buf){ free(buf);} send_json(r,"{}\n"); goto done; } if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{}\n"); goto done;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_t);}while(0)
+  #define APP_O(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json(r,"{}\n"); goto done; } } while(0)
   APP_O("{");
   APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP_O("\"olsrd_on\":%s,", olsrd_on?"true":"false");
@@ -2659,7 +2774,7 @@ static int h_olsr_raw(http_request_t *r) {
   char *topology_raw=NULL; size_t trn=0; const char *eps_topo[]={"http://127.0.0.1:9090/topology","http://127.0.0.1:2006/topology","http://127.0.0.1:8123/topology",NULL};
   for(const char **ep=eps_topo; *ep && !topology_raw; ++ep){ if(util_http_get_url_local(*ep, &topology_raw, &trn, 1)==0 && topology_raw && trn>0) break; if(topology_raw){ free(topology_raw); topology_raw=NULL; trn=0; } }
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{\"err\":\"oom\"}\n"); goto done; } buf[0]=0;
-  #define APP_RAW(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); if(buf){ free(buf);} send_json(r,"{\"err\":\"oom\"}\n"); goto done;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{\"err\":\"oom\"}\n"); goto done;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len+=(size_t)_n; buf[len]=0; free(_t);}while(0)
+  #define APP_RAW(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json(r,"{\"err\":\"oom\"}\n"); goto done; } } while(0)
   APP_RAW("{");
   APP_RAW("\"links_raw\":"); if(links_raw) json_append_escaped(&buf,&len,&cap, links_raw); else APP_RAW("\"\""); APP_RAW(",");
   APP_RAW("\"routes_raw\":"); if(routes_raw) json_append_escaped(&buf,&len,&cap, routes_raw); else APP_RAW("\"\""); APP_RAW(",");
@@ -2915,7 +3030,7 @@ static int h_traceroute(http_request_t *r) {
       if (!dup) { free(out); free(cmd); send_json(r, "{\"error\":\"oom\"}\n"); return 0; }
       char *saveptr=NULL; char *line=strtok_r(dup, "\n", &saveptr);
       size_t cap=2048,len2=0; char *json=malloc(cap); if(!json){ free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0; } json[0]=0;
-      #define APP_TR(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(json); free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0;} if(len2+(size_t)_n+1>cap){ while(cap<len2+(size_t)_n+1) cap*=2; char *nb=realloc(json,cap); if(!nb){ free(_t); free(json); free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0;} json=nb;} memcpy(json+len2,_t,(size_t)_n); len2+=(size_t)_n; json[len2]=0; free(_t);}while(0)
+  #define APP_TR(fmt,...) do { if (json_appendf(&json, &len2, &cap, fmt, ##__VA_ARGS__) != 0) { free(json); free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0; } } while(0)
       APP_TR("{\"target\":"); json_append_escaped(&json,&len2,&cap,target); APP_TR(",\"hops\":["); int first=1;
       while(line){
         /* skip header */
