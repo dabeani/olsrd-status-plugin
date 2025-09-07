@@ -442,11 +442,16 @@ static void enqueue_fetch_request(int force, int wait, int type) {
     int wrc2 = 0;
     while (!rq->done && wrc2 == 0) { wrc2 = pthread_cond_timedwait(&rq->cv, &rq->m, &ts2); }
     if (!rq->done) {
+      /* Timed out waiting for worker: mark this request as not waited so the worker
+       * will free it when done. Do this while holding rq->m to avoid races. */
       fprintf(stderr, "[status-plugin] enqueue: own request wait timed out after %d seconds type=%d\n", g_fetch_wait_timeout, rq->type);
+      rq->wait = 0; /* worker will treat as non-waiting and free */
+      pthread_mutex_unlock(&rq->m);
+      return;
     }
+    /* Completed: safe to destroy our synchronization primitives and free the request */
     pthread_mutex_unlock(&rq->m);
-    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv);
-    free(rq);
+    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
   }
 }
 
