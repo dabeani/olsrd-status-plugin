@@ -17,6 +17,10 @@
 #include <time.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <signal.h>
+#if defined(__APPLE__) || defined(__linux__)
+# include <execinfo.h>
+#endif
 
 #include "httpd.h"
 #include "util.h"
@@ -50,6 +54,7 @@ static time_t g_nodedb_last_fetch = 0; /* epoch of last successful fetch */
 static char  *g_nodedb_cached = NULL; /* malloc'ed JSON blob */
 static size_t g_nodedb_cached_len = 0;
 static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_nodedb_worker_running = 0;
 /* If set to 1, write a copy of the node_db to disk (disabled by default to protect flash) */
 static int g_nodedb_write_disk = 0;
 
@@ -97,6 +102,48 @@ static void start_devices_worker(void) {
   pthread_t th;
   pthread_create(&th, NULL, devices_cache_worker, NULL);
   pthread_detach(th);
+}
+
+/* forward declare fetch implementation so workers can call it */
+static void fetch_remote_nodedb(void);
+
+/* Nodedb background worker: periodically refresh remote node DB to avoid blocking handlers */
+static void *nodedb_cache_worker(void *arg) {
+  (void)arg;
+  g_nodedb_worker_running = 1;
+  while (g_nodedb_worker_running) {
+    /* fetch will respect TTL internally when called from other places, but worker forces update periodically */
+    fetch_remote_nodedb();
+    /* Sleep in small increments to allow clean shutdown; total sleep roughly equals TTL or minimum 10s */
+    int total = g_nodedb_ttl > 10 ? g_nodedb_ttl : 10;
+    for (int i = 0; i < total; ++i) { if (!g_nodedb_worker_running) break; sleep(1); }
+  }
+  return NULL;
+}
+
+static void start_nodedb_worker(void) {
+  pthread_t th;
+  pthread_create(&th, NULL, nodedb_cache_worker, NULL);
+  pthread_detach(th);
+}
+
+/* Minimal SIGSEGV handler that logs a backtrace to stderr then exits. */
+static void sigsegv_handler(int sig) {
+#if defined(__APPLE__) || defined(__linux__)
+  void *bt[64]; int bt_size = 0;
+  bt_size = backtrace(bt, (int)(sizeof(bt)/sizeof(bt[0])));
+  if (bt_size > 0) {
+    fprintf(stderr, "[status-plugin] caught signal %d (SIGSEGV) - backtrace follows:\n", sig);
+    backtrace_symbols_fd(bt, bt_size, STDERR_FILENO);
+  } else {
+    fprintf(stderr, "[status-plugin] caught signal %d (SIGSEGV) - no backtrace available\n", sig);
+  }
+#else
+  fprintf(stderr, "[status-plugin] caught signal %d (SIGSEGV)\n", sig);
+#endif
+  /* Restore default and re-raise to produce core/dump behaviour if desired */
+  signal(sig, SIG_DFL);
+  raise(sig);
 }
 
 /* Paths to optional external tools (detected at init) */
@@ -2875,6 +2922,10 @@ int olsrd_plugin_init(void) {
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
   /* start background workers */
   start_devices_worker();
+  /* start node DB background worker */
+  start_nodedb_worker();
+  /* install SIGSEGV handler for diagnostic backtraces */
+  signal(SIGSEGV, sigsegv_handler);
   return 0;
 }
 
@@ -2885,6 +2936,11 @@ void olsrd_plugin_exit(void) {
   pthread_mutex_lock(&g_devices_cache_lock);
   if (g_devices_cache) { free(g_devices_cache); g_devices_cache = NULL; g_devices_cache_len = 0; }
   pthread_mutex_unlock(&g_devices_cache_lock);
+  /* stop nodedb worker and free cache */
+  g_nodedb_worker_running = 0;
+  pthread_mutex_lock(&g_nodedb_lock);
+  if (g_nodedb_cached) { free(g_nodedb_cached); g_nodedb_cached = NULL; g_nodedb_cached_len = 0; }
+  pthread_mutex_unlock(&g_nodedb_lock);
 }
 
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen) {
