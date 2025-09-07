@@ -53,6 +53,52 @@ static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
 /* If set to 1, write a copy of the node_db to disk (disabled by default to protect flash) */
 static int g_nodedb_write_disk = 0;
 
+/* Devices cache populated by background worker to avoid blocking HTTP handlers */
+static char *g_devices_cache = NULL; /* JSON array string (malloc'd) */
+static size_t g_devices_cache_len = 0;
+static time_t g_devices_cache_ts = 0;
+static pthread_mutex_t g_devices_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_devices_worker_running = 0;
+
+/* Forward declarations for device discovery helpers used by background worker */
+static int ubnt_discover_output(char **out, size_t *outlen);
+static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen);
+static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len);
+
+/* Worker: periodically refresh devices cache using ubnt_discover_output + normalize_ubnt_devices */
+static void *devices_cache_worker(void *arg) {
+  (void)arg;
+  g_devices_worker_running = 1;
+  while (g_devices_worker_running) {
+    char *ud = NULL; size_t udn = 0;
+    if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
+      char *normalized = NULL; size_t nlen = 0;
+      if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
+        /* transform to legacy to keep h_status_compat expectations */
+        char *legacy = NULL; size_t legacy_len = 0;
+        if (transform_devices_to_legacy(normalized, &legacy, &legacy_len) == 0 && legacy) {
+          pthread_mutex_lock(&g_devices_cache_lock);
+          if (g_devices_cache) free(g_devices_cache);
+          g_devices_cache = legacy; g_devices_cache_len = legacy_len; g_devices_cache_ts = time(NULL);
+          pthread_mutex_unlock(&g_devices_cache_lock);
+        }
+        if (normalized) free(normalized);
+      }
+    }
+    if (ud) free(ud);
+    /* Sleep with short interval; adjust as needed */
+    for (int i=0;i<10;i++) { sleep(1); if (!g_devices_worker_running) break; }
+  }
+  return NULL;
+}
+
+/* Start devices cache worker (called from plugin init) */
+static void start_devices_worker(void) {
+  pthread_t th;
+  pthread_create(&th, NULL, devices_cache_worker, NULL);
+  pthread_detach(th);
+}
+
 /* Paths to optional external tools (detected at init) */
 #ifndef PATHLEN
 #define PATHLEN 512
@@ -73,6 +119,11 @@ static int h_discover(http_request_t *r); static int h_embedded_appjs(http_reque
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
 static int h_traceroute(http_request_t *r);
+
+/* Forward declarations for device discovery helpers used by background worker */
+static int ubnt_discover_output(char **out, size_t *outlen);
+static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen);
+static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len);
 
 /* helper: return 1 if buffer contains any non-whitespace byte */
 static int buffer_has_content(const char *b, size_t n) {
@@ -1618,25 +1669,31 @@ static int h_status(http_request_t *r) {
     }
   }
   /* fallback: if traceroute_to not set, use default route IP (filled later) - placeholder handled below */
-  /* Try to populate devices from ubnt-discover using helper */
+  /* Devices: prefer cached devices populated by background worker to avoid blocking */
   {
-    char *ud = NULL; size_t udn = 0;
-    if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
-      fprintf(stderr, "[status-plugin] got device data from ubnt-discover (%zu bytes)\n", udn);
-      char *normalized = NULL; size_t nlen = 0;
-      if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
-        APPEND("\"devices\":");
-        json_buf_append(&buf, &len, &cap, "%s", normalized);
-        APPEND(",");
-        free(normalized);
+    int used_cache = 0;
+    pthread_mutex_lock(&g_devices_cache_lock);
+    if (g_devices_cache && g_devices_cache_len > 0) {
+      APPEND("\"devices\":%s,", g_devices_cache);
+      used_cache = 1;
+    }
+    pthread_mutex_unlock(&g_devices_cache_lock);
+    if (!used_cache) {
+      /* fallback to inline discovery if cache not ready */
+      char *ud = NULL; size_t udn = 0;
+      if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
+        fprintf(stderr, "[status-plugin] got device data from ubnt-discover (inline %zu bytes)\n", udn);
+        char *normalized = NULL; size_t nlen = 0;
+        if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
+          APPEND("\"devices\":%s,", normalized);
+          free(normalized);
+        } else {
+          APPEND("\"devices\":[],");
+        }
+        free(ud);
       } else {
-        fprintf(stderr, "[status-plugin] failed to normalize device data\n");
-        APPEND("\"devices\":[] ,");
+        APPEND("\"devices\":[],");
       }
-      free(ud);
-    } else {
-      fprintf(stderr, "[status-plugin] no device data available\n");
-      APPEND("\"devices\":[] ,");
     }
   }
 
@@ -2816,11 +2873,18 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/nodedb.json", &h_nodedb);
   http_server_register_handler("/traceroute", &h_traceroute);
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
+  /* start background workers */
+  start_devices_worker();
   return 0;
 }
 
 void olsrd_plugin_exit(void) {
   http_server_stop();
+  /* stop devices worker and free cache */
+  g_devices_worker_running = 0;
+  pthread_mutex_lock(&g_devices_cache_lock);
+  if (g_devices_cache) { free(g_devices_cache); g_devices_cache = NULL; g_devices_cache_len = 0; }
+  pthread_mutex_unlock(&g_devices_cache_lock);
 }
 
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen) {
