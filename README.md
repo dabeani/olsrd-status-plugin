@@ -154,6 +154,28 @@ export OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK=1
 export OLSRD_STATUS_FETCH_STARTUP_WAIT=60
 ```
 
+Additional runtime tuning (PlParam names available in `olsrd.conf` plugin block):
+
+* `OLSRD_STATUS_FETCH_QUEUE_MAX` / PlParam `fetch_queue_max` – maximum number of pending fetch requests queued before new non-waiting requests are dropped. Default: 4.
+
+```bash
+export OLSRD_STATUS_FETCH_QUEUE_MAX=8
+```
+
+* `OLSRD_STATUS_FETCH_RETRIES` / PlParam `fetch_retries` – number of retry attempts the background fetch worker will make on transient failures. Default: 3.
+
+```bash
+export OLSRD_STATUS_FETCH_RETRIES=5
+```
+
+* `OLSRD_STATUS_FETCH_BACKOFF_INITIAL` / PlParam `fetch_backoff_initial` – initial backoff in seconds used when retrying; backoff doubles each attempt. Default: 1.
+
+```bash
+export OLSRD_STATUS_FETCH_BACKOFF_INITIAL=2
+```
+
+Precedence: for all of the above the plugin parameter `PlParam` in `olsrd.conf` wins when present; otherwise the corresponding environment variable is used; otherwise the compiled default applies.
+
 Logging and debugging
 
 * The plugin logs which environment values are applied or ignored during startup to stderr.

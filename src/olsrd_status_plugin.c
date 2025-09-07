@@ -49,6 +49,10 @@ static int g_cfg_nodedb_ttl_set = 0;
 static int g_cfg_nodedb_write_disk_set = 0;
 static int g_cfg_nodedb_url_set = 0;
 static int g_cfg_net_count = 0;
+/* track fetch tuning PlParam presence */
+static int g_cfg_fetch_queue_set = 0;
+static int g_cfg_fetch_retries_set = 0;
+static int g_cfg_fetch_backoff_set = 0;
 
 /* Node DB remote auto-update cache */
 static char   g_nodedb_url[512] = "https://ff.cybercomm.at/node_db.json"; /* override via plugin param nodedb_url */
@@ -71,6 +75,17 @@ static int g_nodedb_write_disk = 0;
 /* Configurable startup wait (seconds) for initial DNS/network readiness. */
 static int g_nodedb_startup_wait = 30;
 
+/* Fetch tuning defaults (can be overridden via PlParam or env) */
+static int g_fetch_queue_max = 4; /* MAX_FETCH_QUEUE default */
+static int g_fetch_retries = 3; /* MAX_FETCH_RETRIES default */
+static int g_fetch_backoff_initial = 1; /* seconds */
+
+/* Counters / metrics */
+static unsigned long g_metric_fetch_dropped = 0; /* requests dropped due to full queue */
+static unsigned long g_metric_fetch_retries = 0; /* total retry attempts performed */
+static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
+static pthread_mutex_t g_metrics_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /* Simple fetch queue structures */
 struct fetch_req {
   int force; /* bypass TTL */
@@ -87,9 +102,9 @@ static pthread_cond_t  g_fetch_q_cv   = PTHREAD_COND_INITIALIZER;
 static int g_fetch_worker_running = 0;
 
 /* Queue / retry tunables */
-#define MAX_FETCH_QUEUE 4
-#define MAX_FETCH_RETRIES 3
-#define FETCH_INITIAL_BACKOFF_SEC 1
+#define MAX_FETCH_QUEUE_DEFAULT 4
+#define MAX_FETCH_RETRIES_DEFAULT 3
+#define FETCH_INITIAL_BACKOFF_SEC_DEFAULT 1
 
 static void enqueue_fetch_request(int force, int wait);
 static void *fetch_worker_thread(void *arg);
@@ -198,7 +213,7 @@ static void enqueue_fetch_request(int force, int wait) {
   }
 
   /* Queue size limiting: if full, either perform a synchronous fetch for waiters or drop the request */
-  if (qlen >= MAX_FETCH_QUEUE) {
+  if (qlen >= g_fetch_queue_max) {
     pthread_mutex_unlock(&g_fetch_q_lock);
     if (wait) {
       /* Synchronous fallback: perform fetch inline so caller sees result immediately. Protect with fetch_in_progress guard. */
@@ -212,7 +227,8 @@ static void enqueue_fetch_request(int force, int wait) {
       pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
       return;
     }
-    fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request\n", qlen);
+  pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_dropped++; pthread_mutex_unlock(&g_metrics_lock);
+  fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, g_metric_fetch_dropped);
     pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
   }
@@ -248,7 +264,7 @@ static void *fetch_worker_thread(void *arg) {
     /* Process the request by invoking the canonical fetch path with retries/backoff. */
     int attempt;
     int succeeded = 0;
-    for (attempt = 0; attempt < MAX_FETCH_RETRIES; ++attempt) {
+  for (attempt = 0; attempt < g_fetch_retries; ++attempt) {
       /* Wait for any in-progress fetch to finish, then mark in-progress and call the fetch */
       pthread_mutex_lock(&g_nodedb_fetch_lock);
       while (g_nodedb_fetch_in_progress) pthread_cond_wait(&g_nodedb_fetch_cv, &g_nodedb_fetch_lock);
@@ -261,10 +277,13 @@ static void *fetch_worker_thread(void *arg) {
       if (g_nodedb_last_fetch > prev) { succeeded = 1; break; }
 
       /* Backoff before next attempt (if any) */
-      if (attempt + 1 < MAX_FETCH_RETRIES) sleep(FETCH_INITIAL_BACKOFF_SEC << attempt);
+  pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_retries++; pthread_mutex_unlock(&g_metrics_lock);
+  if (attempt + 1 < g_fetch_retries) sleep(g_fetch_backoff_initial << attempt);
     }
 
-    /* Notify any waiter(s) attached to this request */
+  if (succeeded) { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_successes++; pthread_mutex_unlock(&g_metrics_lock); }
+
+  /* Notify any waiter(s) attached to this request */
     pthread_mutex_lock(&rq->m);
     rq->done = 1;
     pthread_cond_broadcast(&rq->cv);
@@ -317,6 +336,7 @@ static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r
 static int h_discover(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
+static int h_fetch_metrics(http_request_t *r);
 static int h_traceroute(http_request_t *r);
 
 /* Forward declarations for device discovery helpers used by background worker */
@@ -2578,6 +2598,19 @@ static int h_nodedb_refresh(http_request_t *r) {
   return 0;
 }
 
+  /* Simple metrics endpoint for fetch-related counters */
+  static int h_fetch_metrics(http_request_t *r) {
+    char buf[256];
+    pthread_mutex_lock(&g_metrics_lock);
+    unsigned long dropped = g_metric_fetch_dropped;
+    unsigned long retries = g_metric_fetch_retries;
+    unsigned long successes = g_metric_fetch_successes;
+    pthread_mutex_unlock(&g_metrics_lock);
+    snprintf(buf, sizeof(buf), "{\"fetch_dropped\":%lu,\"fetch_retries\":%lu,\"fetch_successes\":%lu}", dropped, retries, successes);
+    http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf));
+    return 0;
+  }
+
 /* /status.py dispatch endpoint: map ?get=<name> to existing handlers without reimplementing them */
 static int h_status_py(http_request_t *r) {
   char v[128] = "";
@@ -2974,6 +3007,10 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_port) g_cfg_port_set = 1;
   if (data == &g_nodedb_ttl) g_cfg_nodedb_ttl_set = 1;
   if (data == &g_nodedb_write_disk) g_cfg_nodedb_write_disk_set = 1;
+  /* new fetch tuning params via PlParam */
+  if (data == &g_fetch_queue_max) g_cfg_fetch_queue_set = 1;
+  if (data == &g_fetch_retries) g_cfg_fetch_retries_set = 1;
+  if (data == &g_fetch_backoff_initial) g_cfg_fetch_backoff_set = 1;
   return 0;
 }
 
@@ -3001,6 +3038,10 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "nodedb_url", .set_plugin_parameter = &set_str_param, .data = g_nodedb_url,  .addon = {0} },
   { .name = "nodedb_ttl", .set_plugin_parameter = &set_int_param, .data = &g_nodedb_ttl, .addon = {0} },
   { .name = "nodedb_write_disk", .set_plugin_parameter = &set_int_param, .data = &g_nodedb_write_disk, .addon = {0} },
+  /* fetch tuning PlParams: override defaults (PlParam wins over env) */
+  { .name = "fetch_queue_max", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_max, .addon = {0} },
+  { .name = "fetch_retries", .set_plugin_parameter = &set_int_param, .data = &g_fetch_retries, .addon = {0} },
+  { .name = "fetch_backoff_initial", .set_plugin_parameter = &set_int_param, .data = &g_fetch_backoff_initial, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -3099,6 +3140,38 @@ int olsrd_plugin_init(void) {
       fprintf(stderr, "[status-plugin] overriding nodedb_url from environment: %s\n", g_nodedb_url);
     }
 
+  /* Fetch tuning env overrides (only if not set via PlParam) */
+  if (!g_cfg_fetch_queue_set) {
+    const char *env_q = getenv("OLSRD_STATUS_FETCH_QUEUE_MAX");
+    if (env_q && env_q[0]) {
+      char *endptr = NULL; long v = strtol(env_q, &endptr, 10);
+      if (endptr && *endptr == '\0' && v > 0 && v <= 256) {
+        g_fetch_queue_max = (int)v;
+        fprintf(stderr, "[status-plugin] overriding fetch_queue_max from env: %d\n", g_fetch_queue_max);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_QUEUE_MAX value: %s (ignored)\n", env_q);
+    }
+  }
+  if (!g_cfg_fetch_retries_set) {
+    const char *env_r = getenv("OLSRD_STATUS_FETCH_RETRIES");
+    if (env_r && env_r[0]) {
+      char *endptr = NULL; long v = strtol(env_r, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 10) {
+        g_fetch_retries = (int)v;
+        fprintf(stderr, "[status-plugin] overriding fetch_retries from env: %d\n", g_fetch_retries);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_RETRIES value: %s (ignored)\n", env_r);
+    }
+  }
+  if (!g_cfg_fetch_backoff_set) {
+    const char *env_b = getenv("OLSRD_STATUS_FETCH_BACKOFF_INITIAL");
+    if (env_b && env_b[0]) {
+      char *endptr = NULL; long v = strtol(env_b, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 60) {
+        g_fetch_backoff_initial = (int)v;
+        fprintf(stderr, "[status-plugin] overriding fetch_backoff_initial from env: %d\n", g_fetch_backoff_initial);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_BACKOFF_INITIAL value: %s (ignored)\n", env_b);
+    }
+  }
+
   const char *env_ttl = getenv("OLSRD_STATUS_PLUGIN_NODEDB_TTL");
   if (env_ttl && env_ttl[0] && !g_cfg_nodedb_ttl_set) {
       char *endptr = NULL; long t = strtol(env_ttl, &endptr, 10);
@@ -3168,6 +3241,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/traffic",  &h_traffic);
   http_server_register_handler("/versions.json", &h_versions_json);
   http_server_register_handler("/nodedb.json", &h_nodedb);
+  http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
   http_server_register_handler("/traceroute", &h_traceroute);
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
   /* start background workers */
