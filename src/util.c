@@ -166,8 +166,14 @@ int util_http_get_url(const char *url, char **out, size_t *outlen, int timeout_s
   const char *slash = strchr(p, '/');
   size_t hostlen = slash ? (size_t)(slash - p) : strlen(p);
   if (hostlen == 0 || hostlen >= sizeof(host)) return -1;
-  strncpy(host, p, hostlen); host[hostlen]=0;
-  if (slash) strncpy(path, slash, sizeof(path)-1); else strcpy(path, "/");
+  memcpy(host, p, hostlen);
+  host[hostlen] = '\0';
+  if (slash) {
+    size_t pathlen = strlen(slash);
+    size_t copy = pathlen < (sizeof(path)-1) ? pathlen : (sizeof(path)-1);
+    memcpy(path, slash, copy);
+    path[copy] = '\0';
+  } else strcpy(path, "/");
   /* parse optional :port */
   char *colon = strchr(host, ':'); if (colon) { *colon = '\0'; port = atoi(colon+1); if (port<=0) port=80; }
 
