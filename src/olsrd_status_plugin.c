@@ -451,6 +451,53 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
   return rc;
 }
 
+/* Extract the raw JSON value (object/array/string/number) for a given key from a JSON object string.
+ * The returned buffer is malloc'ed and must be freed by the caller. This is a minimal, tolerant extractor used
+ * only for light-weight compatibility copying of sub-objects from one generated JSON blob to another.
+ */
+static int extract_json_value(const char *buf, const char *key, char **out, size_t *out_len) {
+  if (!buf || !key || !out) return -1;
+  *out = NULL; if (out_len) *out_len = 0;
+  char pat[256]; snprintf(pat, sizeof(pat), "\"%s\":", key);
+  const char *p = strstr(buf, pat);
+  if (!p) return -1; p += strlen(pat);
+  while (*p && isspace((unsigned char)*p)) p++;
+  if (!*p) return -1;
+  if (*p == '{' || *p == '[') {
+    char open = *p; char close = (open == '{') ? '}' : ']';
+    const char *start = p; int depth = 0; const char *q = p;
+    while (*q) {
+      if (*q == open) depth++;
+      else if (*q == close) { depth--; if (depth == 0) { q++; break; } }
+      q++;
+    }
+    if (q <= start) return -1;
+    size_t L = (size_t)(q - start);
+    char *t = malloc(L + 1); if (!t) return -1;
+    memcpy(t, start, L); t[L] = '\0'; *out = t; if (out_len) *out_len = L; return 0;
+  } else if (*p == '"') {
+    const char *start = p; const char *q = p + 1;
+    while (*q) {
+      if (*q == '\\' && *(q+1)) q += 2;
+      else if (*q == '"') { q++; break; }
+      else q++;
+    }
+    size_t L = (size_t)(q - start);
+    char *t = malloc(L + 1); if (!t) return -1;
+    memcpy(t, start, L); t[L] = '\0'; *out = t; if (out_len) *out_len = L; return 0;
+  } else {
+    /* number / literal until comma or end */
+    const char *start = p; const char *q = p;
+    while (*q && *q != ',' && *q != '}' && *q != ']') q++;
+    size_t L = (size_t)(q - start);
+    while (L > 0 && isspace((unsigned char)start[L-1])) L--;
+    if (L == 0) return -1;
+    char *t = malloc(L + 1); if (!t) return -1;
+    memcpy(t, start, L); t[L] = '\0'; *out = t; if (out_len) *out_len = L; return 0;
+  }
+}
+
+
 /* Extract twoHopNeighborCount (or linkcount as last resort) for a given neighbor IP from neighbors section */
 static int neighbor_twohop_for_ip(const char *section, const char *ip) {
   if(!section||!ip||!ip[0]) return 0;
@@ -1719,6 +1766,53 @@ static int h_status(http_request_t *r) {
         free(admin_url_buf);
       }
     }
+  }
+
+  /* Compatibility: add some legacy top-level keys expected by bmk-webstatus.py output
+   * We try to copy relevant sub-objects from the previously generated versions JSON or other local buffers.
+   */
+  {
+    /* airosdata: use airos_raw if present, otherwise empty object */
+    if (airos_raw && airos_n>0) {
+      APPEND(",\"airosdata\":%s", airos_raw);
+    } else {
+      APPEND(",\"airosdata\":{}" );
+    }
+
+    /* autoupdate: attempt to extract autoupdate_settings from versions JSON above (we already appended versions)
+     * For simplicity, re-generate versions JSON into vtmp and extract keys. generate_versions_json already freed its buffer
+     * earlier, so we re-run it here to fetch the structured object. This is slightly redundant but safe.
+     */
+    char *vtmp = NULL; size_t vtmp_n = 0;
+    if (generate_versions_json(&vtmp, &vtmp_n) == 0 && vtmp && vtmp_n>0) {
+      char *autoup = NULL; size_t alen = 0;
+      if (extract_json_value(vtmp, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
+        APPEND(",\"autoupdate\":%s", autoup);
+        free(autoup);
+      } else {
+        APPEND(",\"autoupdate\":{}" );
+      }
+      /* wizards boolean copied as 'wizards' top-level key (legacy) */
+      char *wiz = NULL; if (extract_json_value(vtmp, "autoupdate_wizards_installed", &wiz, NULL)==0 && wiz) {
+        /* value in versions is a string; keep as string to avoid surprises */
+        APPEND(",\"wizards\":%s", wiz);
+        free(wiz);
+      } else {
+        APPEND(",\"wizards\":\"no\"");
+      }
+      free(vtmp);
+    } else {
+      APPEND(",\"autoupdate\":{}" );
+      APPEND(",\"wizards\":\"no\"");
+    }
+
+  /* homes and bootimage: emit simple defaults (generate_versions_json has its own detailed output elsewhere) */
+  APPEND(",\"homes\":[]");
+  APPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
+
+  /* linklocals and local_ips: emit empty placeholders for compatibility */
+  APPEND(",\"local_ips\":[]");
+  APPEND(",\"linklocals\":[]");
   }
   APPEND("\n}\n");
 
