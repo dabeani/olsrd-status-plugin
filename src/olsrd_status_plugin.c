@@ -460,7 +460,8 @@ static int extract_json_value(const char *buf, const char *key, char **out, size
   *out = NULL; if (out_len) *out_len = 0;
   char pat[256]; snprintf(pat, sizeof(pat), "\"%s\":", key);
   const char *p = strstr(buf, pat);
-  if (!p) return -1; p += strlen(pat);
+  if (!p) return -1;
+  p += strlen(pat);
   while (*p && isspace((unsigned char)*p)) p++;
   if (!*p) return -1;
   if (*p == '{' || *p == '[') {
@@ -495,6 +496,76 @@ static int extract_json_value(const char *buf, const char *key, char **out, size
     char *t = malloc(L + 1); if (!t) return -1;
     memcpy(t, start, L); t[L] = '\0'; *out = t; if (out_len) *out_len = L; return 0;
   }
+}
+
+/* Transform a normalized devices JSON array into the legacy schema expected by bmk-webstatus.py
+ * This is a best-effort textual reconstruction using the available normalized fields.
+ * Input: devices_json (string containing JSON array of objects)
+ * Output: out (malloc'ed JSON array string) and out_len
+ */
+static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len) {
+  if (!devices_json || !out) return -1;
+  const char *p = strchr(devices_json, '[');
+  if (!p) p = devices_json;
+  const char *end = devices_json + strlen(devices_json);
+  /* allocate output buffer */
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf) return -1; buf[0]=0;
+  /* start array */
+    int first = 1; if (json_buf_append(&buf, &len, &cap, "[") < 0) { free(buf); return -1; }
+  const char *q = p;
+  while (q && q < end) {
+    /* find next object */
+    const char *obj = strchr(q, '{'); if (!obj) break;
+    const char *cur = obj+1; int depth = 1;
+    while (cur < end && depth>0) { if (*cur=='{') depth++; else if (*cur=='}') depth--; cur++; }
+    if (depth!=0) break; /* malformed */
+    size_t objlen = (size_t)(cur - obj);
+    /* create a temporary null-terminated object string */
+    char *objbuf = malloc(objlen+1); if(!objbuf) { free(buf); return -1; }
+    memcpy(objbuf, obj, objlen); objbuf[objlen]=0;
+    /* extract relevant fields */
+    char *hw = NULL; size_t hlen=0; char *ipv4 = NULL; size_t iplen=0; char *firm = NULL; size_t flen=0;
+    char *host = NULL; size_t hlo=0; char *prod = NULL; size_t pl=0; char *upt = NULL; size_t uln=0; char *essid = NULL; size_t esn=0;
+    find_json_string_value(objbuf, "hwaddr", &hw, &hlen);
+    find_json_string_value(objbuf, "ipv4", &ipv4, &iplen);
+    /* try both firmware and fwversion */
+    if (find_json_string_value(objbuf, "fwversion", &firm, &flen) != 0) find_json_string_value(objbuf, "firmware", &firm, &flen);
+    find_json_string_value(objbuf, "hostname", &host, &hlo);
+    find_json_string_value(objbuf, "product", &prod, &pl);
+    find_json_string_value(objbuf, "uptime", &upt, &uln);
+    find_json_string_value(objbuf, "essid", &essid, &esn);
+
+    /* Build one legacy device object */
+    if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
+    /* addresses array */
+    json_buf_append(&buf, &len, &cap, "{");
+    /* addresses */
+    json_buf_append(&buf, &len, &cap, "\"addresses\":[{");
+    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\",", (int)hlen, hw);
+    else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\" ,");
+    if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"ipv4\":\"%.*s\"", (int)iplen, ipv4);
+    else json_buf_append(&buf, &len, &cap, "\"ipv4\":\"\"" );
+    json_buf_append(&buf, &len, &cap, "}],");
+    /* copy common shallow fields */
+    if (essid && esn>0) json_buf_append(&buf, &len, &cap, "\"essid\":\"%.*s\",", (int)esn, essid); else json_buf_append(&buf, &len, &cap, "\"essid\":\"\",");
+    if (firm && flen>0) json_buf_append(&buf, &len, &cap, "\"fwversion\":\"%.*s\",", (int)flen, firm); else json_buf_append(&buf, &len, &cap, "\"fwversion\":\"\",");
+    if (host && hlo>0) json_buf_append(&buf, &len, &cap, "\"hostname\":\"%.*s\",", (int)hlo, host); else json_buf_append(&buf, &len, &cap, "\"hostname\":\"\",");
+    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\",", (int)hlen, hw); else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\",");
+    if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"ipv4\":\"%.*s\",", (int)iplen, ipv4); else json_buf_append(&buf, &len, &cap, "\"ipv4\":\"\",");
+    if (prod && pl>0) json_buf_append(&buf, &len, &cap, "\"product\":\"%.*s\",", (int)pl, prod); else json_buf_append(&buf, &len, &cap, "\"product\":\"\",");
+    /* uptime numeric fallback */
+    int ui = 0; if (upt && uln>0) { ui = atoi(upt); }
+    json_buf_append(&buf, &len, &cap, "\"uptime\":%d", ui);
+    json_buf_append(&buf, &len, &cap, "}");
+
+    /* cleanup */
+    if (objbuf) free(objbuf);
+    if (hw) free(hw); if (ipv4) free(ipv4); if (firm) free(firm); if (host) free(host); if (prod) free(prod); if (upt) free(upt); if (essid) free(essid);
+
+    q = cur;
+  }
+  json_buf_append(&buf, &len, &cap, "]");
+  *out = buf; if (out_len) *out_len = len; return 0;
 }
 
 
@@ -1431,9 +1502,9 @@ static int h_status(http_request_t *r) {
   util_read_file("/tmp/10-all.json", &airos_raw, &airos_n); /* ignore result; airos_raw may be NULL */
 
   /* Generate versions JSON early (reusable helper) */
-  char *vout = NULL; size_t vn = 0;
-  (void)vn;
-  if (generate_versions_json(&vout, &vn) != 0) { if (vout) { free(vout); vout = NULL; vn = 0; } }
+  char *vgen = NULL; size_t vgen_n = 0;
+  (void)vgen_n;
+  if (generate_versions_json(&vgen, &vgen_n) != 0) { if (vgen) { free(vgen); vgen = NULL; vgen_n = 0; } }
 
   /* default route */
   char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
@@ -1487,10 +1558,10 @@ static int h_status(http_request_t *r) {
   /* Try EdgeRouter path first */
   /* versions: use internal generator rather than external script */
   {
-    char *vout = NULL; size_t vn = 0;
-    if (generate_versions_json(&vout, &vn) == 0 && vout && vn>0) {
-      APPEND("\"versions\":%s,", vout);
-      free(vout); vout = NULL;
+    char *vtmp = NULL; size_t vtmp_n = 0;
+    if (generate_versions_json(&vtmp, &vtmp_n) == 0 && vtmp && vtmp_n>0) {
+      APPEND("\"versions\":%s,", vtmp);
+      free(vtmp); vtmp = NULL;
     } else {
       /* Provide basic fallback versions for Linux container */
       APPEND("\"versions\":{\"olsrd\":\"unknown\",\"system\":\"linux-container\"},");
@@ -1838,26 +1909,26 @@ static int h_status(http_request_t *r) {
 static int h_status_compat(http_request_t *r) {
   char *airos_raw = NULL; size_t airos_n = 0; util_read_file("/tmp/10-all.json", &airos_raw, &airos_n);
   /* versions/autoupdate/wizards */
-  char *vout = NULL; size_t vn = 0; if (generate_versions_json(&vout, &vn) != 0) { if (vout) { free(vout); vout = NULL; vn = 0; } }
+  char *vtmp = NULL; size_t vtmp_n = 0; if (generate_versions_json(&vtmp, &vtmp_n) != 0) { if (vtmp) { free(vtmp); vtmp = NULL; vtmp_n = 0; } }
 
-  char *out = NULL; size_t outcap = 4096, outlen = 0; out = malloc(outcap); if(!out){ send_json(r, "{}\n"); if(airos_raw) free(airos_raw); if(vout) free(vout); return 0; } out[0]=0;
+  char *out = NULL; size_t outcap = 4096, outlen = 0; out = malloc(outcap); if(!out){ send_json(r, "{}\n"); if(airos_raw) free(airos_raw); if(vtmp) free(vtmp); return 0; } out[0]=0;
   /* helper to append safely */
-  #define CAPPEND(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vout) free(vout); return 0;} if(outlen+(size_t)_n+1>outcap){ while(outcap<outlen+(size_t)_n+1) outcap*=2; char *nb=realloc(out,outcap); if(!nb){ free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vout) free(vout); return 0;} out=nb;} memcpy(out+outlen,_t,(size_t)_n); outlen+=(size_t)_n; out[outlen]=0; free(_t);} while(0)
+  #define CAPPEND(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vtmp) free(vtmp); return 0;} if(outlen+(size_t)_n+1>outcap){ while(outcap<outlen+(size_t)_n+1) outcap*=2; char *nb=realloc(out,outcap); if(!nb){ free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vtmp) free(vtmp); return 0;} out=nb;} memcpy(out+outlen,_t,(size_t)_n); outlen+=(size_t)_n; out[outlen]=0; free(_t);} while(0)
 
   CAPPEND("{");
   /* airosdata */
   if (airos_raw && airos_n>0) CAPPEND("\"airosdata\":%s", airos_raw); else CAPPEND("\"airosdata\":{}");
 
   /* autoupdate + wizards from versions JSON if available */
-  if (vout && vn>0) {
+  if (vtmp && vtmp_n>0) {
     char *autoup = NULL; size_t alen = 0;
-    if (extract_json_value(vout, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
+    if (extract_json_value(vtmp, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
       CAPPEND(",\"autoupdate\":%s", autoup);
       free(autoup);
     } else {
       CAPPEND(",\"autoupdate\":{}");
     }
-    char *wiz = NULL; if (extract_json_value(vout, "autoupdate_wizards_installed", &wiz, NULL) == 0 && wiz) { CAPPEND(",\"wizards\":%s", wiz); free(wiz); } else { CAPPEND(",\"wizards\":\"no\""); }
+    char *wiz = NULL; if (extract_json_value(vtmp, "autoupdate_wizards_installed", &wiz, NULL) == 0 && wiz) { CAPPEND(",\"wizards\":%s", wiz); free(wiz); } else { CAPPEND(",\"wizards\":\"no\""); }
   } else {
     CAPPEND(",\"autoupdate\":{}"); CAPPEND(",\"wizards\":\"no\"");
   }
@@ -1870,7 +1941,13 @@ static int h_status_compat(http_request_t *r) {
   if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn>0) {
     char *devices_norm = NULL; size_t dn = 0;
     if (normalize_ubnt_devices(ud, &devices_norm, &dn) == 0 && devices_norm) {
-      CAPPEND(",\"devices\":%s", devices_norm);
+      char *legacy_dev = NULL; size_t legacy_len = 0;
+      if (transform_devices_to_legacy(devices_norm, &legacy_dev, &legacy_len) == 0 && legacy_dev) {
+        CAPPEND(",\"devices\":%s", legacy_dev);
+        free(legacy_dev);
+      } else {
+        CAPPEND(",\"devices\":%s", devices_norm);
+      }
       free(devices_norm);
     } else {
       CAPPEND(",\"devices\":[]");
@@ -1891,7 +1968,7 @@ static int h_status_compat(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, outlen);
   if (out) free(out);
   if (airos_raw) free(airos_raw);
-  if (vout) free(vout);
+  if (vtmp) free(vtmp);
   return 0;
 }
 
