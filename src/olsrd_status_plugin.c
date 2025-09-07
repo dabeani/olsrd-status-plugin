@@ -546,6 +546,13 @@ static int transform_devices_to_legacy(const char *devices_json, char **out, siz
     else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\" ,");
     if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"ipv4\":\"%.*s\"", (int)iplen, ipv4);
     else json_buf_append(&buf, &len, &cap, "\"ipv4\":\"\"" );
+    json_buf_append(&buf, &len, &cap, "\"addresses\":[{");
+    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\",", (int)hlen, hw);
+    else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\" ,");
+    if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"addr\":\"%.*s\",\"type\":\"ipv4\",", (int)iplen, ipv4);
+    else json_buf_append(&buf, &len, &cap, "\"addr\":\"\",\"type\":\"ipv4\",");
+    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\"", (int)hlen, hw);
+    else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\"");
     json_buf_append(&buf, &len, &cap, "}],");
     /* copy common shallow fields */
     if (essid && esn>0) json_buf_append(&buf, &len, &cap, "\"essid\":\"%.*s\",", (int)esn, essid); else json_buf_append(&buf, &len, &cap, "\"essid\":\"\",");
@@ -1940,8 +1947,19 @@ static int h_status_compat(http_request_t *r) {
     CAPPEND(",\"autoupdate\":{}"); CAPPEND(",\"wizards\":\"no\"");
   }
 
-  /* bootimage minimal */
-  CAPPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
+  /* bootimage minimal: try to extract md5 from generated versions JSON */
+  if (vtmp && vtmp_n>0) {
+    char *bm = NULL; size_t bml = 0;
+    if (extract_json_value(vtmp, "bootimage", &bm, &bml) == 0 && bm) {
+      /* bm is an object like {"md5":"..."} – reuse it directly */
+      CAPPEND(",\"bootimage\":%s", bm);
+      free(bm);
+    } else {
+      CAPPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
+    }
+  } else {
+    CAPPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
+  }
 
   /* devices via ubnt-discover if available */
   char *ud = NULL; size_t udn = 0;
