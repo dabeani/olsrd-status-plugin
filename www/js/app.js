@@ -666,6 +666,39 @@ function updateUI(data) {
   } catch(e) {}
 }
 
+// Render fetch queue metrics (provided by backend in status.fetch_stats)
+function populateFetchStats(fs) {
+  try {
+    var tab = document.getElementById('tab-status'); if (!tab) return;
+    var container = document.getElementById('fetch-stats');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'fetch-stats';
+      container.style.margin = '6px 0 12px 0';
+      container.className = 'small-muted';
+      var dl = tab.querySelector('dl');
+      if (dl && dl.parentNode) dl.parentNode.insertBefore(container, dl.nextSibling);
+      else tab.insertBefore(container, tab.firstChild);
+    }
+    if (!fs || (typeof fs === 'object' && Object.keys(fs).length === 0)) { container.style.display = 'none'; return; }
+    container.style.display = '';
+    // Normalize likely field names from backend and build compact badges
+    var queued = fs.queued_count || fs.queue_len || fs.queued || 0;
+    var processing = fs.processing_count || fs.in_progress || fs.processing || 0;
+    var dropped = fs.dropped_count || fs.dropped || 0;
+    var retries = fs.retry_count || fs.retries || 0;
+    var processed = fs.total_processed || fs.processed || 0;
+    function badge(label, val) { return '<span style="display:inline-block;padding:4px 8px;margin-right:6px;border-radius:4px;background:#f5f5f5;font-size:90%;">'+label+': '+String(val)+'</span>'; }
+    var parts = [];
+    parts.push(badge('Queued', queued));
+    parts.push(badge('Processing', processing));
+    parts.push(badge('Dropped', dropped));
+    parts.push(badge('Retries', retries));
+    parts.push(badge('Processed', processed));
+    container.innerHTML = parts.join('');
+  } catch(e) { /* ignore UI errors */ }
+}
+
 function detectPlatformAndLoad() {
   try {
   // helper safe JSON parser
@@ -701,6 +734,7 @@ function detectPlatformAndLoad() {
         .then(function(statusText) {
           var status = safeParse('status', statusText);
           if (!status) return; // abort if irreparable
+            try { if (status.fetch_stats) populateFetchStats(status.fetch_stats); else populateFetchStats({}); } catch(e){}
           data.hostname = status.hostname || '';
           data.ip = status.ip || '';
           data.uptime = status.uptime || '';
@@ -839,6 +873,7 @@ function detectPlatformAndLoad() {
       fetch('/status', {cache: 'no-store'})
         .then(function(r) { return r.json(); })
         .then(function(status) {
+          try { if (status.fetch_stats) populateFetchStats(status.fetch_stats); else populateFetchStats({}); } catch(e){}
           updateUI({
             hostname: status.hostname || 'Unknown',
             ip: status.ip || '',

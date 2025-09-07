@@ -32,6 +32,13 @@
 
 #include <stdarg.h>
 
+#if __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
+# include <stdatomic.h>
+# define HAVE_C11_ATOMICS 1
+#else
+# define HAVE_C11_ATOMICS 0
+#endif
+
 /* Global configuration/state (single authoritative definitions) */
 int g_is_edgerouter = 0;
 int g_has_traceroute = 0;
@@ -85,6 +92,41 @@ static unsigned long g_metric_fetch_dropped = 0; /* requests dropped due to full
 static unsigned long g_metric_fetch_retries = 0; /* total retry attempts performed */
 static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
 static pthread_mutex_t g_metrics_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Periodic reporter interval (seconds). 0 to disable. Configurable via PlParam 'fetch_report_interval' or env OLSRD_STATUS_FETCH_REPORT_INTERVAL */
+static int g_fetch_report_interval = 0; /* default: disabled */
+static int g_cfg_fetch_report_set = 0;
+static pthread_t g_fetch_report_thread = 0;
+
+static void *fetch_reporter(void *arg) {
+  (void)arg;
+  while (g_fetch_report_interval > 0) {
+    sleep(g_fetch_report_interval);
+    if (g_fetch_report_interval <= 0) break;
+    unsigned long d=0, r=0, s=0; METRIC_LOAD_ALL(d, r, s);
+    pthread_mutex_lock(&g_fetch_q_lock);
+    int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    fprintf(stderr, "[status-plugin] fetch metrics: queued=%d dropped=%lu retries=%lu successes=%lu\n", qlen, d, r, s);
+  }
+  return NULL;
+}
+
+/* Helper macros to update counters using atomics if available, else mutex */
+#if HAVE_C11_ATOMICS
+static _Atomic unsigned long atom_fetch_dropped = 0;
+static _Atomic unsigned long atom_fetch_retries = 0;
+static _Atomic unsigned long atom_fetch_successes = 0;
+#define METRIC_INC_DROPPED() atomic_fetch_add_explicit(&atom_fetch_dropped, 1UL, memory_order_relaxed)
+#define METRIC_INC_RETRIES() atomic_fetch_add_explicit(&atom_fetch_retries, 1UL, memory_order_relaxed)
+#define METRIC_INC_SUCCESS() atomic_fetch_add_explicit(&atom_fetch_successes, 1UL, memory_order_relaxed)
+#define METRIC_LOAD_ALL(d,r,s) do { d = atomic_load_explicit(&atom_fetch_dropped, memory_order_relaxed); r = atomic_load_explicit(&atom_fetch_retries, memory_order_relaxed); s = atomic_load_explicit(&atom_fetch_successes, memory_order_relaxed); } while(0)
+#else
+#define METRIC_INC_DROPPED() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_dropped++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#define METRIC_INC_RETRIES() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_retries++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#define METRIC_INC_SUCCESS() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_successes++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#define METRIC_LOAD_ALL(d,r,s) do { pthread_mutex_lock(&g_metrics_lock); d = g_metric_fetch_dropped; r = g_metric_fetch_retries; s = g_metric_fetch_successes; pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#endif
 
 /* Simple fetch queue structures */
 struct fetch_req {
@@ -227,8 +269,11 @@ static void enqueue_fetch_request(int force, int wait) {
       pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
       return;
     }
-  pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_dropped++; pthread_mutex_unlock(&g_metrics_lock);
-  fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, g_metric_fetch_dropped);
+    METRIC_INC_DROPPED();
+    {
+      unsigned long td, tr, ts; METRIC_LOAD_ALL(td, tr, ts);
+      fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
+    }
     pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
   }
@@ -277,11 +322,11 @@ static void *fetch_worker_thread(void *arg) {
       if (g_nodedb_last_fetch > prev) { succeeded = 1; break; }
 
       /* Backoff before next attempt (if any) */
-  pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_retries++; pthread_mutex_unlock(&g_metrics_lock);
+  METRIC_INC_RETRIES();
   if (attempt + 1 < g_fetch_retries) sleep(g_fetch_backoff_initial << attempt);
     }
 
-  if (succeeded) { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_successes++; pthread_mutex_unlock(&g_metrics_lock); }
+  if (succeeded) { METRIC_INC_SUCCESS(); }
 
   /* Notify any waiter(s) attached to this request */
     pthread_mutex_lock(&rq->m);
@@ -337,6 +382,7 @@ static int h_discover(http_request_t *r); static int h_embedded_appjs(http_reque
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
 static int h_fetch_metrics(http_request_t *r);
+static int h_fetch_debug(http_request_t *r);
 static int h_traceroute(http_request_t *r);
 
 /* Forward declarations for device discovery helpers used by background worker */
@@ -1872,6 +1918,13 @@ static int h_status(http_request_t *r) {
   (void)vgen_n;
   if (generate_versions_json(&vgen, &vgen_n) != 0) { if (vgen) { free(vgen); vgen = NULL; vgen_n = 0; } }
 
+  /* fetch queue and metrics */
+  int qlen = 0; struct fetch_req *fit = NULL; unsigned long m_d=0, m_r=0, m_s=0;
+  pthread_mutex_lock(&g_fetch_q_lock);
+  fit = g_fetch_q_head; while (fit) { qlen++; fit = fit->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  METRIC_LOAD_ALL(m_d, m_r, m_s);
+
   /* default route */
   char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
   if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout) {
@@ -1879,6 +1932,8 @@ static int h_status(http_request_t *r) {
     p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } }
     free(rout);
   }
+
+  APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu},", qlen, m_d, m_r, m_s);
 
 
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
@@ -2602,10 +2657,8 @@ static int h_nodedb_refresh(http_request_t *r) {
   static int h_fetch_metrics(http_request_t *r) {
     char buf[256];
     pthread_mutex_lock(&g_metrics_lock);
-    unsigned long dropped = g_metric_fetch_dropped;
-    unsigned long retries = g_metric_fetch_retries;
-    unsigned long successes = g_metric_fetch_successes;
-    pthread_mutex_unlock(&g_metrics_lock);
+    unsigned long dropped = 0, retries = 0, successes = 0;
+    METRIC_LOAD_ALL(dropped, retries, successes);
     snprintf(buf, sizeof(buf), "{\"fetch_dropped\":%lu,\"fetch_retries\":%lu,\"fetch_successes\":%lu}", dropped, retries, successes);
     http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf));
     return 0;
@@ -2659,6 +2712,26 @@ static int h_status_py(http_request_t *r) {
   }
   /* unknown -> default to full status to preserve backward compatibility */
   return h_status(r);
+}
+
+/* Debug endpoint: current queue and queued request metadata */
+static int h_fetch_debug(http_request_t *r) {
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head;
+  while (it) { qlen++; it = it->next; }
+  /* Build JSON array of simple objects: {"force":0|1,"wait":0|1} */
+  char *buf = NULL; size_t cap = 1024; size_t len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); pthread_mutex_unlock(&g_fetch_q_lock); return 0; } buf[0]=0;
+  len += snprintf(buf+len, cap-len, "{\"queue_length\":%d,\"requests\":[", qlen);
+  it = g_fetch_q_head; int first=1; while (it) {
+    if (!first) len += snprintf(buf+len, cap-len, ","); first=0;
+    len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d}", it->force?1:0, it->wait?1:0);
+    if (len + 128 > cap) { cap *= 2; char *nb = realloc(buf, cap); if (!nb) break; buf = nb; }
+    it = it->next;
+  }
+  len += snprintf(buf+len, cap-len, "]}\n");
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf)); free(buf);
+  return 0;
 }
 
 /* capabilities endpoint */
@@ -3011,6 +3084,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_queue_max) g_cfg_fetch_queue_set = 1;
   if (data == &g_fetch_retries) g_cfg_fetch_retries_set = 1;
   if (data == &g_fetch_backoff_initial) g_cfg_fetch_backoff_set = 1;
+  if (data == &g_fetch_report_interval) g_cfg_fetch_report_set = 1;
   return 0;
 }
 
@@ -3042,6 +3116,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_queue_max", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_max, .addon = {0} },
   { .name = "fetch_retries", .set_plugin_parameter = &set_int_param, .data = &g_fetch_retries, .addon = {0} },
   { .name = "fetch_backoff_initial", .set_plugin_parameter = &set_int_param, .data = &g_fetch_backoff_initial, .addon = {0} },
+  { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -3172,6 +3247,24 @@ int olsrd_plugin_init(void) {
     }
   }
 
+  /* Fetch reporter interval: optional periodic stderr summary */
+  if (!g_cfg_fetch_report_set) {
+    const char *env_i = getenv("OLSRD_STATUS_FETCH_REPORT_INTERVAL");
+    if (env_i && env_i[0]) {
+      char *endptr = NULL; long v = strtol(env_i, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 3600) {
+        g_fetch_report_interval = (int)v;
+        fprintf(stderr, "[status-plugin] setting fetch_report_interval from env: %d\n", g_fetch_report_interval);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_REPORT_INTERVAL value: %s (ignored)\n", env_i);
+    }
+  }
+
+  /* Start periodic reporter if requested */
+  if (g_fetch_report_interval > 0) {
+    pthread_create(&g_fetch_report_thread, NULL, fetch_reporter, NULL);
+    pthread_detach(g_fetch_report_thread);
+  }
+
   const char *env_ttl = getenv("OLSRD_STATUS_PLUGIN_NODEDB_TTL");
   if (env_ttl && env_ttl[0] && !g_cfg_nodedb_ttl_set) {
       char *endptr = NULL; long t = strtol(env_ttl, &endptr, 10);
@@ -3242,6 +3335,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/versions.json", &h_versions_json);
   http_server_register_handler("/nodedb.json", &h_nodedb);
   http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
+  http_server_register_handler("/fetch_debug", &h_fetch_debug);
   http_server_register_handler("/traceroute", &h_traceroute);
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
   /* start background workers */
