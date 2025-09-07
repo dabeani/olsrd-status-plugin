@@ -674,6 +674,17 @@ function populateFetchStats(fs) {
   html += '<div style="display:flex; gap:8px; align-items:center;">';
   html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
   html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
+  // interval selector: persisted in localStorage as 'fetch_auto_interval_ms'
+  html += '<select id="fetch-stats-interval" class="input-sm form-control" style="width:120px; display:inline-block; margin-right:6px;">';
+  html += '<option value="0">Auto off</option>';
+  html += '<option value="5000">5s</option>';
+  html += '<option value="10000">10s</option>';
+  html += '<option value="15000">15s</option>';
+  html += '<option value="30000">30s</option>';
+  html += '<option value="60000">60s</option>';
+  html += '<option value="120000">2m</option>';
+  html += '<option value="300000">5m</option>';
+  html += '</select>';
   html += '<button id="fetch-stats-autorefresh" class="btn btn-xs btn-default" title="Toggle auto-refresh">Auto</button>';
   html += '</div></div>';
     html += '<div class="panel-body" style="padding:10px">';
@@ -730,10 +741,37 @@ function populateFetchStats(fs) {
 
     // Auto-refresh toggle logic
     var autoBtn = document.getElementById('fetch-stats-autorefresh');
-    if (!window._fetch_auto_interval_ms) window._fetch_auto_interval_ms = 15000; // default 15s
+    var intervalSel = document.getElementById('fetch-stats-interval');
+    // derive default interval: prefer persisted localStorage, then backend hint, then default 15000
+    try {
+      var persisted = parseInt(localStorage.getItem('fetch_auto_interval_ms'), 10);
+      if (!isNaN(persisted)) {
+        window._fetch_auto_interval_ms = persisted;
+      } else if (fs && fs.fetch_auto_refresh_ms) {
+        window._fetch_auto_interval_ms = parseInt(fs.fetch_auto_refresh_ms, 10) || 15000;
+      } else if (!window._fetch_auto_interval_ms) {
+        window._fetch_auto_interval_ms = 15000; // default 15s
+      }
+    } catch(e) { if (!window._fetch_auto_interval_ms) window._fetch_auto_interval_ms = 15000; }
     if (!window._fetch_auto_handle) window._fetch_auto_handle = null;
+    // set selector to current value
+    try { if (intervalSel) intervalSel.value = String(window._fetch_auto_interval_ms || 0); } catch(e){}
+    // change handler: persist & restart if needed
+    if (intervalSel) intervalSel.addEventListener('change', function(){
+      try {
+        var v = parseInt(intervalSel.value, 10) || 0;
+        window._fetch_auto_interval_ms = v;
+        localStorage.setItem('fetch_auto_interval_ms', String(v));
+        // if running, restart with new interval
+        if (window._fetch_auto_handle) {
+          clearInterval(window._fetch_auto_handle); window._fetch_auto_handle = null;
+          if (v > 0) window._fetch_auto_handle = setInterval(function(){ try { document.getElementById('fetch-stats-refresh').click(); } catch(e){} }, v);
+        }
+      } catch(e){}
+    });
     function startAutoRefresh() {
       if (window._fetch_auto_handle) return;
+      if (!window._fetch_auto_interval_ms || window._fetch_auto_interval_ms <= 0) return; // disabled
       window._fetch_auto_handle = setInterval(function(){ try { document.getElementById('fetch-stats-refresh').click(); } catch(e){} }, window._fetch_auto_interval_ms);
       if (autoBtn) autoBtn.classList.add('btn-success');
     }
@@ -753,7 +791,7 @@ function populateFetchStats(fs) {
       fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
     });
 
-    // Update top header/nav indicator based on severity
+  // Update top header/nav indicator based on severity
     try {
       var hostEl = document.getElementById('nav-host');
       if (hostEl) {
@@ -764,17 +802,37 @@ function populateFetchStats(fs) {
         if (qcls === 'crit') {
           iconHtml = '<span class="text-danger" style="margin-right:6px;"><span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span></span>';
           hostEl.style.background = '#ffecec';
+          hostEl.classList.add('fetch-crit-blink');
         } else if (qcls === 'warn') {
           iconHtml = '<span class="text-warning" style="margin-right:6px;"><span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span></span>';
           hostEl.style.background = '#fff6e5';
+          hostEl.classList.remove('fetch-crit-blink');
         } else {
           // clear any previous highlight
           hostEl.style.background = '';
+          hostEl.classList.remove('fetch-crit-blink');
         }
         // write back with icon and hostname preserved
         var prefix = '- ';
         if (hostnameSpan) hostEl.innerHTML = prefix + iconHtml + '<span id="hostname">' + hostText + '</span>'; else hostEl.innerHTML = prefix + iconHtml + hostText;
         hostEl.title = 'Fetch queue: queued=' + queued + ', dropped=' + dropped + ', retries=' + retries;
+        // when crit, show toast with short message
+        try {
+          var toast = document.getElementById('fetch-toast');
+          var toastMsg = document.getElementById('fetch-toast-msg');
+          if (qcls === 'crit') {
+            if (toast && toastMsg) {
+              toastMsg.textContent = 'Queued=' + queued + ', Dropped=' + dropped + ', Retries=' + retries;
+              toast.style.display = 'block';
+            }
+          } else {
+            if (toast) toast.style.display = 'none';
+          }
+        } catch(e){}
+        // make header clickable to open fetch debug modal
+        try {
+          hostEl.onclick = function(){ var dbgModal = document.getElementById('fetch-debug-modal'); if (dbgModal) dbgModal.style.display = 'block'; var body = document.getElementById('fetch-debug-body'); if (body) { body.textContent='Loading...'; fetch('/fetch_debug', {cache:'no-store'}).then(function(r){return r.text();}).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; }); } };
+        } catch(e){}
       }
     } catch(e) { /* ignore header update errors */ }
 
