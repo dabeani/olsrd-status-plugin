@@ -21,7 +21,9 @@
 #if defined(__APPLE__) || defined(__linux__)
 # include <execinfo.h>
 #endif
+#ifdef HAVE_LIBCURL
 #include <curl/curl.h>
+#endif
 
 #include "httpd.h"
 #include "util.h"
@@ -767,6 +769,7 @@ static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) r
 static void fetch_remote_nodedb(void);
 
 /* Helper used by libcurl to collect response data into a growing buffer */
+#ifdef HAVE_LIBCURL
 struct curl_fetch {
   char *buf;
   size_t len;
@@ -783,6 +786,7 @@ static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata
   cf->buf[cf->len] = '\0';
   return add;
 }
+#endif
 
 /* RFC1123 time formatter for HTTP Last-Modified header */
 static void format_rfc1123_time(time_t t, char *out, size_t outlen) {
@@ -822,7 +826,8 @@ static void fetch_remote_nodedb(void) {
   }
   /* If not successful and URL is https or internal fetch failed, try libcurl first, then fall back to spawning curl if available */
   if (!success) {
-    /* libcurl attempt (if libcurl initialized in the environment) */
+#ifdef HAVE_LIBCURL
+    /* libcurl attempt (if detected at build time) */
     CURL *c = curl_easy_init();
     if (c) {
       struct curl_fetch cf = { NULL, 0 };
@@ -844,6 +849,7 @@ static void fetch_remote_nodedb(void) {
         if (cf.buf) free(cf.buf);
       }
     }
+#endif
 
     if (!success) {
       const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};

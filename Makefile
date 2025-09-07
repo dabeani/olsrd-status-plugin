@@ -20,7 +20,16 @@ CFLAGS   += -fPIC
 CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_SRC) -Isrc -Irev/discover
 WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wmissing-prototypes
 LDFLAGS  += -shared
-LDLIBS   += -lpthread -lcurl
+LDLIBS   += -lpthread
+
+# Try to detect libcurl via pkg-config. If present, add its cflags/libs
+PKG_CONFIG ?= pkg-config
+ifeq ($(shell $(PKG_CONFIG) --exists libcurl 2>/dev/null; echo $$?),0)
+	CURL_CFLAGS := $(shell $(PKG_CONFIG) --cflags libcurl)
+	CURL_LIBS := $(shell $(PKG_CONFIG) --libs libcurl)
+	CPPFLAGS += $(CURL_CFLAGS) -DHAVE_LIBCURL=1
+	LDLIBS += $(CURL_LIBS)
+endif
 
 PREFIX   ?= /usr
 LIBDIR   ?= $(PREFIX)/lib/olsrd
