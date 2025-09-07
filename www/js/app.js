@@ -623,14 +623,24 @@ function updateUI(data) {
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
   try { setText('main-host', data.hostname || ''); } catch(e) {}
   try {
-    // Build FQDN: prefer explicit node identifiers if provided by backend.
+    // Build FQDN explicitly from backend fields. Prefer explicit node identifiers
+    // (data.node, data.nodename, data.node_name, data.net) and fall back to a
+    // hint from data.versions.host. If the node hint is missing or equals the
+    // literal token 'nodename', attempt to substitute the real nodename from the
+    // cached nodedb using the node's IP (data.ipv4 or data.ip).
     var shortHost = data.hostname || '';
-    var nodePartRaw = data.node || data.nodename || data.node_name || data.net || '';
-    // Try to derive a node hint from versions.host if nothing else
-    if (!nodePartRaw && data.versions && data.versions.host) {
-      try { nodePartRaw = String(data.versions.host).split('.')[0] || nodePartRaw; } catch(_) {}
+    var nodeHint = data.node || data.nodename || data.node_name || data.net || '';
+    if (!nodeHint && data.versions && data.versions.host) {
+      try { nodeHint = String(data.versions.host).split('.')[0] || nodeHint; } catch(_) {}
     }
-    var nodePart = nodePartRaw || 'nodename';
+    var ipKey = data.ipv4 || data.ip || '';
+    var nodePart = nodeHint || '';
+    try {
+      if ((!nodePart || nodePart === 'nodename') && ipKey && window._nodedb_cache && window._nodedb_cache[ipKey] && window._nodedb_cache[ipKey].n) {
+        nodePart = window._nodedb_cache[ipKey].n;
+      }
+    } catch(e) { /* ignore */ }
+    if (!nodePart) nodePart = 'nodename';
     var fqdn = '';
     if (shortHost) {
       if (nodePart.indexOf('wien.funkfeuer') !== -1 || nodePart.indexOf('.') !== -1) {
@@ -639,9 +649,9 @@ function updateUI(data) {
         fqdn = shortHost + '.' + nodePart + '.wien.funkfeuer.at';
       }
     } else {
-      fqdn = shortHost; // empty
+      fqdn = shortHost;
     }
-    populateNavHost(fqdn, data.ipv4 || data.ip || '');
+    populateNavHost(fqdn, ipKey);
   } catch(e) {}
   // render default route if available (hostname link + ip link + device)
   try {
