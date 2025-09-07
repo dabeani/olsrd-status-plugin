@@ -817,8 +817,9 @@ static void fetch_remote_nodedb(void) {
   /* Prefer internal HTTP fetch for plain http:// URLs to avoid spawning curl. */
   int success = 0;
   if (strncmp(g_nodedb_url, "http://", 7) == 0) {
+    fprintf(stderr, "[status-plugin] nodedb fetch: attempting internal HTTP fetch %s\n", g_nodedb_url);
     if (util_http_get_url(g_nodedb_url, &fresh, &fn, 5) == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
-      fprintf(stderr, "[status-plugin] nodedb fetch succeeded via internal http fetch, got %zu bytes\n", fn);
+      fprintf(stderr, "[status-plugin] nodedb fetch: method=internal_http success, got %zu bytes\n", fn);
       success = 1;
     } else {
       if (fresh) { free(fresh); fresh = NULL; fn = 0; }
@@ -828,6 +829,7 @@ static void fetch_remote_nodedb(void) {
   if (!success) {
 #ifdef HAVE_LIBCURL
     /* libcurl attempt (if detected at build time) */
+    fprintf(stderr, "[status-plugin] nodedb fetch: attempting libcurl fetch %s\n", g_nodedb_url);
     CURL *c = curl_easy_init();
     if (c) {
       struct curl_fetch cf = { NULL, 0 };
@@ -844,10 +846,13 @@ static void fetch_remote_nodedb(void) {
       curl_slist_free_all(hdr);
       curl_easy_cleanup(c);
       if (cres == CURLE_OK && cf.buf && cf.len > 0 && validate_nodedb_json(cf.buf, cf.len)) {
-        fresh = cf.buf; fn = cf.len; success = 1; fprintf(stderr, "[status-plugin] nodedb fetch succeeded via libcurl, got %zu bytes\n", fn);
+        fresh = cf.buf; fn = cf.len; success = 1; fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl success, got %zu bytes\n", fn);
       } else {
         if (cf.buf) free(cf.buf);
+        fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl failed (curl code=%d)\n", (int)cres);
       }
+    } else {
+      fprintf(stderr, "[status-plugin] nodedb fetch: libcurl init failed\n");
     }
 #endif
 
@@ -855,13 +860,18 @@ static void fetch_remote_nodedb(void) {
     if (!success) {
       const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};
       for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) {
+        fprintf(stderr, "[status-plugin] nodedb fetch: attempting external curl at %s\n", *curl_path);
         char cmd[1024];
         snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, g_nodedb_url);
         if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
-          fprintf(stderr, "[status-plugin] nodedb fetch succeeded with %s, got %zu bytes\n", *curl_path, fn);
+          fprintf(stderr, "[status-plugin] nodedb fetch: method=external_curl success with %s, got %zu bytes\n", *curl_path, fn);
           success = 1; break;
         } else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } }
       }
+    }
+#else
+    if (!success) {
+      fprintf(stderr, "[status-plugin] nodedb fetch: external curl fallback is DISABLED at build time\n");
     }
 #endif
   }
