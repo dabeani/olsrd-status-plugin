@@ -449,6 +449,8 @@ static void enqueue_fetch_request(int force, int wait, int type) {
   /* Accept into queue */
   if (g_fetch_q_tail) g_fetch_q_tail->next = rq; else g_fetch_q_head = rq;
   g_fetch_q_tail = rq;
+  /* update enqueue debug counter while holding queue lock */
+  g_debug_enqueue_count++;
   pthread_cond_signal(&g_fetch_q_cv);
   fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
   pthread_mutex_unlock(&g_fetch_q_lock);
