@@ -2074,10 +2074,34 @@ static int h_nodedb_refresh(http_request_t *r) {
 /* /status.py dispatch endpoint: map ?get=<name> to existing handlers without reimplementing them */
 static int h_status_py(http_request_t *r) {
   char v[128] = "";
-  if (!get_query_param(r, "get", v, sizeof(v))) {
-    /* default to full status */
+  /* Support both forms used by bmk-webstatus.py:
+   *  - /status.py?get=status
+   *  - /status.py?status         (bare key, no value)
+   *  - /status.py?status=        (key with empty value)
+   * Check explicit get= first, then fall back to checking known bare keys.
+   */
+  if (get_query_param(r, "get", v, sizeof(v))) {
+    /* use provided get= value */
+  } else {
+    /* check for bare keys that the Python script maps to get=<name> */
+    char t[32];
+    if (get_query_param(r, "status", t, sizeof(t))) return h_status(r);
+    if (get_query_param(r, "connections", t, sizeof(t))) return h_connections(r);
+    if (get_query_param(r, "discover", t, sizeof(t))) return h_discover(r);
+    if (get_query_param(r, "airos", t, sizeof(t))) return h_airos(r);
+    if (get_query_param(r, "ipv6", t, sizeof(t))) return h_ipv6(r);
+    if (get_query_param(r, "ipv4", t, sizeof(t))) return h_ipv4(r);
+    if (get_query_param(r, "olsrd", t, sizeof(t))) return h_olsrd(r);
+    if (get_query_param(r, "jsoninfo", t, sizeof(t))) return h_jsoninfo(r);
+    if (get_query_param(r, "txtinfo", t, sizeof(t))) return h_txtinfo(r);
+    if (get_query_param(r, "traffic", t, sizeof(t))) return h_traffic(r);
+    if (get_query_param(r, "test", t, sizeof(t))) {
+      http_send_status(r,200,"OK"); http_printf(r,"Content-Type: text/plain; charset=utf-8\r\n\r\n"); http_printf(r,"test\n"); return 0;
+    }
+    /* no known param found -> default to full status */
     return h_status(r);
   }
+
   /* Map known values (match bmk-webstatus.py supported ?get values) */
   if (strcmp(v, "status") == 0) return h_status(r);
   if (strcmp(v, "connections") == 0) return h_connections(r);
