@@ -1767,6 +1767,20 @@ static void detect_olsr_processes(int *out_olsrd, int *out_olsr2);
 static int generate_versions_json(char **outbuf, size_t *outlen) {
   if (!outbuf || !outlen) return -1;
   *outbuf = NULL; *outlen = 0;
+  /* short-lived cache to avoid expensive regeneration when handlers call this repeatedly */
+  static char *versions_cache = NULL; static size_t versions_cache_n = 0; static time_t versions_cache_ts = 0;
+  static pthread_mutex_t versions_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+  const time_t TTL = 2; /* seconds */
+  time_t now = time(NULL);
+  /* if cache is fresh, return a duplicated copy to the caller */
+  pthread_mutex_lock(&versions_cache_lock);
+  if (versions_cache && versions_cache_n > 0 && (now - versions_cache_ts) < TTL) {
+    *outbuf = strdup(versions_cache);
+    if (*outbuf) *outlen = versions_cache_n;
+    pthread_mutex_unlock(&versions_cache_lock);
+    return 0;
+  }
+  pthread_mutex_unlock(&versions_cache_lock);
   char host[256] = ""; gethostname(host, sizeof(host)); host[sizeof(host)-1]=0;
   int olsrd_on=0, olsr2_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
 
@@ -1892,6 +1906,13 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   if (homes_out) free(homes_out);
   if (md5_out) free(md5_out);
   *outbuf = obuf; *outlen = strlen(obuf);
+  /* update cache (store a copy) */
+  pthread_mutex_lock(&versions_cache_lock);
+  if (versions_cache) { free(versions_cache); versions_cache = NULL; versions_cache_n = 0; }
+  versions_cache = strdup(obuf);
+  if (versions_cache) versions_cache_n = *outlen; else versions_cache_n = 0;
+  versions_cache_ts = time(NULL);
+  pthread_mutex_unlock(&versions_cache_lock);
   return 0;
 }
 
@@ -2030,8 +2051,11 @@ static int h_status(http_request_t *r) {
   /* default_route */
   /* attempt reverse DNS for default route IP to provide a hostname for the gateway */
   /* Try EdgeRouter path first */
-  /* versions: use internal generator rather than external script */
-  {
+  /* versions: use internal generator rather than external script (we generated vgen earlier) */
+  if (vgen && vgen_n > 0) {
+    APPEND("\"versions\":%s,", vgen);
+  } else {
+    /* fallback: try a quick generation (rare) */
     char *vtmp = NULL; size_t vtmp_n = 0;
     if (generate_versions_json(&vtmp, &vtmp_n) == 0 && vtmp && vtmp_n>0) {
       APPEND("\"versions\":%s,", vtmp);
@@ -2341,8 +2365,13 @@ static int h_status(http_request_t *r) {
      * For simplicity, re-generate versions JSON into vtmp and extract keys. generate_versions_json already freed its buffer
      * earlier, so we re-run it here to fetch the structured object. This is slightly redundant but safe.
      */
-    char *vtmp = NULL; size_t vtmp_n = 0;
-    if (generate_versions_json(&vtmp, &vtmp_n) == 0 && vtmp && vtmp_n>0) {
+    char *vtmp = NULL; size_t vtmp_n = 0; int vtmp_owned = 0;
+    if (vgen && vgen_n > 0) {
+      vtmp = vgen; vtmp_n = vgen_n; vtmp_owned = 0;
+    } else if (generate_versions_json(&vtmp, &vtmp_n) == 0 && vtmp && vtmp_n>0) {
+      vtmp_owned = 1;
+    }
+    if (vtmp && vtmp_n > 0) {
       char *autoup = NULL; size_t alen = 0;
       if (extract_json_value(vtmp, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
         APPEND(",\"autoupdate\":%s", autoup);
@@ -2358,7 +2387,7 @@ static int h_status(http_request_t *r) {
       } else {
         APPEND(",\"wizards\":\"no\"");
       }
-      free(vtmp);
+      if (vtmp_owned) { free(vtmp); vtmp = NULL; }
     } else {
       APPEND(",\"autoupdate\":{}" );
       APPEND(",\"wizards\":\"no\"");
