@@ -91,10 +91,8 @@ static int g_fetch_queue_warn = 50;
 static int g_fetch_queue_crit = 200;
 static int g_fetch_dropped_warn = 10;
 
-/* Counters / metrics */
-static unsigned long g_metric_fetch_dropped = 0; /* requests dropped due to full queue */
-static unsigned long g_metric_fetch_retries = 0; /* total retry attempts performed */
-static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
+/* Counters / metrics - storage moved into the non-atomic branch below when C11 atomics are unavailable */
+/* Mutex protecting non-atomic counters; always present so endpoints can lock it regardless of atomics availability */
 static pthread_mutex_t g_metrics_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Periodic reporter interval (seconds). 0 to disable. Configurable via PlParam 'fetch_report_interval' or env OLSRD_STATUS_FETCH_REPORT_INTERVAL */
@@ -104,20 +102,7 @@ static int g_cfg_fetch_queue_warn_set = 0;
 static int g_cfg_fetch_queue_crit_set = 0;
 static int g_cfg_fetch_dropped_warn_set = 0;
 static pthread_t g_fetch_report_thread = 0;
-
-static void *fetch_reporter(void *arg) {
-  (void)arg;
-  while (g_fetch_report_interval > 0) {
-    sleep(g_fetch_report_interval);
-    if (g_fetch_report_interval <= 0) break;
-    unsigned long d=0, r=0, s=0; METRIC_LOAD_ALL(d, r, s);
-    pthread_mutex_lock(&g_fetch_q_lock);
-    int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
-    pthread_mutex_unlock(&g_fetch_q_lock);
-    fprintf(stderr, "[status-plugin] fetch metrics: queued=%d dropped=%lu retries=%lu successes=%lu\n", qlen, d, r, s);
-  }
-  return NULL;
-}
+/* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
 /* Helper macros to update counters using atomics if available, else mutex */
 #if HAVE_C11_ATOMICS
@@ -127,12 +112,27 @@ static _Atomic unsigned long atom_fetch_successes = 0;
 #define METRIC_INC_DROPPED() atomic_fetch_add_explicit(&atom_fetch_dropped, 1UL, memory_order_relaxed)
 #define METRIC_INC_RETRIES() atomic_fetch_add_explicit(&atom_fetch_retries, 1UL, memory_order_relaxed)
 #define METRIC_INC_SUCCESS() atomic_fetch_add_explicit(&atom_fetch_successes, 1UL, memory_order_relaxed)
-#define METRIC_LOAD_ALL(d,r,s) do { d = atomic_load_explicit(&atom_fetch_dropped, memory_order_relaxed); r = atomic_load_explicit(&atom_fetch_retries, memory_order_relaxed); s = atomic_load_explicit(&atom_fetch_successes, memory_order_relaxed); } while(0)
+#define METRIC_LOAD_ALL(d,r,s) do { \
+    d = atomic_load_explicit(&atom_fetch_dropped, memory_order_relaxed); \
+    r = atomic_load_explicit(&atom_fetch_retries, memory_order_relaxed); \
+    s = atomic_load_explicit(&atom_fetch_successes, memory_order_relaxed); \
+    /* mark potentially-unused locals as used to avoid "set but not used" warnings */ \
+    (void)(r); (void)(s); \
+  } while(0)
 #else
+static unsigned long g_metric_fetch_dropped = 0; /* requests dropped due to full queue */
+static unsigned long g_metric_fetch_retries = 0; /* total retry attempts performed */
+static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
 #define METRIC_INC_DROPPED() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_dropped++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
 #define METRIC_INC_RETRIES() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_retries++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
 #define METRIC_INC_SUCCESS() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_successes++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
-#define METRIC_LOAD_ALL(d,r,s) do { pthread_mutex_lock(&g_metrics_lock); d = g_metric_fetch_dropped; r = g_metric_fetch_retries; s = g_metric_fetch_successes; pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#define METRIC_LOAD_ALL(d,r,s) do { \
+    pthread_mutex_lock(&g_metrics_lock); \
+    d = g_metric_fetch_dropped; r = g_metric_fetch_retries; s = g_metric_fetch_successes; \
+    /* mark potentially-unused locals as used to avoid "set but not used" warnings */ \
+    (void)(r); (void)(s); \
+    pthread_mutex_unlock(&g_metrics_lock); \
+  } while(0)
 #endif
 
 /* Simple fetch queue structures */
@@ -235,6 +235,21 @@ static void start_nodedb_worker(void) {
     g_fetch_worker_running = 1;
     pthread_t fth; pthread_create(&fth, NULL, fetch_worker_thread, NULL); pthread_detach(fth);
   }
+}
+
+/* Periodic reporter thread: prints fetch metrics to stderr every g_fetch_report_interval seconds */
+static void *fetch_reporter(void *arg) {
+  (void)arg;
+  while (g_fetch_report_interval > 0) {
+    sleep(g_fetch_report_interval);
+    if (g_fetch_report_interval <= 0) break;
+    unsigned long d=0, r=0, s=0; METRIC_LOAD_ALL(d, r, s);
+    pthread_mutex_lock(&g_fetch_q_lock);
+    int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    fprintf(stderr, "[status-plugin] fetch metrics: queued=%d dropped=%lu retries=%lu successes=%lu\n", qlen, d, r, s);
+  }
+  return NULL;
 }
 
 static void enqueue_fetch_request(int force, int wait) {
