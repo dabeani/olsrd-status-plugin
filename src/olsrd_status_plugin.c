@@ -3014,7 +3014,10 @@ static int h_fetch_debug(http_request_t *r) {
   char *buf = NULL; size_t cap = 1024; size_t len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); pthread_mutex_unlock(&g_fetch_q_lock); return 0; } buf[0]=0;
   len += snprintf(buf+len, cap-len, "{\"queue_length\":%d,\"requests\":[", qlen);
   it = g_fetch_q_head; int first=1; while (it) {
-    if (!first) len += snprintf(buf+len, cap-len, ","); first = 0;
+    if (!first) {
+      len += snprintf(buf+len, cap-len, ",");
+    }
+    first = 0;
     len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
     it = it->next;
   }
