@@ -2418,35 +2418,35 @@ static int h_status(http_request_t *r) {
 static int h_status_compat(http_request_t *r) {
   char *airos_raw = NULL; size_t airos_n = 0; util_read_file("/tmp/10-all.json", &airos_raw, &airos_n);
   /* versions/autoupdate/wizards */
-  char *vtmp = NULL; size_t vtmp_n = 0; if (generate_versions_json(&vtmp, &vtmp_n) != 0) { if (vtmp) { free(vtmp); vtmp = NULL; vtmp_n = 0; } }
+  char *vgen = NULL; size_t vgen_n = 0; if (generate_versions_json(&vgen, &vgen_n) != 0) { if (vgen) { free(vgen); vgen = NULL; vgen_n = 0; } }
 
-  char *out = NULL; size_t outcap = 4096, outlen = 0; out = malloc(outcap); if(!out){ send_json(r, "{}\n"); if(airos_raw) free(airos_raw); if(vtmp) free(vtmp); return 0; } out[0]=0;
+  char *out = NULL; size_t outcap = 4096, outlen = 0; out = malloc(outcap); if(!out){ send_json(r, "{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0; } out[0]=0;
   /* helper to append safely */
-  #define CAPPEND(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vtmp) free(vtmp); return 0;} if(outlen+(size_t)_n+1>outcap){ while(outcap<outlen+(size_t)_n+1) outcap*=2; char *nb=realloc(out,outcap); if(!nb){ free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vtmp) free(vtmp); return 0;} out=nb;} memcpy(out+outlen,_t,(size_t)_n); outlen+=(size_t)_n; out[outlen]=0; free(_t);} while(0)
+  #define CAPPEND(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0;} if(outlen+(size_t)_n+1>outcap){ while(outcap<outlen+(size_t)_n+1) outcap*=2; char *nb=realloc(out,outcap); if(!nb){ free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vgen) free(vgen); return 0;} out=nb;} memcpy(out+outlen,_t,(size_t)_n); outlen+=(size_t)_n; out[outlen]=0; free(_t);} while(0)
 
   CAPPEND("{");
   /* airosdata */
   if (airos_raw && airos_n>0) CAPPEND("\"airosdata\":%s", airos_raw); else CAPPEND("\"airosdata\":{}");
 
   /* autoupdate + wizards from versions JSON if available */
-  if (vtmp && vtmp_n>0) {
+  if (vgen && vgen_n>0) {
     char *autoup = NULL; size_t alen = 0;
-    if (extract_json_value(vtmp, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
+    if (extract_json_value(vgen, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
       CAPPEND(",\"autoupdate\":%s", autoup);
       free(autoup);
     } else {
       CAPPEND(",\"autoupdate\":{}");
     }
-    char *wiz = NULL; if (extract_json_value(vtmp, "autoupdate_wizards_installed", &wiz, NULL) == 0 && wiz) { CAPPEND(",\"wizards\":%s", wiz); free(wiz); } else { CAPPEND(",\"wizards\":\"no\""); }
+    char *wiz = NULL; if (extract_json_value(vgen, "autoupdate_wizards_installed", &wiz, NULL) == 0 && wiz) { CAPPEND(",\"wizards\":%s", wiz); free(wiz); } else { CAPPEND(",\"wizards\":\"no\""); }
   } else {
     CAPPEND(",\"autoupdate\":{}"); CAPPEND(",\"wizards\":\"no\"");
   }
 
   /* bootimage minimal: try to extract md5 from generated versions JSON */
-  if (vtmp && vtmp_n>0) {
+  if (vgen && vgen_n>0) {
     char *bm = NULL; size_t bml = 0;
-    if (extract_json_value(vtmp, "bootimage", &bm, &bml) == 0 && bm) {
-      /* bm is an object like {"md5":"..."} – reuse it directly */
+    if (extract_json_value(vgen, "bootimage", &bm, &bml) == 0 && bm) {
+      /* bm is an object like {\"md5\":\"...\"} – reuse it directly */
       CAPPEND(",\"bootimage\":%s", bm);
       free(bm);
     } else {
@@ -2484,7 +2484,7 @@ static int h_status_compat(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, outlen);
   if (out) free(out);
   if (airos_raw) free(airos_raw);
-  if (vtmp) free(vtmp);
+  if (vgen) free(vgen);
   return 0;
 }
 
