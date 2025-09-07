@@ -721,6 +721,13 @@ function populateFetchStats(fs) {
     var retries = fs.retry_count || fs.retries || 0;
     var processed = fs.total_processed || fs.processed || 0;
     var successes = fs.successes || fs.fetch_successes || 0;
+    // New debug counters provided by backend
+    var enqueued_total = fs.enqueued || fs.enqueued_total || 0;
+    var enqueued_nodedb = fs.enqueued_nodedb || 0;
+    var enqueued_discover = fs.enqueued_discover || 0;
+    var processed_total = fs.processed || fs.processed_total || 0;
+    var processed_nodedb = fs.processed_nodedb || 0;
+    var processed_discover = fs.processed_discover || 0;
 
     // thresholds (backend may export thresholds for front-end convenience)
     var thresholds = (fs.thresholds && typeof fs.thresholds === 'object') ? fs.thresholds : {};
@@ -768,7 +775,22 @@ function populateFetchStats(fs) {
     var pct = Math.min(100, Math.round((queued / denom) * 100));
     var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
     html += '<div class="progress" style="height:16px; margin-bottom:6px">';
-    html += '<div class="progress-bar '+progClass+'" role="progressbar" aria-valuenow="'+pct+'" aria-valuemin="0" aria-valuemax="100" style="width:'+pct+'%">';
+    html += '<div style="display:flex; gap:8px; align-items:center;">';
+    html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
+    html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
+    // interval selector: persisted in localStorage as 'fetch_auto_interval_ms'
+    html += '<select id="fetch-stats-interval" class="input-sm form-control" style="width:120px; display:inline-block; margin-right:6px;">';
+    html += '<option value="0">Auto off</option>';
+    html += '<option value="5000">5s</option>';
+    html += '<option value="10000">10s</option>';
+    html += '<option value="15000">15s</option>';
+    html += '<option value="30000">30s</option>';
+    html += '<option value="60000">60s</option>';
+    html += '<option value="120000">2m</option>';
+    html += '<option value="300000">5m</option>';
+    html += '</select>';
+    html += '<button id="fetch-stats-autorefresh" class="btn btn-xs btn-default" title="Toggle auto-refresh">Auto</button>';
+    html += '</div></div>';
     html += pct+'%';
     html += '</div></div>';
     html += '<div class="small-muted">Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn+'</div>';
