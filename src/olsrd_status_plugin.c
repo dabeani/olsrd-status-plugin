@@ -1608,6 +1608,8 @@ static int h_status(http_request_t *r) {
   }
   APPEND("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APPEND("\"olsrd_on\":%s", olsrd_on?"true":"false");
+  /* legacy compatibility: expose olsrd4watchdog object with state on/off to match bmk-webstatus style */
+  APPEND(",\"olsrd4watchdog\":{\"state\":\"%s\"}", olsrd_on?"on":"off");
 
   /* include raw olsr JSON for neighbors/routes/topology when available to mimic python script */
   if (olsr_neighbors_raw && olnn>0) { APPEND(",\"olsr_neighbors_raw\":%s", olsr_neighbors_raw); }
