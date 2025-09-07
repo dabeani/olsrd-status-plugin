@@ -671,10 +671,11 @@ function populateFetchStats(fs) {
     html += '<div class="panel panel-default">';
     html += '<div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">';
     html += '<div style="font-weight:600">Fetch Queue</div>';
-    html += '<div style="display:flex; gap:8px; align-items:center;">';
-    html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
-    html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
-    html += '</div></div>';
+  html += '<div style="display:flex; gap:8px; align-items:center;">';
+  html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
+  html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
+  html += '<button id="fetch-stats-autorefresh" class="btn btn-xs btn-default" title="Toggle auto-refresh">Auto</button>';
+  html += '</div></div>';
     html += '<div class="panel-body" style="padding:10px">';
     html += '<div class="row">';
     // left: badges + progress
@@ -726,6 +727,22 @@ function populateFetchStats(fs) {
         fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
       }).finally(function(){ try{ if (refSpinner) refSpinner.classList.remove('rotate'); ref.disabled=false; }catch(e){} });
     });
+
+    // Auto-refresh toggle logic
+    var autoBtn = document.getElementById('fetch-stats-autorefresh');
+    if (!window._fetch_auto_interval_ms) window._fetch_auto_interval_ms = 15000; // default 15s
+    if (!window._fetch_auto_handle) window._fetch_auto_handle = null;
+    function startAutoRefresh() {
+      if (window._fetch_auto_handle) return;
+      window._fetch_auto_handle = setInterval(function(){ try { document.getElementById('fetch-stats-refresh').click(); } catch(e){} }, window._fetch_auto_interval_ms);
+      if (autoBtn) autoBtn.classList.add('btn-success');
+    }
+    function stopAutoRefresh() {
+      if (!window._fetch_auto_handle) return;
+      clearInterval(window._fetch_auto_handle); window._fetch_auto_handle = null;
+      if (autoBtn) autoBtn.classList.remove('btn-success');
+    }
+    if (autoBtn) autoBtn.addEventListener('click', function(){ if (window._fetch_auto_handle) stopAutoRefresh(); else startAutoRefresh(); });
 
     // debug modal
     var dbg = document.getElementById('fetch-stats-debug');
@@ -1190,7 +1207,24 @@ document.addEventListener('DOMContentLoaded', function() {
 function populateNavHost(host, ip) {
   var el = document.getElementById('nav-host');
   if (!el) return;
-  el.innerHTML = ip + ' - ' + host;
+  // Preserve existing icon markup (if present) and only replace the hostname text
+  var hostnameSpan = el.querySelector('#hostname');
+  if (hostnameSpan) {
+    hostnameSpan.textContent = host;
+  } else {
+    // fallback: set text content
+    el.innerHTML = ip + ' - ' + host;
+  }
+  // make nav-host clickable to open fetch-debug modal (non-destructive)
+  try {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', function(){
+      var modal = document.getElementById('fetch-debug-modal'); var body = document.getElementById('fetch-debug-body');
+      if (!modal || !body) return;
+      body.textContent = 'Loading...'; modal.style.display = 'block';
+      fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
+    });
+  } catch(e) {}
 }
 
 function setLoginLink(url, port) {

@@ -26,6 +26,15 @@
   .fetch-badge { display:inline-block; padding:5px 10px; margin-right:6px; border-radius:6px; background:#f0f6ff; color:#013369; font-size:90%; border:1px solid #c9deff; }
   .fetch-badge.warn { background:#fff6e5; color:#6a4a00; border-color:#ffe9b8; }
   .fetch-badge.crit { background:#ffecec; color:#6a0000; border-color:#ffb8b8; }
+  /* Nav host styling */
+  #nav-host { font-weight:600; }
+  #nav-host .glyphicon { vertical-align:middle; margin-right:6px; }
+  #nav-host #hostname { color: #013369; margin-left:4px; }
+  /* Responsive: hide hostname text on narrow viewports to avoid wrapping */
+  @media (max-width: 600px) {
+    #nav-host #hostname { display:none; }
+    #nav-host { padding-right:6px; }
+  }
     </style>
   </head>
   <body>
