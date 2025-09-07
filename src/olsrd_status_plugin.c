@@ -650,6 +650,7 @@ static int h_discover(http_request_t *r); static int h_embedded_appjs(http_reque
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
 static int h_fetch_metrics(http_request_t *r);
+static int h_prometheus_metrics(http_request_t *r);
 static int h_fetch_debug(http_request_t *r);
 static int h_traceroute(http_request_t *r);
 
@@ -3068,6 +3069,49 @@ static int h_status_py(http_request_t *r) {
   return h_status(r);
 }
 
+/* Prometheus-compatible metrics endpoint (simple, non-exhaustive) */
+static int h_prometheus_metrics(http_request_t *r) {
+  char buf[1024]; size_t off = 0;
+  unsigned long d=0, rts=0, s=0; METRIC_LOAD_ALL(d, rts, s);
+  unsigned long de=0, den=0, ded=0, dp=0, dpn=0, dpd=0; DEBUG_LOAD_ALL(de, den, ded, dp, dpn, dpd);
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_queue_length Number of pending fetch requests\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_queue_length gauge\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_queue_length %d\n", qlen);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_dropped_total Total dropped fetch requests\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_dropped_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_dropped_total %lu\n", d);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_retries_total Total fetch retry attempts\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_retries_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_retries_total %lu\n", rts);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_successes_total Total successful fetches\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_successes_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_successes_total %lu\n", s);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_enqueued_total Total enqueue operations\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_enqueued_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_enqueued_total %lu\n", de);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_processed_total Total processed operations\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_processed_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_processed_total %lu\n", dp);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_enqueued_nodedb_total Enqueued NodeDB fetches\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_enqueued_nodedb_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_enqueued_nodedb_total %lu\n", den);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_enqueued_discover_total Enqueued discover ops\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_enqueued_discover_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_enqueued_discover_total %lu\n", ded);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_processed_nodedb_total Processed NodeDB ops\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_processed_nodedb_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_processed_nodedb_total %lu\n", dpn);
+  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_processed_discover_total Processed discover ops\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_processed_discover_total counter\n");
+  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_processed_discover_total %lu\n", dpd);
+
+  http_send_status(r,200,"OK"); http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf));
+  return 0;
+}
+
 /* Debug endpoint: current queue and queued request metadata */
 static int h_fetch_debug(http_request_t *r) {
   pthread_mutex_lock(&g_fetch_q_lock);
@@ -3716,6 +3760,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/olsrd.json", &h_olsrd_json);
   http_server_register_handler("/capabilities", &h_capabilities_local);
   http_server_register_handler("/nodedb/refresh", &h_nodedb_refresh);
+  http_server_register_handler("/metrics", &h_prometheus_metrics);
   http_server_register_handler("/txtinfo",  &h_txtinfo);
   http_server_register_handler("/jsoninfo", &h_jsoninfo);
   http_server_register_handler("/olsrd",    &h_olsrd);
