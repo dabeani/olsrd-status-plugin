@@ -158,6 +158,9 @@ static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_fetch_q_cv   = PTHREAD_COND_INITIALIZER;
 static int g_fetch_worker_running = 0;
 
+/* max seconds to wait when a caller requests wait=1 to avoid indefinite block */
+static int g_fetch_wait_timeout = 30;
+
 /* Debug counters for diagnostics */
 static unsigned long g_debug_enqueue_count = 0;
 static unsigned long g_debug_processed_count = 0;
@@ -392,7 +395,14 @@ static void enqueue_fetch_request(int force, int wait, int type) {
     /* If caller asked to wait, wait on the existing request to complete */
     if (wait) {
       pthread_mutex_lock(&found->m);
-      while (!found->done) pthread_cond_wait(&found->cv, &found->m);
+      struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += g_fetch_wait_timeout;
+      int wrc = 0;
+      while (!found->done && wrc == 0) {
+        wrc = pthread_cond_timedwait(&found->cv, &found->m, &ts);
+      }
+      if (!found->done) {
+        fprintf(stderr, "[status-plugin] enqueue: wait timed out after %d seconds for existing request type=%d\n", g_fetch_wait_timeout, found->type);
+      }
       pthread_mutex_unlock(&found->m);
     }
   fprintf(stderr, "[status-plugin] enqueue: deduped request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
@@ -428,7 +438,12 @@ static void enqueue_fetch_request(int force, int wait, int type) {
 
   if (wait) {
     pthread_mutex_lock(&rq->m);
-    while (!rq->done) pthread_cond_wait(&rq->cv, &rq->m);
+    struct timespec ts2; clock_gettime(CLOCK_REALTIME, &ts2); ts2.tv_sec += g_fetch_wait_timeout;
+    int wrc2 = 0;
+    while (!rq->done && wrc2 == 0) { wrc2 = pthread_cond_timedwait(&rq->cv, &rq->m, &ts2); }
+    if (!rq->done) {
+      fprintf(stderr, "[status-plugin] enqueue: own request wait timed out after %d seconds type=%d\n", g_fetch_wait_timeout, rq->type);
+    }
     pthread_mutex_unlock(&rq->m);
     pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv);
     free(rq);
