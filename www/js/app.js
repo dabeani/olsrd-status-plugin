@@ -1267,13 +1267,24 @@ document.addEventListener('DOMContentLoaded', function() {
 function populateNavHost(host, ip) {
   var el = document.getElementById('nav-host');
   if (!el) return;
-  // Preserve existing icon markup (if present) and only replace the hostname text
-  var hostnameSpan = el.querySelector('#hostname');
-  if (hostnameSpan) {
-    hostnameSpan.textContent = host;
-  } else {
-    // fallback: set text content
-    el.innerHTML = ip + ' - ' + host;
+  // Ensure the nav shows "IP - hostname". Preserve any icon markup if present.
+  try {
+    var hostnameSpan = el.querySelector('#hostname');
+    // detect an existing icon (a glyphicon inside a wrapper span)
+    var iconElem = el.querySelector('.glyphicon');
+    var iconHtml = '';
+    if (iconElem) {
+      // prefer the immediate parent so we keep styling wrappers
+      if (iconElem.parentNode && iconElem.parentNode.outerHTML) iconHtml = iconElem.parentNode.outerHTML; else iconHtml = iconElem.outerHTML || '';
+    }
+    // Build new content: prefix, optional IP, optional icon, then hostname span
+    var ipPart = (ip ? (ip + ' - ') : '');
+    var newInner = '- ' + ipPart + (iconHtml || '') + '<span id="hostname">' + (host || '') + '</span>';
+    // Replace contents atomically
+    el.innerHTML = newInner;
+  } catch (e) {
+    // fallback simple text
+    el.textContent = (ip ? ip + ' - ' : '') + (host || '');
   }
   // make nav-host clickable to open fetch-debug modal (non-destructive)
   try {
