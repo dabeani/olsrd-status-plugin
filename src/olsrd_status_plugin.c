@@ -68,6 +68,27 @@ static int g_nodedb_fetch_in_progress = 0;
 /* If set to 1, write a copy of the node_db to disk (disabled by default to protect flash) */
 static int g_nodedb_write_disk = 0;
 
+/* Configurable startup wait (seconds) for initial DNS/network readiness. */
+static int g_nodedb_startup_wait = 30;
+
+/* Simple fetch queue structures */
+struct fetch_req {
+  int force; /* bypass TTL */
+  int wait;  /* block caller until done */
+  int done;
+  pthread_mutex_t m;
+  pthread_cond_t  cv;
+  struct fetch_req *next;
+};
+static struct fetch_req *g_fetch_q_head = NULL;
+static struct fetch_req *g_fetch_q_tail = NULL;
+static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_fetch_q_cv   = PTHREAD_COND_INITIALIZER;
+static int g_fetch_worker_running = 0;
+
+static void enqueue_fetch_request(int force, int wait);
+static void *fetch_worker_thread(void *arg);
+
 /* Devices cache populated by background worker to avoid blocking HTTP handlers */
 static char *g_devices_cache = NULL; /* JSON array string (malloc'd) */
 static size_t g_devices_cache_len = 0;
@@ -79,6 +100,11 @@ static int g_devices_worker_running = 0;
 static int ubnt_discover_output(char **out, size_t *outlen);
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen);
 static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len);
+
+/* Forward declarations for helpers used by fetch worker */
+static void get_primary_ipv4(char *out, size_t outlen);
+static int buffer_has_content(const char *b, size_t n);
+static int validate_nodedb_json(const char *buf, size_t len);
 
 /* Worker: periodically refresh devices cache using ubnt_discover_output + normalize_ubnt_devices */
 static void *devices_cache_worker(void *arg) {
@@ -135,6 +161,78 @@ static void start_nodedb_worker(void) {
   pthread_t th;
   pthread_create(&th, NULL, nodedb_cache_worker, NULL);
   pthread_detach(th);
+  /* start single fetch worker thread */
+  if (!g_fetch_worker_running) {
+    g_fetch_worker_running = 1;
+    pthread_t fth; pthread_create(&fth, NULL, fetch_worker_thread, NULL); pthread_detach(fth);
+  }
+}
+
+static void enqueue_fetch_request(int force, int wait) {
+  struct fetch_req *rq = calloc(1, sizeof(*rq));
+  if (!rq) return;
+  rq->force = force; rq->wait = wait; rq->done = 0; rq->next = NULL;
+  pthread_mutex_init(&rq->m, NULL); pthread_cond_init(&rq->cv, NULL);
+  pthread_mutex_lock(&g_fetch_q_lock);
+  if (g_fetch_q_tail) g_fetch_q_tail->next = rq; else g_fetch_q_head = rq;
+  g_fetch_q_tail = rq;
+  pthread_cond_signal(&g_fetch_q_cv);
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  if (wait) {
+    pthread_mutex_lock(&rq->m);
+    while (!rq->done) pthread_cond_wait(&rq->cv, &rq->m);
+    pthread_mutex_unlock(&rq->m);
+    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv);
+    free(rq);
+  }
+}
+
+static void *fetch_worker_thread(void *arg) {
+  (void)arg;
+  while (g_fetch_worker_running) {
+    pthread_mutex_lock(&g_fetch_q_lock);
+    while (!g_fetch_q_head && g_fetch_worker_running) pthread_cond_wait(&g_fetch_q_cv, &g_fetch_q_lock);
+    struct fetch_req *rq = g_fetch_q_head;
+    if (rq) {
+      g_fetch_q_head = rq->next;
+      if (!g_fetch_q_head) g_fetch_q_tail = NULL;
+    }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    if (!rq) continue;
+    /* perform the actual fetch directly here by calling existing implementation
+     * that was in fetch_remote_nodedb. We'll call it via a helper name.
+     */
+    /* call the inline fetch implementation by duplicating logic: */
+    /* Build a synchronous fetch: obtain primary IP, attempt fetch methods, update cache */
+    {
+      char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
+      char *fresh=NULL; size_t fn=0; int success=0;
+      /* initial DNS wait on first fetch */
+      if (g_nodedb_last_fetch == 0 && g_nodedb_url[0]) {
+        char hostbuf[256] = ""; const char *u = g_nodedb_url; const char *hstart = strstr(u, "://"); if (hstart) hstart += 3; else hstart = u; const char *hend = strchr(hstart, '/'); size_t hlen = hend ? (size_t)(hend - hstart) : strlen(hstart); const char *colon = memchr(hstart, ':', hlen); if (colon) hlen = (size_t)(colon - hstart); if (hlen > 0 && hlen < sizeof(hostbuf)) { memcpy(hostbuf, hstart, hlen); hostbuf[hlen] = '\0'; for (int i = 0; i < g_nodedb_startup_wait; ++i) { struct addrinfo hints, *res = NULL; memset(&hints, 0, sizeof(hints)); hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; if (getaddrinfo(hostbuf, NULL, &hints, &res) == 0) { if (res) freeaddrinfo(res); if (i > 0) fprintf(stderr, "[status-plugin] nodedb fetch: DNS became available after %d seconds\n", i); break; } fprintf(stderr, "[status-plugin] nodedb fetch: waiting for network/DNS to become available (%s) (%d/%d)\n", hostbuf, i+1, g_nodedb_startup_wait); sleep(1); } }
+      }
+      if (strncmp(g_nodedb_url, "http://", 7) == 0) {
+        if (util_http_get_url(g_nodedb_url, &fresh, &fn, 5) == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) { success = 1; fprintf(stderr, "[status-plugin] nodedb fetch: method=internal_http success, got %zu bytes\n", fn); }
+        else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } }
+      }
+#ifdef HAVE_LIBCURL
+      if (!success) {
+        CURL *c = curl_easy_init(); if (c) { struct curl_fetch cf = { NULL, 0 }; curl_easy_setopt(c, CURLOPT_URL, g_nodedb_url); curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L); curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); curl_easy_setopt(c, CURLOPT_USERAGENT, "status-plugin"); struct curl_slist *hdr = NULL; hdr = curl_slist_append(hdr, "Accept: application/json"); curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdr); curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L); curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L); curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb); curl_easy_setopt(c, CURLOPT_WRITEDATA, &cf); CURLcode cres = curl_easy_perform(c); curl_slist_free_all(hdr); curl_easy_cleanup(c); if (cres == CURLE_OK && cf.buf && cf.len > 0 && validate_nodedb_json(cf.buf, cf.len)) { fresh = cf.buf; fn = cf.len; success = 1; fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl success, got %zu bytes\n", fn); } else { if (cf.buf) free(cf.buf); fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl failed (curl code=%d)\n", (int)cres); } } }
+#endif
+#ifndef NO_CURL_FALLBACK
+      if (!success) {
+        const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL}; for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) { char cmd[1024]; snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, g_nodedb_url); if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) { fprintf(stderr, "[status-plugin] nodedb fetch: method=external_curl success with %s, got %zu bytes\n", *curl_path, fn); success = 1; break; } else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } } }
+      }
+#endif
+      if (success) {
+        /* augment and store */
+        int is_object_mapping = 0; if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1; if (is_object_mapping) { char *aug = malloc(fn*2 + 32); if (aug) { size_t o=0; const char *p=fresh; int in_obj=0; int pending_insert=0; char last_n_val[256]; last_n_val[0]=0; int inserted_for_obj=0; while (*p) { if (*p=='{') { in_obj++; inserted_for_obj=0; last_n_val[0]=0; pending_insert=0; } if (*p=='}') { if (pending_insert && last_n_val[0] && !inserted_for_obj) { o += (size_t)snprintf(aug+o, fn*2+32 - o, ",\"hostname\":\"%s\",\"name\":\"%s\"", last_n_val, last_n_val); pending_insert=0; inserted_for_obj=1; } in_obj--; if (in_obj<0) in_obj=0; } if (strncmp(p,"\"n\":\"",5)==0) { const char *vstart = p+5; const char *q=vstart; while(*q && *q!='\"') q++; size_t L=(size_t)(q-vstart); if(L>=sizeof(last_n_val)) L=sizeof(last_n_val)-1; memcpy(last_n_val,vstart,L); last_n_val[L]=0; pending_insert=1; inserted_for_obj=0; } if (pending_insert && strncmp(p,"\"hostname\"",10)==0) { pending_insert=0; inserted_for_obj=1; } if (pending_insert && strncmp(p,"\"name\"",6)==0) { } aug[o++]=*p; p++; if(o>fn*2) break; } aug[o]=0; if (o>0) { free(fresh); fresh=aug; fn=strlen(fresh); } else free(aug); } }
+        pthread_mutex_lock(&g_nodedb_lock); if (g_nodedb_cached) free(g_nodedb_cached); g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL); pthread_mutex_unlock(&g_nodedb_lock); if (g_nodedb_write_disk) { FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} } fresh=NULL;
+      } else if (fresh) { free(fresh); } else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
+    }
+    /* loop */
+  }
+  return NULL;
 }
 
 /* Minimal SIGSEGV handler that logs a backtrace to stderr then exits. */
@@ -813,8 +911,8 @@ static void fetch_remote_nodedb_if_needed(void) {
   else if ((now - g_nodedb_last_fetch) >= g_nodedb_ttl) need = 1;
   pthread_mutex_unlock(&g_nodedb_lock);
   if (!need) return;
-  /* fall through to actual fetch implementation */
-  fetch_remote_nodedb();
+  /* enqueue an asynchronous fetch request (do not block caller) */
+  enqueue_fetch_request(0, 0);
 }
 
 static void fetch_remote_nodedb(void) {
@@ -2423,8 +2521,8 @@ static int h_nodedb(http_request_t *r) {
 
 /* Force a refresh of the remote node_db (bypass TTL). Returns JSON status. */
 static int h_nodedb_refresh(http_request_t *r) {
-  /* perform forced fetch: call fetch_remote_nodedb directly */
-  fetch_remote_nodedb();
+  /* perform forced fetch: enqueue and wait for completion */
+  enqueue_fetch_request(1, 1);
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
     /* return a small success JSON including last_fetch */
@@ -2977,6 +3075,18 @@ int olsrd_plugin_init(void) {
       } else {
         fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK value: %s (ignored)\n", env_wd);
       }
+    }
+  }
+
+  /* Optional: allow overriding initial DNS/network wait (seconds) */
+  const char *env_wait = getenv("OLSRD_STATUS_FETCH_STARTUP_WAIT");
+  if (env_wait && env_wait[0]) {
+    char *endptr = NULL; long w = strtol(env_wait, &endptr, 10);
+    if (endptr && *endptr == '\0' && w >= 0 && w <= 300) {
+      g_nodedb_startup_wait = (int)w;
+      fprintf(stderr, "[status-plugin] overriding startup DNS wait: %d seconds\n", g_nodedb_startup_wait);
+    } else {
+      fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_STARTUP_WAIT value: %s (ignored)\n", env_wait);
     }
   }
 
