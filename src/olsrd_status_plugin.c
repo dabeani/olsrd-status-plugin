@@ -2837,7 +2837,12 @@ static int h_fetch_debug(http_request_t *r) {
   len += snprintf(buf+len, cap-len, "]}\n");
   pthread_mutex_unlock(&g_fetch_q_lock);
   /* append debug counters */
-  char dbg[256]; snprintf(dbg, sizeof(dbg), ",\"debug\":{\"enqueued\":%lu,\"processed\":%lu,\"last_fetch_msg\":\"%s\"}", g_debug_enqueue_count, g_debug_processed_count, g_debug_last_fetch_msg);
+  /* Safely append debug counters and a truncated last_fetch_msg to avoid snprintf warnings */
+  char dbg[256];
+  int msg_print_len = (int)strnlen(g_debug_last_fetch_msg, sizeof(g_debug_last_fetch_msg));
+  /* limit message printed to at most 120 chars to keep dbg buffer safe */
+  if (msg_print_len > 120) msg_print_len = 120;
+  snprintf(dbg, sizeof(dbg), ",\"debug\":{\"enqueued\":%lu,\"processed\":%lu,\"last_fetch_msg\":\"%.*s\"}", g_debug_enqueue_count, g_debug_processed_count, msg_print_len, g_debug_last_fetch_msg);
   size_t need = strlen(buf) + strlen(dbg) + 32; char *nb = realloc(buf, need); if (nb) { buf = nb; strcat(buf, dbg); }
   http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf)); free(buf);
   return 0;
