@@ -523,17 +523,20 @@ static int transform_devices_to_legacy(const char *devices_json, char **out, siz
     /* create a temporary null-terminated object string */
     char *objbuf = malloc(objlen+1); if(!objbuf) { free(buf); return -1; }
     memcpy(objbuf, obj, objlen); objbuf[objlen]=0;
-    /* extract relevant fields */
-    char *hw = NULL; size_t hlen=0; char *ipv4 = NULL; size_t iplen=0; char *firm = NULL; size_t flen=0;
-    char *host = NULL; size_t hlo=0; char *prod = NULL; size_t pl=0; char *upt = NULL; size_t uln=0; char *essid = NULL; size_t esn=0;
-    find_json_string_value(objbuf, "hwaddr", &hw, &hlen);
-    find_json_string_value(objbuf, "ipv4", &ipv4, &iplen);
-    /* try both firmware and fwversion */
-    if (find_json_string_value(objbuf, "fwversion", &firm, &flen) != 0) find_json_string_value(objbuf, "firmware", &firm, &flen);
-    find_json_string_value(objbuf, "hostname", &host, &hlo);
-    find_json_string_value(objbuf, "product", &prod, &pl);
-    find_json_string_value(objbuf, "uptime", &upt, &uln);
-    find_json_string_value(objbuf, "essid", &essid, &esn);
+   /* extract relevant fields. find_json_string_value returns pointers INTO objbuf (not malloc'd),
+     so copy each found slice into a strdup'd buffer we own and can free safely. */
+   char *hw = NULL; size_t hlen=0; char *ipv4 = NULL; size_t iplen=0; char *firm = NULL; size_t flen=0;
+   char *host = NULL; size_t hlo=0; char *prod = NULL; size_t pl=0; char *upt = NULL; size_t uln=0; char *essid = NULL; size_t esn=0;
+   char *tmp = NULL; size_t tlen = 0;
+   if (find_json_string_value(objbuf, "hwaddr", &tmp, &tlen)) { hw = strndup(tmp, tlen); hlen = tlen; }
+   if (find_json_string_value(objbuf, "ipv4", &tmp, &tlen)) { ipv4 = strndup(tmp, tlen); iplen = tlen; }
+   /* try both firmware and fwversion */
+   if (find_json_string_value(objbuf, "fwversion", &tmp, &tlen)) { firm = strndup(tmp, tlen); flen = tlen; }
+   else if (find_json_string_value(objbuf, "firmware", &tmp, &tlen)) { firm = strndup(tmp, tlen); flen = tlen; }
+   if (find_json_string_value(objbuf, "hostname", &tmp, &tlen)) { host = strndup(tmp, tlen); hlo = tlen; }
+   if (find_json_string_value(objbuf, "product", &tmp, &tlen)) { prod = strndup(tmp, tlen); pl = tlen; }
+   if (find_json_string_value(objbuf, "uptime", &tmp, &tlen)) { upt = strndup(tmp, tlen); uln = tlen; }
+   if (find_json_string_value(objbuf, "essid", &tmp, &tlen)) { essid = strndup(tmp, tlen); esn = tlen; }
 
   /* Build one legacy device object */
   if (!first) json_buf_append(&buf, &len, &cap, ",");
