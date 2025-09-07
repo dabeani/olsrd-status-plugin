@@ -102,6 +102,9 @@ static int g_cfg_fetch_queue_warn_set = 0;
 static int g_cfg_fetch_queue_crit_set = 0;
 static int g_cfg_fetch_dropped_warn_set = 0;
 static pthread_t g_fetch_report_thread = 0;
+/* Auto-refresh interval (milliseconds) suggested for UI. 0 means disabled. Can be set via PlParam 'fetch_auto_refresh_ms' or env OLSRD_STATUS_FETCH_AUTO_REFRESH_MS */
+static int g_fetch_auto_refresh_ms = 15000; /* default 15s */
+static int g_cfg_fetch_auto_refresh_set = 0;
 /* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
 /* Helper macros to update counters using atomics if available, else mutex */
@@ -1956,6 +1959,8 @@ static int h_status(http_request_t *r) {
   }
 
   APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+  /* include suggested UI autos-refresh ms */
+  APPEND("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
 
 
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
@@ -3110,6 +3115,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_retries) g_cfg_fetch_retries_set = 1;
   if (data == &g_fetch_backoff_initial) g_cfg_fetch_backoff_set = 1;
   if (data == &g_fetch_report_interval) g_cfg_fetch_report_set = 1;
+  if (data == &g_fetch_auto_refresh_ms) g_cfg_fetch_auto_refresh_set = 1;
   if (data == &g_fetch_queue_warn) g_cfg_fetch_queue_warn_set = 1;
   if (data == &g_fetch_queue_crit) g_cfg_fetch_queue_crit_set = 1;
   if (data == &g_fetch_dropped_warn) g_cfg_fetch_dropped_warn_set = 1;
@@ -3145,6 +3151,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_retries", .set_plugin_parameter = &set_int_param, .data = &g_fetch_retries, .addon = {0} },
   { .name = "fetch_backoff_initial", .set_plugin_parameter = &set_int_param, .data = &g_fetch_backoff_initial, .addon = {0} },
   { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
+  { .name = "fetch_auto_refresh_ms", .set_plugin_parameter = &set_int_param, .data = &g_fetch_auto_refresh_ms, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
   { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
@@ -3302,6 +3309,18 @@ int olsrd_plugin_init(void) {
         g_fetch_report_interval = (int)v;
         fprintf(stderr, "[status-plugin] setting fetch_report_interval from env: %d\n", g_fetch_report_interval);
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_REPORT_INTERVAL value: %s (ignored)\n", env_i);
+    }
+  }
+
+  /* Auto-refresh (ms) env override for UI suggested interval (only if not set via PlParam) */
+  if (!g_cfg_fetch_auto_refresh_set) {
+    const char *env_af = getenv("OLSRD_STATUS_FETCH_AUTO_REFRESH_MS");
+    if (env_af && env_af[0]) {
+      char *endptr = NULL; long v = strtol(env_af, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 600000) {
+        g_fetch_auto_refresh_ms = (int)v;
+        fprintf(stderr, "[status-plugin] overriding fetch_auto_refresh_ms from env: %d\n", g_fetch_auto_refresh_ms);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_AUTO_REFRESH_MS value: %s (ignored)\n", env_af);
     }
   }
 
