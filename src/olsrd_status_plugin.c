@@ -538,22 +538,15 @@ static int transform_devices_to_legacy(const char *devices_json, char **out, siz
   /* Build one legacy device object */
   if (!first) json_buf_append(&buf, &len, &cap, ",");
   first = 0;
-    /* addresses array */
-    json_buf_append(&buf, &len, &cap, "{");
-    /* addresses */
-    json_buf_append(&buf, &len, &cap, "\"addresses\":[{");
-    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\",", (int)hlen, hw);
-    else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\" ,");
-    if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"ipv4\":\"%.*s\"", (int)iplen, ipv4);
-    else json_buf_append(&buf, &len, &cap, "\"ipv4\":\"\"" );
-    json_buf_append(&buf, &len, &cap, "\"addresses\":[{");
-    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\",", (int)hlen, hw);
-    else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\" ,");
-    if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"addr\":\"%.*s\",\"type\":\"ipv4\",", (int)iplen, ipv4);
-    else json_buf_append(&buf, &len, &cap, "\"addr\":\"\",\"type\":\"ipv4\",");
-    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\"", (int)hlen, hw);
-    else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\"");
-    json_buf_append(&buf, &len, &cap, "}],");
+  /* addresses array: include explicit addr/type and hwaddr in a single entry */
+  json_buf_append(&buf, &len, &cap, "{");
+  /* addresses */
+  json_buf_append(&buf, &len, &cap, "\"addresses\":[{");
+  if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"addr\":\"%.*s\",\"type\":\"ipv4\",", (int)iplen, ipv4);
+  else json_buf_append(&buf, &len, &cap, "\"addr\":\"\",\"type\":\"ipv4\",");
+  if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\"", (int)hlen, hw);
+  else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\"");
+  json_buf_append(&buf, &len, &cap, "}],");
     /* copy common shallow fields */
     if (essid && esn>0) json_buf_append(&buf, &len, &cap, "\"essid\":\"%.*s\",", (int)esn, essid); else json_buf_append(&buf, &len, &cap, "\"essid\":\"\",");
     if (firm && flen>0) json_buf_append(&buf, &len, &cap, "\"fwversion\":\"%.*s\",", (int)flen, firm); else json_buf_append(&buf, &len, &cap, "\"fwversion\":\"\",");
