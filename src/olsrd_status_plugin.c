@@ -86,6 +86,10 @@ static int g_nodedb_startup_wait = 30;
 static int g_fetch_queue_max = 4; /* MAX_FETCH_QUEUE default */
 static int g_fetch_retries = 3; /* MAX_FETCH_RETRIES default */
 static int g_fetch_backoff_initial = 1; /* seconds */
+/* UI severity thresholds (defaults mirrored in JS: warn=50, crit=200, dropped_warn=10) */
+static int g_fetch_queue_warn = 50;
+static int g_fetch_queue_crit = 200;
+static int g_fetch_dropped_warn = 10;
 
 /* Counters / metrics */
 static unsigned long g_metric_fetch_dropped = 0; /* requests dropped due to full queue */
@@ -96,6 +100,9 @@ static pthread_mutex_t g_metrics_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Periodic reporter interval (seconds). 0 to disable. Configurable via PlParam 'fetch_report_interval' or env OLSRD_STATUS_FETCH_REPORT_INTERVAL */
 static int g_fetch_report_interval = 0; /* default: disabled */
 static int g_cfg_fetch_report_set = 0;
+static int g_cfg_fetch_queue_warn_set = 0;
+static int g_cfg_fetch_queue_crit_set = 0;
+static int g_cfg_fetch_dropped_warn_set = 0;
 static pthread_t g_fetch_report_thread = 0;
 
 static void *fetch_reporter(void *arg) {
@@ -1933,7 +1940,7 @@ static int h_status(http_request_t *r) {
     free(rout);
   }
 
-  APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu},", qlen, m_d, m_r, m_s);
+  APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
 
 
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
@@ -3085,6 +3092,9 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_retries) g_cfg_fetch_retries_set = 1;
   if (data == &g_fetch_backoff_initial) g_cfg_fetch_backoff_set = 1;
   if (data == &g_fetch_report_interval) g_cfg_fetch_report_set = 1;
+  if (data == &g_fetch_queue_warn) g_cfg_fetch_queue_warn_set = 1;
+  if (data == &g_fetch_queue_crit) g_cfg_fetch_queue_crit_set = 1;
+  if (data == &g_fetch_dropped_warn) g_cfg_fetch_dropped_warn_set = 1;
   return 0;
 }
 
@@ -3117,6 +3127,10 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_retries", .set_plugin_parameter = &set_int_param, .data = &g_fetch_retries, .addon = {0} },
   { .name = "fetch_backoff_initial", .set_plugin_parameter = &set_int_param, .data = &g_fetch_backoff_initial, .addon = {0} },
   { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
+  /* UI thresholds exported for front-end convenience */
+  { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
+  { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
+  { .name = "fetch_dropped_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_dropped_warn, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -3245,6 +3259,20 @@ int olsrd_plugin_init(void) {
         fprintf(stderr, "[status-plugin] overriding fetch_backoff_initial from env: %d\n", g_fetch_backoff_initial);
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_BACKOFF_INITIAL value: %s (ignored)\n", env_b);
     }
+  }
+
+  /* Threshold env overrides for UI hints */
+  if (!g_cfg_fetch_queue_warn_set) {
+    const char *env_qw = getenv("OLSRD_STATUS_FETCH_QUEUE_WARN");
+    if (env_qw && env_qw[0]) { char *endptr=NULL; long v=strtol(env_qw,&endptr,10); if (endptr && *endptr=='\0' && v>=0 && v<=100000) { g_fetch_queue_warn = (int)v; fprintf(stderr, "[status-plugin] overriding fetch_queue_warn from env: %d\n", g_fetch_queue_warn); } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_QUEUE_WARN value: %s (ignored)\n", env_qw); }
+  }
+  if (!g_cfg_fetch_queue_crit_set) {
+    const char *env_qc = getenv("OLSRD_STATUS_FETCH_QUEUE_CRIT");
+    if (env_qc && env_qc[0]) { char *endptr=NULL; long v=strtol(env_qc,&endptr,10); if (endptr && *endptr=='\0' && v>=0 && v<=100000) { g_fetch_queue_crit = (int)v; fprintf(stderr, "[status-plugin] overriding fetch_queue_crit from env: %d\n", g_fetch_queue_crit); } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_QUEUE_CRIT value: %s (ignored)\n", env_qc); }
+  }
+  if (!g_cfg_fetch_dropped_warn_set) {
+    const char *env_dw = getenv("OLSRD_STATUS_FETCH_DROPPED_WARN");
+    if (env_dw && env_dw[0]) { char *endptr=NULL; long v=strtol(env_dw,&endptr,10); if (endptr && *endptr=='\0' && v>=0 && v<=100000) { g_fetch_dropped_warn = (int)v; fprintf(stderr, "[status-plugin] overriding fetch_dropped_warn from env: %d\n", g_fetch_dropped_warn); } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_DROPPED_WARN value: %s (ignored)\n", env_dw); }
   }
 
   /* Fetch reporter interval: optional periodic stderr summary */

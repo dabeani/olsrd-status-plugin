@@ -688,14 +688,38 @@ function populateFetchStats(fs) {
     var dropped = fs.dropped_count || fs.dropped || 0;
     var retries = fs.retry_count || fs.retries || 0;
     var processed = fs.total_processed || fs.processed || 0;
-    function badge(label, val) { return '<span style="display:inline-block;padding:4px 8px;margin-right:6px;border-radius:4px;background:#f5f5f5;font-size:90%;">'+label+': '+String(val)+'</span>'; }
+    function mkBadge(label, val, cls) { return '<span class="fetch-badge '+(cls||'')+'">'+label+': <strong style="margin-left:6px;">'+String(val)+'</strong></span>'; }
     var parts = [];
-    parts.push(badge('Queued', queued));
-    parts.push(badge('Processing', processing));
-    parts.push(badge('Dropped', dropped));
-    parts.push(badge('Retries', retries));
-    parts.push(badge('Processed', processed));
+    // severity hints: queued > 50 => warn, >200 => crit (tunable later)
+    var qcls = queued > 200 ? 'crit' : (queued > 50 ? 'warn' : '');
+    var dcls = dropped > 0 ? (dropped > 10 ? 'warn' : '') : '';
+    parts.push(mkBadge('Queued', queued, qcls));
+    parts.push(mkBadge('Processing', processing));
+    parts.push(mkBadge('Dropped', dropped, dcls));
+    parts.push(mkBadge('Retries', retries));
+    parts.push(mkBadge('Processed', processed));
+    // add small actions: refresh and debug
+    parts.push('<span style="margin-left:12px;"> <button id="fetch-stats-refresh" class="btn btn-xs btn-default">Refresh</button> <button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button></span>');
     container.innerHTML = parts.join('');
+    // wire actions
+    var ref = document.getElementById('fetch-stats-refresh');
+    if (ref) ref.addEventListener('click', function(){
+      ref.disabled = true; try { ref.querySelector('.spin') && ref.querySelector('.spin').classList.add('rotate'); } catch(e){}
+      // refresh by fetching the summary endpoint first for cheap payload
+      fetch('/status/summary', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s.fetch_stats) populateFetchStats(s.fetch_stats); } catch(e){} }).catch(function(){
+        // fallback to full status
+        fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
+      }).finally(function(){ try{ ref.disabled=false; }catch(e){} });
+    });
+    var dbg = document.getElementById('fetch-stats-debug');
+    if (dbg) dbg.addEventListener('click', function(){
+      var modal = document.getElementById('fetch-debug-modal'); var body = document.getElementById('fetch-debug-body');
+      if (!modal || !body) return;
+      body.textContent = 'Loading...'; modal.style.display = 'block';
+      fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { // pretty-print JSON when possible
+        try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } } catch(e){ body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
+    });
+  // close button wired on DOMContentLoaded (see global handler)
   } catch(e) { /* ignore UI errors */ }
 }
 
@@ -1576,3 +1600,9 @@ function runTraceroute(){
     });
   } catch(e) {}
 })();
+
+// Wire fetch debug modal close on DOM load so it's always available
+document.addEventListener('DOMContentLoaded', function(){
+  var closeBtn = document.getElementById('fetch-debug-close');
+  if (closeBtn) closeBtn.addEventListener('click', function(){ var m = document.getElementById('fetch-debug-modal'); if (m) m.style.display='none'; });
+});
