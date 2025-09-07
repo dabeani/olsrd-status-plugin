@@ -152,6 +152,75 @@ int util_http_get_url_local(const char *url, char **out, size_t *outlen, int tim
   char *outb = malloc(len + 1); if (!outb) { free(buf); return -1; } memcpy(outb, buf, len); outb[len] = '\0'; *out = outb; *outlen = len; free(buf); return 0;
 }
 
+/* Generic HTTP GET helper for non-TLS URLs. This reuses the local loopback
+ * implementation but accepts arbitrary hostnames/IPs (no TLS). It is a
+ * lightweight replacement for spawning curl for plain http:// URLs.
+ */
+int util_http_get_url(const char *url, char **out, size_t *outlen, int timeout_sec) {
+  if (!url || !out || !outlen) return -1;
+  *out = NULL; *outlen = 0;
+  const char *p = url;
+  if (strncmp(p, "http://", 7) == 0) p += 7; else return -1;
+  /* Extract host[:port] and path */
+  char host[256]; char path[512]; int port = 80;
+  const char *slash = strchr(p, '/');
+  size_t hostlen = slash ? (size_t)(slash - p) : strlen(p);
+  if (hostlen == 0 || hostlen >= sizeof(host)) return -1;
+  strncpy(host, p, hostlen); host[hostlen]=0;
+  if (slash) strncpy(path, slash, sizeof(path)-1); else strcpy(path, "/");
+  /* parse optional :port */
+  char *colon = strchr(host, ':'); if (colon) { *colon = '\0'; port = atoi(colon+1); if (port<=0) port=80; }
+
+  struct addrinfo hints; struct addrinfo *res = NULL; char sport[16]; int rv;
+  memset(&hints,0,sizeof(hints)); hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
+  snprintf(sport, sizeof(sport), "%d", port);
+  if ((rv = getaddrinfo(host, sport, &hints, &res)) != 0) return -1;
+  int sock = -1; struct addrinfo *ai;
+  for (ai = res; ai != NULL; ai = ai->ai_next) {
+    sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (sock < 0) continue;
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags >= 0) fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    if (connect(sock, ai->ai_addr, ai->ai_addrlen) < 0) {
+      if (errno != EINPROGRESS) { close(sock); sock = -1; continue; }
+      fd_set wf; FD_ZERO(&wf); FD_SET(sock, &wf);
+      struct timeval tv; tv.tv_sec = timeout_sec; tv.tv_usec = 0;
+      int sret = select(sock+1, NULL, &wf, NULL, &tv);
+      if (sret <= 0) { close(sock); sock = -1; continue; }
+      int err = 0; socklen_t el = sizeof(err); if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &el) < 0) { close(sock); sock = -1; continue; }
+      if (err) { close(sock); sock = -1; continue; }
+    }
+    /* connected */
+    if (flags >= 0) fcntl(sock, F_SETFL, flags);
+    struct timeval to; to.tv_sec = timeout_sec; to.tv_usec = 0; setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
+    break;
+  }
+  freeaddrinfo(res);
+  if (sock < 0) return -1;
+
+  char req[1024]; int rn = snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\nUser-Agent: status-plugin\r\nAccept: application/json\r\n\r\n", path, host);
+  if (rn < 0 || rn >= (int)sizeof(req)) { close(sock); return -1; }
+  if (send(sock, req, (size_t)rn, 0) != rn) { close(sock); return -1; }
+
+  const size_t MAX_BODY = 1024 * 1024; /* 1 MiB */
+  size_t cap = 8192; char *buf = malloc(cap); if(!buf){ close(sock); return -1; }
+  size_t len = 0; ssize_t n;
+  while ((n = recv(sock, buf + len, (ssize_t)(cap - len), 0)) > 0) {
+    len += (size_t)n;
+    if (len >= MAX_BODY) break;
+    if (cap - len < 4096) {
+      size_t newcap = cap * 2; if (newcap > MAX_BODY) newcap = MAX_BODY;
+      char *nb = realloc(buf, newcap); if (!nb) { free(buf); close(sock); return -1; } buf = nb; cap = newcap;
+    }
+  }
+  close(sock);
+  if (len == 0) { free(buf); return -1; }
+  /* strip headers */
+  char *body = NULL; for (size_t i = 0; i + 3 < len; ++i) { if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n') { body = buf + i + 4; size_t body_len = len - (i + 4);
+        char *outb = malloc(body_len + 1); if (!outb) { free(buf); return -1; } memcpy(outb, body, body_len); outb[body_len] = '\0'; *out = outb; *outlen = body_len; free(buf); return 0; } }
+  char *outb = malloc(len + 1); if (!outb) { free(buf); return -1; } memcpy(outb, buf, len); outb[len] = '\0'; *out = outb; *outlen = len; free(buf); return 0;
+}
+
 int util_is_container(void) {
   if (util_file_exists("/.dockerenv")) return 1;
   char *c=NULL; size_t n=0;

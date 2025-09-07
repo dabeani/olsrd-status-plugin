@@ -20,7 +20,7 @@ CFLAGS   += -fPIC
 CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_SRC) -Isrc -Irev/discover
 WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wmissing-prototypes
 LDFLAGS  += -shared
-LDLIBS   += -lpthread
+LDLIBS   += -lpthread -lcurl
 
 PREFIX   ?= /usr
 LIBDIR   ?= $(PREFIX)/lib/olsrd

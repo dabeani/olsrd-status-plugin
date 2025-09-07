@@ -21,6 +21,7 @@
 #if defined(__APPLE__) || defined(__linux__)
 # include <execinfo.h>
 #endif
+#include <curl/curl.h>
 
 #include "httpd.h"
 #include "util.h"
@@ -765,6 +766,24 @@ static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) r
 /* forward-declare actual fetch implementation so wrapper can call it */
 static void fetch_remote_nodedb(void);
 
+/* Helper used by libcurl to collect response data into a growing buffer */
+struct curl_fetch {
+  char *buf;
+  size_t len;
+};
+
+static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
+  struct curl_fetch *cf = (struct curl_fetch*)userdata;
+  size_t add = size * nmemb;
+  char *nb = realloc(cf->buf, cf->len + add + 1);
+  if (!nb) return 0;
+  cf->buf = nb;
+  memcpy(cf->buf + cf->len, ptr, add);
+  cf->len += add;
+  cf->buf[cf->len] = '\0';
+  return add;
+}
+
 /* RFC1123 time formatter for HTTP Last-Modified header */
 static void format_rfc1123_time(time_t t, char *out, size_t outlen) {
   if (!out || outlen==0) return;
@@ -791,38 +810,50 @@ static void fetch_remote_nodedb(void) {
   char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
   char *fresh=NULL; size_t fn=0;
   
-  /* Try multiple curl paths and protocols */
-  const char *curl_paths[] = {"curl", "/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", NULL};
-  const char *protocols[] = {"https", "http", NULL};
+  /* Prefer internal HTTP fetch for plain http:// URLs to avoid spawning curl. */
   int success = 0;
-  
-  for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) {
-    for (const char **protocol = protocols; *protocol && !success; protocol++) {
-      char url[512];
-      if (strcmp(*protocol, "https") == 0) {
-        snprintf(url, sizeof(url), "%s", g_nodedb_url);
+  if (strncmp(g_nodedb_url, "http://", 7) == 0) {
+    if (util_http_get_url(g_nodedb_url, &fresh, &fn, 5) == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+      fprintf(stderr, "[status-plugin] nodedb fetch succeeded via internal http fetch, got %zu bytes\n", fn);
+      success = 1;
+    } else {
+      if (fresh) { free(fresh); fresh = NULL; fn = 0; }
+    }
+  }
+  /* If not successful and URL is https or internal fetch failed, try libcurl first, then fall back to spawning curl if available */
+  if (!success) {
+    /* libcurl attempt (if libcurl initialized in the environment) */
+    CURL *c = curl_easy_init();
+    if (c) {
+      struct curl_fetch cf = { NULL, 0 };
+      curl_easy_setopt(c, CURLOPT_URL, g_nodedb_url);
+      curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L);
+      curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+      curl_easy_setopt(c, CURLOPT_USERAGENT, "status-plugin");
+      struct curl_slist *hdr = NULL; hdr = curl_slist_append(hdr, "Accept: application/json"); curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdr);
+      curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+      curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+      curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
+      curl_easy_setopt(c, CURLOPT_WRITEDATA, &cf);
+      CURLcode cres = curl_easy_perform(c);
+      curl_slist_free_all(hdr);
+      curl_easy_cleanup(c);
+      if (cres == CURLE_OK && cf.buf && cf.len > 0 && validate_nodedb_json(cf.buf, cf.len)) {
+        fresh = cf.buf; fn = cf.len; success = 1; fprintf(stderr, "[status-plugin] nodedb fetch succeeded via libcurl, got %zu bytes\n", fn);
       } else {
-        // Convert HTTPS to HTTP
-        if (strncmp(g_nodedb_url, "https://", 8) == 0) {
-          snprintf(url, sizeof(url), "http://%s", g_nodedb_url + 8);
-        } else {
-          continue; // Skip if not HTTPS
-        }
+        if (cf.buf) free(cf.buf);
       }
-      
-      char cmd[1024]; 
-      snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, url);
-      
-      if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
-        fprintf(stderr, "[status-plugin] nodedb fetch succeeded with %s, got %zu bytes\n", *curl_path, fn);
-        success = 1;
-        break;
-      } else {
-        if (fresh) { 
-          free(fresh); 
-          fresh = NULL; 
-          fn = 0; 
-        }
+    }
+
+    if (!success) {
+      const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};
+      for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) {
+        char cmd[1024];
+        snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, g_nodedb_url);
+        if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+          fprintf(stderr, "[status-plugin] nodedb fetch succeeded with %s, got %zu bytes\n", *curl_path, fn);
+          success = 1; break;
+        } else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } }
       }
     }
   }

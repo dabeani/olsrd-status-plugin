@@ -9,6 +9,10 @@ int util_read_file(const char *path, char **out, size_t *outlen);
  */
 int util_http_get_url_local(const char *url, char **out, size_t *outlen, int timeout_sec);
 int util_is_container(void);
+/* Generic HTTP GET for arbitrary http://host[:port]/path (no TLS). Returns 0 on success.
+ * For HTTPS URLs callers should fall back to an external fetch (curl) or implement TLS.
+ */
+int util_http_get_url(const char *url, char **out, size_t *outlen, int timeout_sec);
 int util_file_exists(const char *path);
 int path_exists(const char *p);
 int env_is_edgerouter(void);
