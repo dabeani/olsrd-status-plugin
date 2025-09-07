@@ -1240,6 +1240,8 @@ static void fetch_remote_nodedb_if_needed(void) {
 
 static void fetch_remote_nodedb(void) {
   char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
+  time_t entry_t = time(NULL);
+  fprintf(stderr, "[status-plugin] nodedb fetch: entry (ts=%ld) url=%s\n", (long)entry_t, g_nodedb_url);
   char *fresh=NULL; size_t fn=0;
   /* If this is the very first fetch since plugin start, the container
    * networking (DNS/routes) may not be ready yet. Wait a short time for
@@ -1281,18 +1283,21 @@ static void fetch_remote_nodedb(void) {
   int success = 0;
   if (strncmp(g_nodedb_url, "http://", 7) == 0) {
     fprintf(stderr, "[status-plugin] nodedb fetch: attempting internal HTTP fetch %s\n", g_nodedb_url);
-    if (util_http_get_url(g_nodedb_url, &fresh, &fn, 5) == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+    int rc = util_http_get_url(g_nodedb_url, &fresh, &fn, 5);
+    fprintf(stderr, "[status-plugin] nodedb fetch: internal_http rc=%d bytes=%zu\n", rc, fn);
+    if (rc == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
       fprintf(stderr, "[status-plugin] nodedb fetch: method=internal_http success, got %zu bytes\n", fn);
       success = 1;
     } else {
       if (fresh) { free(fresh); fresh = NULL; fn = 0; }
+      fprintf(stderr, "[status-plugin] nodedb fetch: internal_http failed or invalid JSON\n");
     }
   }
   /* If not successful and URL is https or internal fetch failed, try libcurl first, then fall back to spawning curl if available */
   if (!success) {
 #ifdef HAVE_LIBCURL
-    /* libcurl attempt (if detected at build time) */
-    fprintf(stderr, "[status-plugin] nodedb fetch: attempting libcurl fetch %s\n", g_nodedb_url);
+  /* libcurl attempt (if detected at build time) */
+  fprintf(stderr, "[status-plugin] nodedb fetch: attempting libcurl fetch %s\n", g_nodedb_url);
     CURL *c = curl_easy_init();
     if (c) {
       struct curl_fetch cf = { NULL, 0 };
@@ -3005,29 +3010,18 @@ static int h_fetch_debug(http_request_t *r) {
   pthread_mutex_lock(&g_fetch_q_lock);
   int qlen = 0; struct fetch_req *it = g_fetch_q_head;
   while (it) { qlen++; it = it->next; }
-  /* Build JSON array of simple objects: {"force":0|1,"wait":0|1} */
+  /* Build JSON array of simple objects: {"force":0|1,"wait":0|1,"type":N} */
   char *buf = NULL; size_t cap = 1024; size_t len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); pthread_mutex_unlock(&g_fetch_q_lock); return 0; } buf[0]=0;
   len += snprintf(buf+len, cap-len, "{\"queue_length\":%d,\"requests\":[", qlen);
   it = g_fetch_q_head; int first=1; while (it) {
-    if (!first) {
-      len += snprintf(buf+len, cap-len, ",");
-    }
-    first=0;
-  len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
-    if (len + 128 > cap) { cap *= 2; char *nb = realloc(buf, cap); if (!nb) break; buf = nb; }
+    if (!first) len += snprintf(buf+len, cap-len, ","); first = 0;
+    len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
     it = it->next;
   }
-  len += snprintf(buf+len, cap-len, "]}\n");
+  len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"processed\":%lu,\"last_fetch_msg\":\"%s\"}}", g_debug_enqueue_count, g_debug_processed_count, g_debug_last_fetch_msg);
   pthread_mutex_unlock(&g_fetch_q_lock);
-  /* append debug counters */
-  /* Safely append debug counters and a truncated last_fetch_msg to avoid snprintf warnings */
-  char dbg[256];
-  int msg_print_len = (int)strnlen(g_debug_last_fetch_msg, sizeof(g_debug_last_fetch_msg));
-  /* limit message printed to at most 120 chars to keep dbg buffer safe */
-  if (msg_print_len > 120) msg_print_len = 120;
-  snprintf(dbg, sizeof(dbg), ",\"debug\":{\"enqueued\":%lu,\"processed\":%lu,\"last_fetch_msg\":\"%.*s\"}", g_debug_enqueue_count, g_debug_processed_count, msg_print_len, g_debug_last_fetch_msg);
-  size_t need = strlen(buf) + strlen(dbg) + 32; char *nb = realloc(buf, need); if (nb) { buf = nb; strcat(buf, dbg); }
-  http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf)); free(buf);
+  send_json(r, buf);
+  free(buf);
   return 0;
 }
 
