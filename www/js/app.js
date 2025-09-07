@@ -212,6 +212,7 @@ function populateDevicesTable(devices, airos) {
     return;
   }
   var warn_frequency = 0;
+  // Display all devices provided by the backend (e.g. ubnt discover output)
   devices.forEach(function(device) {
     var tr = document.createElement('tr');
     function td(val) { var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
@@ -592,7 +593,7 @@ function updateUI(data) {
   setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
   try { setText('main-host', data.hostname || ''); } catch(e) {}
-  try { populateNavHost(data.hostname || '', data.ip || ''); } catch(e) {}
+  try { populateNavHost(data.hostname || '', data.ipv4 || data.ip || ''); } catch(e) {}
   // render default route if available (hostname link + ip link + device)
   try {
     if (data.default_route && (data.default_route.ip || data.default_route.dev || data.default_route.hostname)) {
@@ -1277,9 +1278,14 @@ function populateNavHost(host, ip) {
       // prefer the immediate parent so we keep styling wrappers
       if (iconElem.parentNode && iconElem.parentNode.outerHTML) iconHtml = iconElem.parentNode.outerHTML; else iconHtml = iconElem.outerHTML || '';
     }
-    // Build new content: prefix, optional IP, optional icon, then hostname span
+    // Build new content: prefer "IP - " prefix when available, otherwise show a leading '- '
     var ipPart = (ip ? (ip + ' - ') : '');
-    var newInner = '- ' + ipPart + (iconHtml || '') + '<span id="hostname">' + (host || '') + '</span>';
+    var newInner = '';
+    if (ipPart) {
+      newInner = ipPart + (iconHtml || '') + '<span id="hostname">' + (host || '') + '</span>';
+    } else {
+      newInner = '- ' + (iconHtml || '') + '<span id="hostname">' + (host || '') + '</span>';
+    }
     // Replace contents atomically
     el.innerHTML = newInner;
   } catch (e) {
