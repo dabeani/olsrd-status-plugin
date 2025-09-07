@@ -796,7 +796,7 @@ function populateFetchStats(fs) {
     var refSpinner = document.getElementById('fetch-stats-refresh-spin');
     if (ref) ref.addEventListener('click', function(){
       try { ref.disabled = true; if (refSpinner) refSpinner.classList.add('rotate'); } catch(e){}
-      fetch('/status/summary', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s.fetch_stats) populateFetchStats(s.fetch_stats); } catch(e){} }).catch(function(){
+      fetch('/status/lite', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s.fetch_stats) populateFetchStats(s.fetch_stats); } catch(e){} }).catch(function(){
         fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
       }).finally(function(){ try{ if (refSpinner) refSpinner.classList.remove('rotate'); ref.disabled=false; }catch(e){} });
     });
@@ -923,8 +923,8 @@ function detectPlatformAndLoad() {
         if (adminTabLink) adminTabLink.style.display = (caps.show_admin_link? '' : 'none');
       } catch(e){}
   var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsrd_on: false, olsr2info: '', admin: null };
-      // Fetch summary first for fast paint
-      fetch('/status/summary',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
+    // Fetch summary first for fast paint
+    fetch('/status/lite',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
         if (s.hostname) data.hostname = s.hostname;
         if (s.ip) data.ip = s.ip;
         if (s.uptime_linux) { data.uptime_linux = s.uptime_linux; }
