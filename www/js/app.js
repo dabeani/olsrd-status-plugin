@@ -636,6 +636,8 @@ function updateUI(data) {
   } catch(e) {}
 }
 
+
+
 // Render fetch queue metrics (provided by backend in status.fetch_stats)
 function populateFetchStats(fs) {
   try {
