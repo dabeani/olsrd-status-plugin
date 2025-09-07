@@ -2232,7 +2232,11 @@ static int h_status(http_request_t *r) {
     free(rout);
   }
 
-  APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+  {
+    unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
+    DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
+    APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, _de, _den, _ded, _dp, _dpn, _dpd, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+  }
   /* include suggested UI autos-refresh ms */
   APPEND("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
 
@@ -2737,7 +2741,11 @@ static int h_status_lite(http_request_t *r) {
     fit = g_fetch_q_head; while (fit) { qlen++; fit = fit->next; }
     pthread_mutex_unlock(&g_fetch_q_lock);
     METRIC_LOAD_ALL(m_d, m_r, m_s);
-    APP_L("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+    {
+      unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
+      DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
+      APP_L("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, _de, _den, _ded, _dp, _dpn, _dpd, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+    }
     /* also include a suggested UI autos-refresh ms value */
     APP_L("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
   }
