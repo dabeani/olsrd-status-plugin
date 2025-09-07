@@ -58,6 +58,13 @@ static char  *g_nodedb_cached = NULL; /* malloc'ed JSON blob */
 static size_t g_nodedb_cached_len = 0;
 static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_nodedb_worker_running = 0;
+/* Serialize/coordinate concurrent fetches so multiple callers don't race or
+ * spawn duplicate network activity. Callers will wait up to a short timeout
+ * for an in-progress fetch to finish.
+ */
+static pthread_mutex_t g_nodedb_fetch_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_nodedb_fetch_cv = PTHREAD_COND_INITIALIZER;
+static int g_nodedb_fetch_in_progress = 0;
 /* If set to 1, write a copy of the node_db to disk (disabled by default to protect flash) */
 static int g_nodedb_write_disk = 0;
 
@@ -813,6 +820,41 @@ static void fetch_remote_nodedb_if_needed(void) {
 static void fetch_remote_nodedb(void) {
   char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
   char *fresh=NULL; size_t fn=0;
+  /* If this is the very first fetch since plugin start, the container
+   * networking (DNS/routes) may not be ready yet. Wait a short time for
+   * DNS to resolve the nodedb host before attempting the fetch so
+   * transient startup failures are avoided. This waits up to 30 seconds.
+   */
+  if (g_nodedb_last_fetch == 0 && g_nodedb_url[0]) {
+    char hostbuf[256] = "";
+    const char *u = g_nodedb_url;
+    const char *hstart = strstr(u, "://");
+    if (hstart) hstart += 3; else hstart = u;
+    const char *hend = strchr(hstart, '/');
+    size_t hlen = hend ? (size_t)(hend - hstart) : strlen(hstart);
+    /* strip optional :port */
+    const char *colon = memchr(hstart, ':', hlen);
+    if (colon) hlen = (size_t)(colon - hstart);
+    if (hlen > 0 && hlen < sizeof(hostbuf)) {
+      memcpy(hostbuf, hstart, hlen);
+      hostbuf[hlen] = '\0';
+      int waited = 0;
+      for (int i = 0; i < 30; ++i) {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(hostbuf, NULL, &hints, &res) == 0) {
+          if (res) freeaddrinfo(res);
+          if (i > 0) fprintf(stderr, "[status-plugin] nodedb fetch: DNS became available after %d seconds\n", i);
+          break;
+        }
+        fprintf(stderr, "[status-plugin] nodedb fetch: waiting for network/DNS to become available (%s) (%d/30)\n", hostbuf, i+1);
+        sleep(1);
+        waited++;
+      }
+      if (waited >= 30) fprintf(stderr, "[status-plugin] nodedb fetch: proceeding after timeout waiting for DNS (%s)\n", hostbuf);
+    }
+  }
   
   /* Prefer internal HTTP fetch for plain http:// URLs to avoid spawning curl. */
   int success = 0;
@@ -913,6 +955,11 @@ static void fetch_remote_nodedb(void) {
     fresh=NULL;
   } else if (fresh) { free(fresh); }
     else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
+  /* Clear fetch-in-progress and notify any waiters so they can re-check cache. */
+  pthread_mutex_lock(&g_nodedb_fetch_lock);
+  g_nodedb_fetch_in_progress = 0;
+  pthread_cond_broadcast(&g_nodedb_fetch_cv);
+  pthread_mutex_unlock(&g_nodedb_fetch_lock);
 }
 
 /* Improved unique-destination counting: counts distinct destination nodes reachable via given last hop. */
