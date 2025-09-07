@@ -56,30 +56,28 @@ if (!window.Promise) {
     self.reason = undefined;
     self.onFulfilled = [];
     self.onRejected = [];
-    
+
     function resolve(value) {
       if (self.status === 'pending') {
         self.status = 'fulfilled';
         self.value = value;
-        self.onFulfilled.forEach(function(fn) { fn(value); });
+        self.onFulfilled.forEach(function(fn){ fn(value); });
       }
     }
-    
     function reject(reason) {
       if (self.status === 'pending') {
         self.status = 'rejected';
         self.reason = reason;
-        self.onRejected.forEach(function(fn) { fn(reason); });
+        self.onRejected.forEach(function(fn){ fn(reason); });
       }
     }
-    
     try {
       executor(resolve, reject);
     } catch (e) {
       reject(e);
     }
   };
-  
+
   window.Promise.prototype.then = function(onFulfilled, onRejected) {
     var self = this;
     return new window.Promise(function(resolve, reject) {
@@ -95,11 +93,8 @@ if (!window.Promise) {
           } else {
             resolve(value);
           }
-        } catch (e) {
-          reject(e);
-        }
+        } catch (e) { reject(e); }
       }
-      
       function handleRejected(reason) {
         try {
           if (typeof onRejected === 'function') {
@@ -112,50 +107,25 @@ if (!window.Promise) {
           } else {
             reject(reason);
           }
-        } catch (e) {
-          reject(e);
-        }
+        } catch (e) { reject(e); }
       }
-      
-      if (self.status === 'fulfilled') {
-        handleFulfilled(self.value);
-      } else if (self.status === 'rejected') {
-        handleRejected(self.reason);
-      } else {
-        self.onFulfilled.push(handleFulfilled);
-        self.onRejected.push(handleRejected);
-      }
+      if (self.status === 'fulfilled') { handleFulfilled(self.value); }
+      else if (self.status === 'rejected') { handleRejected(self.reason); }
+      else { self.onFulfilled.push(handleFulfilled); self.onRejected.push(handleRejected); }
     });
   };
-  
-  window.Promise.prototype.catch = function(onRejected) {
-    return this.then(null, onRejected);
-  };
-  
-  window.Promise.resolve = function(value) {
-    return new window.Promise(function(resolve) { resolve(value); });
-  };
-  
+
+  window.Promise.prototype.catch = function(onRejected) { return this.then(null, onRejected); };
+  window.Promise.resolve = function(value) { return new window.Promise(function(resolve) { resolve(value); }); };
   window.Promise.all = function(promises) {
     return new window.Promise(function(resolve, reject) {
-      var results = [];
-      var completed = 0;
-      var total = promises.length;
-      if (total === 0) {
-        resolve(results);
-        return;
-      }
+      var results = []; var completed = 0; var total = promises.length;
+      if (total === 0) { resolve(results); return; }
       promises.forEach(function(promise, index) {
-        promise.then(function(value) {
-          results[index] = value;
-          completed++;
-          if (completed === total) {
-            resolve(results);
-          }
-        }, reject);
+        promise.then(function(value) { results[index] = value; completed++; if (completed === total) resolve(results); }, reject);
       });
     });
-  }
+  };
 }
 
 // Fetch polyfill for older browsers
@@ -675,51 +645,122 @@ function populateFetchStats(fs) {
       container = document.createElement('div');
       container.id = 'fetch-stats';
       container.style.margin = '6px 0 12px 0';
-      container.className = 'small-muted';
       var dl = tab.querySelector('dl');
       if (dl && dl.parentNode) dl.parentNode.insertBefore(container, dl.nextSibling);
       else tab.insertBefore(container, tab.firstChild);
     }
     if (!fs || (typeof fs === 'object' && Object.keys(fs).length === 0)) { container.style.display = 'none'; return; }
     container.style.display = '';
-    // Normalize likely field names from backend and build compact badges
-    var queued = fs.queued_count || fs.queue_len || fs.queued || 0;
+
+    // Normalize likely field names from backend
+    var queued = fs.queued_count || fs.queue_length || fs.queue_len || fs.queued || 0;
     var processing = fs.processing_count || fs.in_progress || fs.processing || 0;
     var dropped = fs.dropped_count || fs.dropped || 0;
     var retries = fs.retry_count || fs.retries || 0;
     var processed = fs.total_processed || fs.processed || 0;
-    function mkBadge(label, val, cls) { return '<span class="fetch-badge '+(cls||'')+'">'+label+': <strong style="margin-left:6px;">'+String(val)+'</strong></span>'; }
-    var parts = [];
-    // severity hints: queued > 50 => warn, >200 => crit (tunable later)
-    var qcls = queued > 200 ? 'crit' : (queued > 50 ? 'warn' : '');
-    var dcls = dropped > 0 ? (dropped > 10 ? 'warn' : '') : '';
-    parts.push(mkBadge('Queued', queued, qcls));
-    parts.push(mkBadge('Processing', processing));
-    parts.push(mkBadge('Dropped', dropped, dcls));
-    parts.push(mkBadge('Retries', retries));
-    parts.push(mkBadge('Processed', processed));
-    // add small actions: refresh and debug
-    parts.push('<span style="margin-left:12px;"> <button id="fetch-stats-refresh" class="btn btn-xs btn-default">Refresh</button> <button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button></span>');
-    container.innerHTML = parts.join('');
-    // wire actions
+    var successes = fs.successes || fs.fetch_successes || 0;
+
+    // thresholds (backend may export thresholds for front-end convenience)
+    var thresholds = (fs.thresholds && typeof fs.thresholds === 'object') ? fs.thresholds : {};
+    var q_warn = thresholds.queue_warn || 50;
+    var q_crit = thresholds.queue_crit || 200;
+    var d_warn = thresholds.dropped_warn || 10;
+
+    // build panel using bootstrap styles
+    var html = '';
+    html += '<div class="panel panel-default">';
+    html += '<div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">';
+    html += '<div style="font-weight:600">Fetch Queue</div>';
+    html += '<div style="display:flex; gap:8px; align-items:center;">';
+    html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
+    html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
+    html += '</div></div>';
+    html += '<div class="panel-body" style="padding:10px">';
+    html += '<div class="row">';
+    // left: badges + progress
+    html += '<div class="col-xs-8">';
+    html += '<div style="margin-bottom:8px">';
+    function mkBadge(label, val, cls) { return '<span class="fetch-badge '+(cls||'')+'" style="margin-right:6px">'+label+': <strong style="margin-left:6px;">'+String(val)+'</strong></span>'; }
+    var qcls = queued >= q_crit ? 'crit' : (queued >= q_warn ? 'warn' : '');
+    var dcls = dropped >= d_warn ? 'warn' : '';
+    html += mkBadge('Queued', queued, qcls);
+    html += mkBadge('Processing', processing);
+    html += mkBadge('Dropped', dropped, dcls);
+    html += mkBadge('Retries', retries);
+    html += mkBadge('Processed', processed);
+    html += '</div>';
+    // progress bar: percent of queue_crit as a practical max
+    var denom = q_crit > 0 ? q_crit : 200;
+    var pct = Math.min(100, Math.round((queued / denom) * 100));
+    var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
+    html += '<div class="progress" style="height:16px; margin-bottom:6px">';
+    html += '<div class="progress-bar '+progClass+'" role="progressbar" aria-valuenow="'+pct+'" aria-valuemin="0" aria-valuemax="100" style="width:'+pct+'%">';
+    html += pct+'%';
+    html += '</div></div>';
+    html += '<div class="small-muted">Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn+'</div>';
+    html += '</div>';
+    // right: small table with values
+    html += '<div class="col-xs-4">';
+    html += '<table class="table table-condensed" style="margin:0">';
+    html += '<tbody>';
+    html += '<tr><th style="width:55%">Queued</th><td>'+queued+'</td></tr>';
+    html += '<tr><th>Processing</th><td>'+processing+'</td></tr>';
+    html += '<tr><th>Dropped</th><td>'+dropped+'</td></tr>';
+    html += '<tr><th>Retries</th><td>'+retries+'</td></tr>';
+    html += '<tr><th>Processed</th><td>'+processed+'</td></tr>';
+    html += '<tr><th>Successes</th><td>'+successes+'</td></tr>';
+    html += '</tbody></table>';
+    html += '</div>'; // col
+    html += '</div>'; // row
+    html += '</div>'; // panel-body
+    html += '</div>'; // panel
+
+    container.innerHTML = html;
+
+    // wire actions: refresh
     var ref = document.getElementById('fetch-stats-refresh');
+    var refSpinner = document.getElementById('fetch-stats-refresh-spin');
     if (ref) ref.addEventListener('click', function(){
-      ref.disabled = true; try { ref.querySelector('.spin') && ref.querySelector('.spin').classList.add('rotate'); } catch(e){}
-      // refresh by fetching the summary endpoint first for cheap payload
+      try { ref.disabled = true; if (refSpinner) refSpinner.classList.add('rotate'); } catch(e){}
       fetch('/status/summary', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s.fetch_stats) populateFetchStats(s.fetch_stats); } catch(e){} }).catch(function(){
-        // fallback to full status
         fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
-      }).finally(function(){ try{ ref.disabled=false; }catch(e){} });
+      }).finally(function(){ try{ if (refSpinner) refSpinner.classList.remove('rotate'); ref.disabled=false; }catch(e){} });
     });
+
+    // debug modal
     var dbg = document.getElementById('fetch-stats-debug');
     if (dbg) dbg.addEventListener('click', function(){
       var modal = document.getElementById('fetch-debug-modal'); var body = document.getElementById('fetch-debug-body');
       if (!modal || !body) return;
       body.textContent = 'Loading...'; modal.style.display = 'block';
-      fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { // pretty-print JSON when possible
-        try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } } catch(e){ body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
+      fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
     });
-  // close button wired on DOMContentLoaded (see global handler)
+
+    // Update top header/nav indicator based on severity
+    try {
+      var hostEl = document.getElementById('nav-host');
+      if (hostEl) {
+        var hostnameSpan = document.getElementById('hostname');
+        var hostText = hostnameSpan ? hostnameSpan.textContent : hostEl.textContent;
+        // build icon HTML
+        var iconHtml = '';
+        if (qcls === 'crit') {
+          iconHtml = '<span class="text-danger" style="margin-right:6px;"><span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span></span>';
+          hostEl.style.background = '#ffecec';
+        } else if (qcls === 'warn') {
+          iconHtml = '<span class="text-warning" style="margin-right:6px;"><span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span></span>';
+          hostEl.style.background = '#fff6e5';
+        } else {
+          // clear any previous highlight
+          hostEl.style.background = '';
+        }
+        // write back with icon and hostname preserved
+        var prefix = '- ';
+        if (hostnameSpan) hostEl.innerHTML = prefix + iconHtml + '<span id="hostname">' + hostText + '</span>'; else hostEl.innerHTML = prefix + iconHtml + hostText;
+        hostEl.title = 'Fetch queue: queued=' + queued + ', dropped=' + dropped + ', retries=' + retries;
+      }
+    } catch(e) { /* ignore header update errors */ }
+
   } catch(e) { /* ignore UI errors */ }
 }
 
