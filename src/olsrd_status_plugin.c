@@ -3078,7 +3078,8 @@ static int h_prometheus_metrics(http_request_t *r) {
   /* Safe append helper: calculate remaining space and update offset safely. */
 #define SAFE_APPEND(fmt, ...) do { \
     size_t _rem = (sizeof(buf) > off) ? (sizeof(buf) - off) : 0; \
-    if (_rem > 0) { int _n = snprintf(buf + off, _rem, (fmt), ##__VA_ARGS__); \
+    /* require room for at least one printable char plus NUL to avoid fortify warnings */ \
+    if (_rem > 1) { int _n = snprintf(buf + off, _rem, (fmt), ##__VA_ARGS__); \
       if (_n > 0) { if ((size_t)_n >= _rem) { off = sizeof(buf) - 1; buf[off] = '\0'; } else { off += (size_t)_n; } } \
     } \
   } while(0)
