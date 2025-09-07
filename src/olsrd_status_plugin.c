@@ -1430,6 +1430,11 @@ static int h_status(http_request_t *r) {
   (void)airos_n; /* kept for symmetry with util_read_file signature */
   util_read_file("/tmp/10-all.json", &airos_raw, &airos_n); /* ignore result; airos_raw may be NULL */
 
+  /* Generate versions JSON early (reusable helper) */
+  char *vout = NULL; size_t vn = 0;
+  (void)vn;
+  if (generate_versions_json(&vout, &vn) != 0) { if (vout) { free(vout); vout = NULL; vn = 0; } }
+
   /* default route */
   char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
   if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout) {
@@ -1827,6 +1832,70 @@ static int h_status(http_request_t *r) {
   return 0;
 }
 
+/* Emit reduced, bmk-webstatus.py-compatible JSON payload for remote collectors
+ * Contains a small set of top-level keys expected by the legacy Python script.
+ */
+static int h_status_compat(http_request_t *r) {
+  char *airos_raw = NULL; size_t airos_n = 0; util_read_file("/tmp/10-all.json", &airos_raw, &airos_n);
+  /* versions/autoupdate/wizards */
+  char *vout = NULL; size_t vn = 0; if (generate_versions_json(&vout, &vn) != 0) { if (vout) { free(vout); vout = NULL; vn = 0; } }
+
+  char *out = NULL; size_t outcap = 4096, outlen = 0; out = malloc(outcap); if(!out){ send_json(r, "{}\n"); if(airos_raw) free(airos_raw); if(vout) free(vout); return 0; } out[0]=0;
+  /* helper to append safely */
+  #define CAPPEND(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vout) free(vout); return 0;} if(outlen+(size_t)_n+1>outcap){ while(outcap<outlen+(size_t)_n+1) outcap*=2; char *nb=realloc(out,outcap); if(!nb){ free(_t); free(out); send_json(r,"{}\n"); if(airos_raw) free(airos_raw); if(vout) free(vout); return 0;} out=nb;} memcpy(out+outlen,_t,(size_t)_n); outlen+=(size_t)_n; out[outlen]=0; free(_t);} while(0)
+
+  CAPPEND("{");
+  /* airosdata */
+  if (airos_raw && airos_n>0) CAPPEND("\"airosdata\":%s", airos_raw); else CAPPEND("\"airosdata\":{}");
+
+  /* autoupdate + wizards from versions JSON if available */
+  if (vout && vn>0) {
+    char *autoup = NULL; size_t alen = 0;
+    if (extract_json_value(vout, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
+      CAPPEND(",\"autoupdate\":%s", autoup);
+      free(autoup);
+    } else {
+      CAPPEND(",\"autoupdate\":{}");
+    }
+    char *wiz = NULL; if (extract_json_value(vout, "autoupdate_wizards_installed", &wiz, NULL) == 0 && wiz) { CAPPEND(",\"wizards\":%s", wiz); free(wiz); } else { CAPPEND(",\"wizards\":\"no\""); }
+  } else {
+    CAPPEND(",\"autoupdate\":{}"); CAPPEND(",\"wizards\":\"no\"");
+  }
+
+  /* bootimage minimal */
+  CAPPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
+
+  /* devices via ubnt-discover if available */
+  char *ud = NULL; size_t udn = 0;
+  if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn>0) {
+    char *devices_norm = NULL; size_t dn = 0;
+    if (normalize_ubnt_devices(ud, &devices_norm, &dn) == 0 && devices_norm) {
+      CAPPEND(",\"devices\":%s", devices_norm);
+      free(devices_norm);
+    } else {
+      CAPPEND(",\"devices\":[]");
+    }
+    free(ud);
+  } else {
+    CAPPEND(",\"devices\":[]");
+  }
+
+  CAPPEND(",\"homes\":[]");
+  CAPPEND(",\"linklocals\":[]");
+  CAPPEND(",\"local_ips\":[]");
+  /* olsrd4watchdog state: detect olsrd process presence */
+  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+  CAPPEND(",\"olsrd4watchdog\":{\"state\":\"%s\"}", olsrd_on?"on":"off");
+  CAPPEND("}\n");
+
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, outlen);
+  if (out) free(out);
+  if (airos_raw) free(airos_raw);
+  if (vout) free(vout);
+  return 0;
+}
+
+
 /* --- Lightweight /status/lite (omit OLSR link/neighbor discovery for faster initial load) --- */
 static int h_status_lite(http_request_t *r) {
   char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if(!buf){ send_json(r,"{}\n"); return 0; } buf[0]=0;
@@ -2087,7 +2156,7 @@ static int h_status_py(http_request_t *r) {
   } else {
     /* check for bare keys that the Python script maps to get=<name> */
     char t[32];
-    if (get_query_param(r, "status", t, sizeof(t))) return h_status(r);
+  if (get_query_param(r, "status", t, sizeof(t))) return h_status_compat(r);
     if (get_query_param(r, "connections", t, sizeof(t))) return h_connections(r);
     if (get_query_param(r, "discover", t, sizeof(t))) return h_discover(r);
     if (get_query_param(r, "airos", t, sizeof(t))) return h_airos(r);
@@ -2105,7 +2174,7 @@ static int h_status_py(http_request_t *r) {
   }
 
   /* Map known values (match bmk-webstatus.py supported ?get values) */
-  if (strcmp(v, "status") == 0) return h_status(r);
+  if (strcmp(v, "status") == 0) return h_status_compat(r);
   if (strcmp(v, "connections") == 0) return h_connections(r);
   if (strcmp(v, "discover") == 0) return h_discover(r);
   if (strcmp(v, "airos") == 0) return h_airos(r);
