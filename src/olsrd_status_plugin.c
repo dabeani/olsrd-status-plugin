@@ -1961,25 +1961,21 @@ static int h_status_compat(http_request_t *r) {
     CAPPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
   }
 
-  /* devices via ubnt-discover if available */
-  char *ud = NULL; size_t udn = 0;
-  if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn>0) {
-    char *devices_norm = NULL; size_t dn = 0;
-    if (normalize_ubnt_devices(ud, &devices_norm, &dn) == 0 && devices_norm) {
+  /* devices: prefer a lightweight ARP-derived list during remote collection to avoid blocking discovery */
+  {
+    char *devs = NULL; size_t devn = 0;
+    if (devices_from_arp_json(&devs, &devn) == 0 && devs && devn>0) {
       char *legacy_dev = NULL; size_t legacy_len = 0;
-      if (transform_devices_to_legacy(devices_norm, &legacy_dev, &legacy_len) == 0 && legacy_dev) {
+      if (transform_devices_to_legacy(devs, &legacy_dev, &legacy_len) == 0 && legacy_dev) {
         CAPPEND(",\"devices\":%s", legacy_dev);
         free(legacy_dev);
       } else {
-        CAPPEND(",\"devices\":%s", devices_norm);
+        CAPPEND(",\"devices\":%s", devs);
       }
-      free(devices_norm);
+      free(devs);
     } else {
       CAPPEND(",\"devices\":[]");
     }
-    free(ud);
-  } else {
-    CAPPEND(",\"devices\":[]");
   }
 
   CAPPEND(",\"homes\":[]");
