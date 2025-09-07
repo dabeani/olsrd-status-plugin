@@ -1140,9 +1140,12 @@ window.addEventListener('load', function(){
       try { refreshLinksBtn.disabled = true; } catch(e){}
       if (statusEl) statusEl.textContent = 'Refreshing…';
       if (spinner) spinner.classList.add('rotate');
-      // First force-update node_db
+      // First force-update node_db (non-blocking by default). If server returns queued status
+      // we proceed to fetch links immediately; if the client wants to ensure fresh names,
+      // they can use ?wait=1 but that may block the UI.
       fetch('/nodedb/refresh',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(res){
-        // ignore res contents; continue to fetch latest links
+        // If server indicated queued, we still continue to fetch links; the node_db
+        // enrichment may arrive slightly later but UI remains responsive.
         return fetch('/olsr/links',{cache:'no-store'});
       }).then(function(r2){ return r2.json(); }).then(function(o){
         if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }

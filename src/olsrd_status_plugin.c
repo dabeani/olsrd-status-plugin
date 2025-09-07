@@ -2900,16 +2900,42 @@ static int h_nodedb(http_request_t *r) {
 
 /* Force a refresh of the remote node_db (bypass TTL). Returns JSON status. */
 static int h_nodedb_refresh(http_request_t *r) {
-  /* perform forced fetch: enqueue and wait for completion */
-  enqueue_fetch_request(1, 1, FETCH_TYPE_NODEDB);
-  pthread_mutex_lock(&g_nodedb_lock);
-  if (g_nodedb_cached && g_nodedb_cached_len>0) {
-    /* return a small success JSON including last_fetch */
-    char resp[256]; snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"last_fetch\":%ld,\"len\":%zu}", g_nodedb_last_fetch, g_nodedb_cached_len);
-    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp,strlen(resp)); pthread_mutex_unlock(&g_nodedb_lock); return 0;
+  /* Make refresh non-blocking by default to avoid tying up the HTTP thread.
+   * If caller explicitly requests blocking behaviour via ?wait=1, preserve
+   * the previous semantics (enqueue and wait). Non-blocking calls will
+   * immediately return a queued status and current queue length.
+   */
+  char wbuf[8] = "0";
+  int do_wait = 0;
+  if (get_query_param(r, "wait", wbuf, sizeof(wbuf))) {
+    if (strcmp(wbuf, "1") == 0) do_wait = 1;
   }
+
+  if (do_wait) {
+    /* perform forced fetch: enqueue and wait for completion (legacy behaviour) */
+    enqueue_fetch_request(1, 1, FETCH_TYPE_NODEDB);
+    pthread_mutex_lock(&g_nodedb_lock);
+    if (g_nodedb_cached && g_nodedb_cached_len>0) {
+      /* return a small success JSON including last_fetch */
+      char resp[256]; snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"last_fetch\":%ld,\"len\":%zu}", g_nodedb_last_fetch, g_nodedb_cached_len);
+      http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp,strlen(resp)); pthread_mutex_unlock(&g_nodedb_lock); return 0;
+    }
+    pthread_mutex_unlock(&g_nodedb_lock);
+    send_json(r, "{\"status\":\"error\",\"message\":\"fetch failed\"}");
+    return 0;
+  }
+
+  /* Non-blocking: enqueue and return queued status immediately */
+  enqueue_fetch_request(1, 0, FETCH_TYPE_NODEDB);
+  /* compute current queue length */
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  pthread_mutex_lock(&g_nodedb_lock);
+  long last = g_nodedb_last_fetch; size_t len = g_nodedb_cached_len;
   pthread_mutex_unlock(&g_nodedb_lock);
-  send_json(r, "{\"status\":\"error\",\"message\":\"fetch failed\"}");
+  char resp2[256]; snprintf(resp2, sizeof(resp2), "{\"status\":\"queued\",\"last_fetch\":%ld,\"len\":%zu,\"queue_len\":%d}", last, len, qlen);
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp2,strlen(resp2));
   return 0;
 }
 
