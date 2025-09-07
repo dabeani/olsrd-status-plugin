@@ -1887,6 +1887,11 @@ static void send_text(http_request_t *r, const char *text);
 static void send_json(http_request_t *r, const char *json);
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
 static void detect_olsr_processes(int *out_olsrd, int *out_olsr2);
+/* forward decls for stderr capture and log handler implemented later */
+static int start_stderr_capture(void);
+static void stop_stderr_capture(void);
+static int h_log(http_request_t *r);
+static void detect_olsr_processes(int *out_olsrd, int *out_olsr2);
 
 /* Generate versions JSON into an allocated buffer (caller frees) */
 static int generate_versions_json(char **outbuf, size_t *outlen) {
@@ -3568,6 +3573,8 @@ int olsrd_plugin_init(void) {
     fprintf(stderr, "[status-plugin] failed to start http server on %s:%d\n", g_bind, g_port);
     return 1;
   }
+  /* capture plugin stderr into an in-process ring buffer for /log */
+  start_stderr_capture();
   http_server_register_handler("/",         &h_root);
   http_server_register_handler("/index.html", &h_root);
   http_server_register_handler("/ipv4",     &h_ipv4);
@@ -3600,6 +3607,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/nodedb.json", &h_nodedb);
   http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
   http_server_register_handler("/fetch_debug", &h_fetch_debug);
+  http_server_register_handler("/log", &h_log);
   http_server_register_handler("/traceroute", &h_traceroute);
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
   /* start background workers */
@@ -3623,6 +3631,8 @@ void olsrd_plugin_exit(void) {
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached) { free(g_nodedb_cached); g_nodedb_cached = NULL; g_nodedb_cached_len = 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
+  /* stop stderr capture */
+  stop_stderr_capture();
 }
 
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen) {
@@ -3642,6 +3652,122 @@ static int get_query_param(http_request_t *r, const char *key, char *out, size_t
     }
     tok = strtok(NULL, "&");
   }
+  return 0;
+}
+
+/* In-process stderr capture: pipe stderr into a reader thread and store recent lines
+ * in a circular buffer so the /log HTTP endpoint can return recent plugin logs.
+ */
+#define LOG_BUF_LINES 8192
+#define LOG_LINE_MAX 512
+static char g_log_buf[LOG_BUF_LINES][LOG_LINE_MAX];
+static int g_log_head = 0; /* next write index */
+static int g_log_count = 0; /* number of stored lines */
+static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_stderr_pipe_rd = -1;
+static int g_orig_stderr_fd = -1;
+static pthread_t g_stderr_thread = 0;
+static int g_stderr_thread_running = 0;
+
+static void ringbuf_push(const char *s) {
+  pthread_mutex_lock(&g_log_lock);
+  snprintf(g_log_buf[g_log_head], LOG_LINE_MAX, "%s", s);
+  g_log_head = (g_log_head + 1) % LOG_BUF_LINES;
+  if (g_log_count < LOG_BUF_LINES) g_log_count++;
+  pthread_mutex_unlock(&g_log_lock);
+}
+
+static void *stderr_reader_thread(void *arg) {
+  int fd = g_stderr_pipe_rd;
+  char inbuf[1024]; char line[LOG_LINE_MAX]; size_t lp = 0;
+  g_stderr_thread_running = 1;
+  while (g_stderr_thread_running) {
+    ssize_t n = read(fd, inbuf, sizeof(inbuf));
+    if (n <= 0) break;
+    for (ssize_t i = 0; i < n; i++) {
+      char c = inbuf[i];
+      if (c == '\r') continue;
+      if (c == '\n' || lp+1 >= sizeof(line)) {
+        line[lp] = '\0';
+        /* write-through to original stderr so system logs still see output */
+        if (g_orig_stderr_fd >= 0) {
+          dprintf(g_orig_stderr_fd, "%s\n", line);
+        }
+        ringbuf_push(line);
+        lp = 0;
+      } else {
+        line[lp++] = c;
+      }
+    }
+  }
+  /* flush any partial line */
+  if (lp > 0) {
+    line[lp] = '\0'; if (g_orig_stderr_fd >= 0) dprintf(g_orig_stderr_fd, "%s\n", line); ringbuf_push(line);
+  }
+  return NULL;
+}
+
+static int start_stderr_capture(void) {
+  int pipefd[2];
+  if (pipe(pipefd) != 0) return -1;
+  /* duplicate current stderr so we can forward writes to it */
+  g_orig_stderr_fd = dup(STDERR_FILENO);
+  if (g_orig_stderr_fd < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+  /* replace stderr with pipe writer end */
+  if (dup2(pipefd[1], STDERR_FILENO) < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+  close(pipefd[1]);
+  g_stderr_pipe_rd = pipefd[0];
+  /* start reader thread */
+  if (pthread_create(&g_stderr_thread, NULL, stderr_reader_thread, NULL) != 0) {
+    close(g_stderr_pipe_rd); g_stderr_pipe_rd = -1; return -1;
+  }
+  pthread_detach(g_stderr_thread);
+  return 0;
+}
+
+static void stop_stderr_capture(void) {
+  g_stderr_thread_running = 0;
+  if (g_stderr_pipe_rd >= 0) { close(g_stderr_pipe_rd); g_stderr_pipe_rd = -1; }
+  if (g_orig_stderr_fd >= 0) {
+    /* restore original stderr */
+    dup2(g_orig_stderr_fd, STDERR_FILENO);
+    close(g_orig_stderr_fd); g_orig_stderr_fd = -1;
+  }
+}
+
+/* HTTP handler for /log - supports ?lines=N or ?minutes=M (approximate) */
+static int h_log(http_request_t *r) {
+  char qv[64]; int lines = 2000;
+  if (get_query_param(r, "lines", qv, sizeof(qv))) { lines = atoi(qv); if (lines <= 0) lines = 2000; if (lines > LOG_BUF_LINES) lines = LOG_BUF_LINES; }
+  if (get_query_param(r, "minutes", qv, sizeof(qv))) {
+    int mins = atoi(qv); if (mins > 0) {
+      int approx = mins * 30; if (approx < lines) lines = approx; if (lines > LOG_BUF_LINES) lines = LOG_BUF_LINES;
+    }
+  }
+  pthread_mutex_lock(&g_log_lock);
+  int avail = g_log_count;
+  if (lines < avail) avail = lines;
+  int start = (g_log_head - avail + LOG_BUF_LINES) % LOG_BUF_LINES;
+  /* build JSON in heap buffer */
+  size_t est = (size_t)avail * 256 + 256; char *buf = malloc(est); if (!buf) { pthread_mutex_unlock(&g_log_lock); send_json(r, "{\"err\":\"oom\"}\n"); return 0; }
+  size_t off = 0; off += snprintf(buf+off, est-off, "{\"lines\":[");
+  for (int i = 0; i < avail; i++) {
+    int idx = (start + i) % LOG_BUF_LINES;
+    /* escape double quotes and backslashes */
+    char esc[LOG_LINE_MAX*2]; size_t eo = 0; const char *s = g_log_buf[idx];
+    for (size_t j = 0; s[j] && eo+3 < sizeof(esc); j++) {
+      if (s[j] == '"' || s[j] == '\\') { esc[eo++] = '\\'; esc[eo++] = s[j]; }
+      else if ((unsigned char)s[j] < 32) { esc[eo++] = '?'; }
+      else esc[eo++] = s[j];
+    }
+    esc[eo] = '\0';
+    off += snprintf(buf+off, est-off, "%s\"%s\"", i?",":"", esc);
+    if (off + 256 > est) { est *= 2; char *nb = realloc(buf, est); if (!nb) break; buf = nb; }
+  }
+  off += snprintf(buf+off, est-off, "]}\n");
+  pthread_mutex_unlock(&g_log_lock);
+  send_json(r, buf);
+  free(buf);
   return 0;
 }
 
