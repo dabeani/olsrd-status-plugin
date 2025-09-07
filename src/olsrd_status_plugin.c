@@ -2448,6 +2448,17 @@ static int h_status_lite(http_request_t *r) {
   char uptime_linux[160]=""; format_uptime_linux(uptime_seconds, uptime_linux, sizeof(uptime_linux));
   APP_L("\"uptime_str\":"); json_append_escaped(&buf,&len,&cap,uptime_str); APP_L(",");
   APP_L("\"uptime_linux\":"); json_append_escaped(&buf,&len,&cap,uptime_linux); APP_L(",");
+  /* fetch queue and metrics: include lightweight counters so UI can show queue state during initial load */
+  {
+    int qlen = 0; struct fetch_req *fit = NULL; unsigned long m_d=0, m_r=0, m_s=0;
+    pthread_mutex_lock(&g_fetch_q_lock);
+    fit = g_fetch_q_head; while (fit) { qlen++; fit = fit->next; }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    METRIC_LOAD_ALL(m_d, m_r, m_s);
+    APP_L("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+    /* also include a suggested UI autos-refresh ms value */
+    APP_L("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
+  }
   /* default route */
   char def_ip[64]="", def_dev[64]="", def_hostname[256]=""; char *rout=NULL; size_t rn=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout){ char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } } p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } } free(rout);} if(def_ip[0]){ struct in_addr ina; if(inet_aton(def_ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he && he->h_name) snprintf(def_hostname,sizeof(def_hostname),"%s",he->h_name); }}
   APP_L("\"default_route\":{");
