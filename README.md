@@ -192,6 +192,31 @@ Typical extension points inside `src/olsrd_status_plugin.c`:
 * Add alternative discovery sources in `ubnt_discover_output()` or ARP synthesizer.
 * Register new HTTP handlers near end of file where existing routes are registered.
 
+## Extensions
+This project has a few small runtime extensions you can use for monitoring and to control noisy log output.
+
+- Prometheus metrics endpoint: the plugin exposes a minimal Prometheus-compatible metrics page at `/metrics` which exports fetch queue and counter metrics (queue length, dropped, retries, successes and per-type enqueue/processed counters). Useful for scraping with Prometheus or Promtail.
+
+- Toggle queue-operation logging: suppress detailed fetch-queue progress messages that are printed to stderr by default. Use either the PlParam or environment variable:
+    - PlParam: `fetch_log_queue` (0 = off, 1 = on)
+    - Env var: `OLSRD_STATUS_FETCH_LOG_QUEUE` (export before starting olsrd)
+
+- Periodic fetch reporter: a periodic summary of fetch metrics can be enabled via PlParam `fetch_report_interval` or env `OLSRD_STATUS_FETCH_REPORT_INTERVAL` (seconds). When enabled this prints a short summary to stderr every N seconds; it respects the `fetch_log_queue` toggle.
+
+- UI auto-refresh hint: the plugin can suggest an auto-refresh interval to the web UI via PlParam `fetch_auto_refresh_ms` or env `OLSRD_STATUS_FETCH_AUTO_REFRESH_MS` (milliseconds). The front-end honors this as a suggested default for the Fetch Queue auto-refresh control.
+
+Examples
+
+```bash
+# disable fetch queue log noise entirely
+export OLSRD_STATUS_FETCH_LOG_QUEUE=0
+
+# enable periodic summary every 60s
+export OLSRD_STATUS_FETCH_REPORT_INTERVAL=60
+```
+
+These extensions are intentionally lightweight so they can be toggled from systemd unit files or container env without changing `olsrd.conf`.
+
 ## License
 Same license as upstream olsrd project (inherit; add explicit file header if distributing separately).
 

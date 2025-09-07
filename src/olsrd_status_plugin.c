@@ -105,6 +105,9 @@ static pthread_t g_fetch_report_thread = 0;
 /* Auto-refresh interval (milliseconds) suggested for UI. 0 means disabled. Can be set via PlParam 'fetch_auto_refresh_ms' or env OLSRD_STATUS_FETCH_AUTO_REFRESH_MS */
 static int g_fetch_auto_refresh_ms = 15000; /* default 15s */
 static int g_cfg_fetch_auto_refresh_set = 0;
+/* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
+static int g_fetch_log_queue = 1;
+static int g_cfg_fetch_log_queue_set = 0;
 /* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
 /* Helper macros to update counters using atomics if available, else mutex */
@@ -425,7 +428,7 @@ static void *fetch_reporter(void *arg) {
     pthread_mutex_lock(&g_fetch_q_lock);
     int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
     pthread_mutex_unlock(&g_fetch_q_lock);
-    fprintf(stderr, "[status-plugin] fetch metrics: queued=%d dropped=%lu retries=%lu successes=%lu\n", qlen, d, r, s);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch metrics: queued=%d dropped=%lu retries=%lu successes=%lu\n", qlen, d, r, s);
   }
   return NULL;
 }
@@ -456,21 +459,21 @@ static void enqueue_fetch_request(int force, int wait, int type) {
         wrc = pthread_cond_timedwait(&found->cv, &found->m, &ts);
       }
       if (!found->done) {
-        fprintf(stderr, "[status-plugin] enqueue: wait timed out after %d seconds for existing request type=%d\n", g_fetch_wait_timeout, found->type);
-      }
+          if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: wait timed out after %d seconds for existing request type=%d\n", g_fetch_wait_timeout, found->type);
+        }
       pthread_mutex_unlock(&found->m);
     }
-  fprintf(stderr, "[status-plugin] enqueue: deduped request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: deduped request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
   pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
   }
 
   /* Queue size limiting: if full, either perform a synchronous fetch for waiters or drop the request */
   if (qlen >= g_fetch_queue_max) {
-    if (wait) {
+  if (wait) {
       /* Caller requested to block; perform a synchronous fetch inline to satisfy them. */
       pthread_mutex_unlock(&g_fetch_q_lock);
-  fprintf(stderr, "[status-plugin] enqueue: queue full, performing synchronous fetch type=%d\n", rq->type);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: queue full, performing synchronous fetch type=%d\n", rq->type);
   if (rq->type & FETCH_TYPE_DISCOVER) fetch_discover_once(); else fetch_remote_nodedb();
       pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
       return;
@@ -478,7 +481,7 @@ static void enqueue_fetch_request(int force, int wait, int type) {
     /* Drop non-waiting requests when the queue is full */
     METRIC_INC_DROPPED();
     unsigned long td, tr, ts; METRIC_LOAD_ALL(td, tr, ts);
-    fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
     pthread_mutex_unlock(&g_fetch_q_lock);
   pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
@@ -492,7 +495,7 @@ static void enqueue_fetch_request(int force, int wait, int type) {
   if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_ENQUEUED_NODEDB();
   if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_ENQUEUED_DISCOVER();
   pthread_cond_signal(&g_fetch_q_cv);
-  fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
   pthread_mutex_unlock(&g_fetch_q_lock);
 
   if (wait) {
@@ -503,7 +506,7 @@ static void enqueue_fetch_request(int force, int wait, int type) {
     if (!rq->done) {
       /* Timed out waiting for worker: mark this request as not waited so the worker
        * will free it when done. Do this while holding rq->m to avoid races. */
-      fprintf(stderr, "[status-plugin] enqueue: own request wait timed out after %d seconds type=%d\n", g_fetch_wait_timeout, rq->type);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: own request wait timed out after %d seconds type=%d\n", g_fetch_wait_timeout, rq->type);
       rq->wait = 0; /* worker will treat as non-waiting and free */
       pthread_mutex_unlock(&rq->m);
       return;
@@ -564,7 +567,7 @@ static void *fetch_worker_thread(void *arg) {
   DEBUG_INC_PROCESSED();
   if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_PROCESSED_NODEDB();
   if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_PROCESSED_DISCOVER();
-  fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
     /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
      * same retry/backoff logic so they benefit from the same robustness.
      */
@@ -3525,6 +3528,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_backoff_initial", .set_plugin_parameter = &set_int_param, .data = &g_fetch_backoff_initial, .addon = {0} },
   { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
   { .name = "fetch_auto_refresh_ms", .set_plugin_parameter = &set_int_param, .data = &g_fetch_auto_refresh_ms, .addon = {0} },
+  { .name = "fetch_log_queue", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_queue, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
   { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
@@ -3694,6 +3698,18 @@ int olsrd_plugin_init(void) {
         g_fetch_auto_refresh_ms = (int)v;
         fprintf(stderr, "[status-plugin] overriding fetch_auto_refresh_ms from env: %d\n", g_fetch_auto_refresh_ms);
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_AUTO_REFRESH_MS value: %s (ignored)\n", env_af);
+    }
+  }
+
+  /* fetch queue logging toggle via env (0=off,1=on) */
+  if (!g_cfg_fetch_log_queue_set) {
+    const char *env_lq = getenv("OLSRD_STATUS_FETCH_LOG_QUEUE");
+    if (env_lq && env_lq[0]) {
+      char *endptr = NULL; long v = strtol(env_lq, &endptr, 10);
+      if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {
+        g_fetch_log_queue = (int)v;
+        fprintf(stderr, "[status-plugin] setting fetch_log_queue from env: %d\n", g_fetch_log_queue);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_LOG_QUEUE value: %s (ignored)\n", env_lq);
     }
   }
 
