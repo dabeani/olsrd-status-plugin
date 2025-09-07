@@ -3075,43 +3075,52 @@ static int h_status_py(http_request_t *r) {
 /* Prometheus-compatible metrics endpoint (simple, non-exhaustive) */
 static int h_prometheus_metrics(http_request_t *r) {
   char buf[1024]; size_t off = 0;
+  /* Safe append helper: calculate remaining space and update offset safely. */
+#define SAFE_APPEND(fmt, ...) do { \
+    size_t _rem = (sizeof(buf) > off) ? (sizeof(buf) - off) : 0; \
+    if (_rem > 0) { int _n = snprintf(buf + off, _rem, (fmt), ##__VA_ARGS__); \
+      if (_n > 0) { if ((size_t)_n >= _rem) { off = sizeof(buf) - 1; buf[off] = '\0'; } else { off += (size_t)_n; } } \
+    } \
+  } while(0)
   unsigned long d=0, rts=0, s=0; METRIC_LOAD_ALL(d, rts, s);
   unsigned long de=0, den=0, ded=0, dp=0, dpn=0, dpd=0; DEBUG_LOAD_ALL(de, den, ded, dp, dpn, dpd);
   pthread_mutex_lock(&g_fetch_q_lock);
   int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
   pthread_mutex_unlock(&g_fetch_q_lock);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_queue_length Number of pending fetch requests\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_queue_length gauge\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_queue_length %d\n", qlen);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_dropped_total Total dropped fetch requests\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_dropped_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_dropped_total %lu\n", d);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_retries_total Total fetch retry attempts\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_retries_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_retries_total %lu\n", rts);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_successes_total Total successful fetches\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_successes_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_successes_total %lu\n", s);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_enqueued_total Total enqueue operations\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_enqueued_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_enqueued_total %lu\n", de);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_processed_total Total processed operations\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_processed_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_processed_total %lu\n", dp);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_enqueued_nodedb_total Enqueued NodeDB fetches\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_enqueued_nodedb_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_enqueued_nodedb_total %lu\n", den);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_enqueued_discover_total Enqueued discover ops\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_enqueued_discover_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_enqueued_discover_total %lu\n", ded);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_processed_nodedb_total Processed NodeDB ops\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_processed_nodedb_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_processed_nodedb_total %lu\n", dpn);
-  off += snprintf(buf+off, sizeof(buf)-off, "# HELP olsrd_status_fetch_processed_discover_total Processed discover ops\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "# TYPE olsrd_status_fetch_processed_discover_total counter\n");
-  off += snprintf(buf+off, sizeof(buf)-off, "olsrd_status_fetch_processed_discover_total %lu\n", dpd);
+  SAFE_APPEND("# HELP olsrd_status_fetch_queue_length Number of pending fetch requests\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_queue_length gauge\n");
+  SAFE_APPEND("olsrd_status_fetch_queue_length %d\n", qlen);
+  SAFE_APPEND("# HELP olsrd_status_fetch_dropped_total Total dropped fetch requests\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_dropped_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_dropped_total %lu\n", d);
+  SAFE_APPEND("# HELP olsrd_status_fetch_retries_total Total fetch retry attempts\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_retries_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_retries_total %lu\n", rts);
+  SAFE_APPEND("# HELP olsrd_status_fetch_successes_total Total successful fetches\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_successes_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_successes_total %lu\n", s);
+  SAFE_APPEND("# HELP olsrd_status_fetch_enqueued_total Total enqueue operations\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_enqueued_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_enqueued_total %lu\n", de);
+  SAFE_APPEND("# HELP olsrd_status_fetch_processed_total Total processed operations\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_processed_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_processed_total %lu\n", dp);
+  SAFE_APPEND("# HELP olsrd_status_fetch_enqueued_nodedb_total Enqueued NodeDB fetches\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_enqueued_nodedb_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_enqueued_nodedb_total %lu\n", den);
+  SAFE_APPEND("# HELP olsrd_status_fetch_enqueued_discover_total Enqueued discover ops\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_enqueued_discover_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_enqueued_discover_total %lu\n", ded);
+  SAFE_APPEND("# HELP olsrd_status_fetch_processed_nodedb_total Processed NodeDB ops\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_processed_nodedb_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_processed_nodedb_total %lu\n", dpn);
+  SAFE_APPEND("# HELP olsrd_status_fetch_processed_discover_total Processed discover ops\n");
+  SAFE_APPEND("# TYPE olsrd_status_fetch_processed_discover_total counter\n");
+  SAFE_APPEND("olsrd_status_fetch_processed_discover_total %lu\n", dpd);
 
-  http_send_status(r,200,"OK"); http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf));
+  http_send_status(r,200,"OK"); http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n"); http_write(r, buf, off);
+  /* cleanup macro */
+#undef SAFE_APPEND
   return 0;
 }
 
