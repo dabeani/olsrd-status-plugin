@@ -163,7 +163,7 @@ static int g_fetch_worker_running = 0;
 #define MAX_FETCH_RETRIES_DEFAULT 3
 #define FETCH_INITIAL_BACKOFF_SEC_DEFAULT 1
 
-static void enqueue_fetch_request(int force, int wait);
+static void enqueue_fetch_request(int force, int wait, int type);
 static void *fetch_worker_thread(void *arg);
 
 /* Devices cache populated by background worker to avoid blocking HTTP handlers */
@@ -188,24 +188,12 @@ static void *devices_cache_worker(void *arg) {
   (void)arg;
   g_devices_worker_running = 1;
   while (g_devices_worker_running) {
-    char *ud = NULL; size_t udn = 0;
-    if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
-      char *normalized = NULL; size_t nlen = 0;
-      if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
-        /* transform to legacy to keep h_status_compat expectations */
-        char *legacy = NULL; size_t legacy_len = 0;
-        if (transform_devices_to_legacy(normalized, &legacy, &legacy_len) == 0 && legacy) {
-          pthread_mutex_lock(&g_devices_cache_lock);
-          if (g_devices_cache) free(g_devices_cache);
-          g_devices_cache = legacy; g_devices_cache_len = legacy_len; g_devices_cache_ts = time(NULL);
-          pthread_mutex_unlock(&g_devices_cache_lock);
-        }
-        if (normalized) free(normalized);
-      }
-    }
-    if (ud) free(ud);
+    /* Enqueue a discovery request; let centralized fetch worker perform discovery and update
+     * the devices cache. Non-blocking enqueue so this thread won't stall.
+     */
+    enqueue_fetch_request(0, 0, FETCH_TYPE_DISCOVER);
     /* Sleep with short interval; adjust as needed */
-    for (int i=0;i<10;i++) { sleep(1); if (!g_devices_worker_running) break; }
+    for (int i = 0; i < 10; i++) { sleep(1); if (!g_devices_worker_running) break; }
   }
   return NULL;
 }
@@ -219,14 +207,18 @@ static void start_devices_worker(void) {
 
 /* forward declare fetch implementation so workers can call it */
 static void fetch_remote_nodedb(void);
+/* forward declare discovery helper so enqueue implementation can call it synchronously when needed */
+static void fetch_discover_once(void);
 
 /* Nodedb background worker: periodically refresh remote node DB to avoid blocking handlers */
 static void *nodedb_cache_worker(void *arg) {
   (void)arg;
   g_nodedb_worker_running = 1;
   while (g_nodedb_worker_running) {
-    /* fetch will respect TTL internally when called from other places, but worker forces update periodically */
-    fetch_remote_nodedb();
+    /* Enqueue a forced node DB refresh; let the fetch worker handle the actual network operations
+     * so retries/backoff and metrics apply uniformly.
+     */
+    enqueue_fetch_request(1, 0, FETCH_TYPE_NODEDB);
     /* Sleep in small increments to allow clean shutdown; total sleep roughly equals TTL or minimum 10s */
     int total = g_nodedb_ttl > 10 ? g_nodedb_ttl : 10;
     for (int i = 0; i < total; ++i) { if (!g_nodedb_worker_running) break; sleep(1); }
@@ -260,10 +252,10 @@ static void *fetch_reporter(void *arg) {
   return NULL;
 }
 
-static void enqueue_fetch_request(int force, int wait) {
+static void enqueue_fetch_request(int force, int wait, int type) {
   struct fetch_req *rq = calloc(1, sizeof(*rq));
   if (!rq) return;
-  rq->force = force; rq->wait = wait; rq->done = 0; rq->type = FETCH_TYPE_NODEDB; rq->next = NULL;
+  rq->force = force; rq->wait = wait; rq->done = 0; rq->type = type ? type : FETCH_TYPE_NODEDB; rq->next = NULL;
   pthread_mutex_init(&rq->m, NULL); pthread_cond_init(&rq->cv, NULL);
 
   pthread_mutex_lock(&g_fetch_q_lock);
@@ -271,7 +263,10 @@ static void enqueue_fetch_request(int force, int wait) {
    * avoid adding a duplicate. A pending force request satisfies non-force requests.
    */
   struct fetch_req *iter = g_fetch_q_head; struct fetch_req *found = NULL; int qlen = 0;
-  while (iter) { qlen++; if (iter->force || force == 0) { found = iter; break; } iter = iter->next; }
+  while (iter) { qlen++; /* only dedupe requests of the same type */
+    if (iter->type == rq->type && (iter->force || force == 0)) { found = iter; break; }
+    iter = iter->next;
+  }
   if (found) {
     pthread_mutex_unlock(&g_fetch_q_lock);
     /* If caller asked to wait, wait on the existing request to complete */
@@ -289,7 +284,7 @@ static void enqueue_fetch_request(int force, int wait) {
     if (wait) {
       /* Caller requested to block; perform a synchronous fetch inline to satisfy them. */
       pthread_mutex_unlock(&g_fetch_q_lock);
-      fetch_remote_nodedb();
+      if (rq->type & FETCH_TYPE_DISCOVER) fetch_discover_once(); else fetch_remote_nodedb();
       pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
       return;
     }
@@ -1078,7 +1073,7 @@ static void fetch_remote_nodedb_if_needed(void) {
   pthread_mutex_unlock(&g_nodedb_lock);
   if (!need) return;
   /* enqueue an asynchronous fetch request (do not block caller) */
-  enqueue_fetch_request(0, 0);
+  enqueue_fetch_request(0, 0, FETCH_TYPE_NODEDB);
 }
 
 static void fetch_remote_nodedb(void) {
@@ -2710,7 +2705,7 @@ static int h_nodedb(http_request_t *r) {
 /* Force a refresh of the remote node_db (bypass TTL). Returns JSON status. */
 static int h_nodedb_refresh(http_request_t *r) {
   /* perform forced fetch: enqueue and wait for completion */
-  enqueue_fetch_request(1, 1);
+  enqueue_fetch_request(1, 1, FETCH_TYPE_NODEDB);
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
     /* return a small success JSON including last_fetch */
@@ -2796,7 +2791,7 @@ static int h_fetch_debug(http_request_t *r) {
       len += snprintf(buf+len, cap-len, ",");
     }
     first=0;
-    len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d}", it->force?1:0, it->wait?1:0);
+  len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
     if (len + 128 > cap) { cap *= 2; char *nb = realloc(buf, cap); if (!nb) break; buf = nb; }
     it = it->next;
   }
