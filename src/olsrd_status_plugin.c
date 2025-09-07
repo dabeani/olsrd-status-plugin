@@ -493,6 +493,15 @@ static void fetch_discover_once(void) {
     }
   }
   if (ud) free(ud);
+  /* Clear fetch-in-progress so other fetch requests can proceed. Discovery runs
+   * inside the centralized fetch worker and borrows the same nodedb fetch lock
+   * to serialize network activity; ensure we clear the in-progress flag here
+   * exactly as fetch_remote_nodedb does so the worker doesn't deadlock.
+   */
+  pthread_mutex_lock(&g_nodedb_fetch_lock);
+  g_nodedb_fetch_in_progress = 0;
+  pthread_cond_broadcast(&g_nodedb_fetch_cv);
+  pthread_mutex_unlock(&g_nodedb_fetch_lock);
 }
 
 static void *fetch_worker_thread(void *arg) {
