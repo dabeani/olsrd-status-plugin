@@ -851,6 +851,7 @@ static void fetch_remote_nodedb(void) {
     }
 #endif
 
+#ifndef NO_CURL_FALLBACK
     if (!success) {
       const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};
       for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) {
@@ -862,6 +863,7 @@ static void fetch_remote_nodedb(void) {
         } else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } }
       }
     }
+#endif
   }
   
   if (success) {

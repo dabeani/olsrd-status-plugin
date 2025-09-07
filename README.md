@@ -169,6 +169,45 @@ Same license as upstream olsrd project (inherit; add explicit file header if dis
 
 ---
 This README summarizes functionality; for deeper internals inspect `src/olsrd_status_plugin.c` (single translation unit for easier embedding) and the `www/js/app.js` UI logic.
+
+## Build-time fetch options
+
+Two Makefile options control how the plugin fetches remote resources (notably `nodedb.json`):
+
+- `ENABLE_CURL_FALLBACK` (default: `1`) — when enabled, if libcurl is not available the plugin will attempt to spawn an external `curl` binary at runtime as a last resort. Set to `0` to disable the external-binary fallback and require libcurl or accept no HTTPS fetching.
+
+    Example: build without external fallback:
+
+    ```bash
+    make ENABLE_CURL_FALLBACK=0
+    ```
+
+- `REQUIRE_FETCH` (default: `0`) — opt-in hard failure when neither libcurl (dev headers detected at build) nor an external `curl` binary are present. This is useful for CI or production images where missing fetch capability should abort the build early.
+
+    Example: fail build if no fetch capability is present:
+
+    ```bash
+    make REQUIRE_FETCH=1
+    ```
+
+During `make` you will see diagnostic messages such as:
+
+```
+>>> libcurl NOT detected; building without libcurl support
+>>> external curl fallback: ENABLED (set ENABLE_CURL_FALLBACK=0 to disable)
+```
+
+Runtime expectations
+
+* If libcurl dev headers were available at build time, the binary will use libcurl for HTTPS fetches (recommended).
+* If libcurl wasn't available but `ENABLE_CURL_FALLBACK=1`, the plugin will attempt to spawn an external `curl` binary when needed — ensure `curl` is installed in the runtime image.
+* If libcurl wasn't available and `ENABLE_CURL_FALLBACK=0`, the plugin will not attempt external fetches; remote HTTPS node DB fetching will not occur (plain http:// URLs may still work via the internal socket helper).
+
+Recommendations:
+
+* For production builds, install libcurl dev packages in the build image so the plugin includes native HTTPS fetching.
+* For minimal runtime images, either ensure `curl` binary is present or keep `ENABLE_CURL_FALLBACK=1` and accept the external dependency.
+
 ```
 
 # how to bring it into the build env
