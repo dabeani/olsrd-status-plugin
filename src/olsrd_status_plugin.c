@@ -158,6 +158,11 @@ static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_fetch_q_cv   = PTHREAD_COND_INITIALIZER;
 static int g_fetch_worker_running = 0;
 
+/* Debug counters for diagnostics */
+static unsigned long g_debug_enqueue_count = 0;
+static unsigned long g_debug_processed_count = 0;
+static char g_debug_last_fetch_msg[256] = "";
+
 /* Queue / retry tunables */
 #define MAX_FETCH_QUEUE_DEFAULT 4
 #define MAX_FETCH_RETRIES_DEFAULT 3
@@ -275,7 +280,8 @@ static void enqueue_fetch_request(int force, int wait, int type) {
       while (!found->done) pthread_cond_wait(&found->cv, &found->m);
       pthread_mutex_unlock(&found->m);
     }
-    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+  fprintf(stderr, "[status-plugin] enqueue: deduped request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
+  pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
   }
 
@@ -284,7 +290,8 @@ static void enqueue_fetch_request(int force, int wait, int type) {
     if (wait) {
       /* Caller requested to block; perform a synchronous fetch inline to satisfy them. */
       pthread_mutex_unlock(&g_fetch_q_lock);
-      if (rq->type & FETCH_TYPE_DISCOVER) fetch_discover_once(); else fetch_remote_nodedb();
+  fprintf(stderr, "[status-plugin] enqueue: queue full, performing synchronous fetch type=%d\n", rq->type);
+  if (rq->type & FETCH_TYPE_DISCOVER) fetch_discover_once(); else fetch_remote_nodedb();
       pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
       return;
     }
@@ -293,7 +300,7 @@ static void enqueue_fetch_request(int force, int wait, int type) {
     unsigned long td, tr, ts; METRIC_LOAD_ALL(td, tr, ts);
     fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
     pthread_mutex_unlock(&g_fetch_q_lock);
-    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+  pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
     return;
   }
 
@@ -301,6 +308,7 @@ static void enqueue_fetch_request(int force, int wait, int type) {
   if (g_fetch_q_tail) g_fetch_q_tail->next = rq; else g_fetch_q_head = rq;
   g_fetch_q_tail = rq;
   pthread_cond_signal(&g_fetch_q_cv);
+  fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
   pthread_mutex_unlock(&g_fetch_q_lock);
 
   if (wait) {
@@ -348,6 +356,8 @@ static void *fetch_worker_thread(void *arg) {
     pthread_mutex_unlock(&g_fetch_q_lock);
     if (!rq) continue;
 
+  g_debug_processed_count++;
+  fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
     /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
      * same retry/backoff logic so they benefit from the same robustness.
      */
@@ -2826,6 +2836,9 @@ static int h_fetch_debug(http_request_t *r) {
   }
   len += snprintf(buf+len, cap-len, "]}\n");
   pthread_mutex_unlock(&g_fetch_q_lock);
+  /* append debug counters */
+  char dbg[256]; snprintf(dbg, sizeof(dbg), ",\"debug\":{\"enqueued\":%lu,\"processed\":%lu,\"last_fetch_msg\":\"%s\"}", g_debug_enqueue_count, g_debug_processed_count, g_debug_last_fetch_msg);
+  size_t need = strlen(buf) + strlen(dbg) + 32; char *nb = realloc(buf, need); if (nb) { buf = nb; strcat(buf, dbg); }
   http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, strlen(buf)); free(buf);
   return 0;
 }
