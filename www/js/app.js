@@ -770,28 +770,15 @@ function populateFetchStats(fs) {
     html += mkBadge('Retries', retries);
     html += mkBadge('Processed', processed);
     html += '</div>';
-    // progress bar: percent of queue_crit as a practical max
-    var denom = q_crit > 0 ? q_crit : 200;
-    var pct = Math.min(100, Math.round((queued / denom) * 100));
-    var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
-    html += '<div class="progress" style="height:16px; margin-bottom:6px">';
-    html += '<div style="display:flex; gap:8px; align-items:center;">';
-    html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
-    html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
-    // interval selector: persisted in localStorage as 'fetch_auto_interval_ms'
-    html += '<select id="fetch-stats-interval" class="input-sm form-control" style="width:120px; display:inline-block; margin-right:6px;">';
-    html += '<option value="0">Auto off</option>';
-    html += '<option value="5000">5s</option>';
-    html += '<option value="10000">10s</option>';
-    html += '<option value="15000">15s</option>';
-    html += '<option value="30000">30s</option>';
-    html += '<option value="60000">60s</option>';
-    html += '<option value="120000">2m</option>';
-    html += '<option value="300000">5m</option>';
-    html += '</select>';
-    html += '<button id="fetch-stats-autorefresh" class="btn btn-xs btn-default" title="Toggle auto-refresh">Auto</button>';
-    html += '</div></div>';
-    html += pct+'%';
+  // progress bar: percent of queue_crit as a practical max
+  var denom = q_crit > 0 ? q_crit : 200;
+  var pct = Math.min(100, Math.round((queued / denom) * 100));
+  var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
+  // single progress bar (controls live in the header to avoid duplicate IDs)
+  html += '<div class="progress" style="height:16px; margin-bottom:6px">';
+  html += '<div class="progress-bar '+progClass+'" role="progressbar" aria-valuenow="'+pct+'" aria-valuemin="0" aria-valuemax="100" style="width:'+pct+'%;">';
+  html += '</div></div>';
+  html += '<div style="margin-top:4px">'+pct+'%</div>';
     html += '</div></div>';
     html += '<div class="small-muted">Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn+'</div>';
     html += '</div>';
