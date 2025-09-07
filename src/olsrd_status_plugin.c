@@ -86,6 +86,11 @@ static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_fetch_q_cv   = PTHREAD_COND_INITIALIZER;
 static int g_fetch_worker_running = 0;
 
+/* Queue / retry tunables */
+#define MAX_FETCH_QUEUE 4
+#define MAX_FETCH_RETRIES 3
+#define FETCH_INITIAL_BACKOFF_SEC 1
+
 static void enqueue_fetch_request(int force, int wait);
 static void *fetch_worker_thread(void *arg);
 
@@ -173,11 +178,51 @@ static void enqueue_fetch_request(int force, int wait) {
   if (!rq) return;
   rq->force = force; rq->wait = wait; rq->done = 0; rq->next = NULL;
   pthread_mutex_init(&rq->m, NULL); pthread_cond_init(&rq->cv, NULL);
+
   pthread_mutex_lock(&g_fetch_q_lock);
+  /* Simple dedupe: if a pending request already exists that will satisfy this one,
+   * avoid adding a duplicate. A pending force request satisfies non-force requests.
+   */
+  struct fetch_req *iter = g_fetch_q_head; struct fetch_req *found = NULL; int qlen = 0;
+  while (iter) { qlen++; if (iter->force || force == 0) { found = iter; break; } iter = iter->next; }
+  if (found) {
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    /* If caller asked to wait, wait on the existing request to complete */
+    if (wait) {
+      pthread_mutex_lock(&found->m);
+      while (!found->done) pthread_cond_wait(&found->cv, &found->m);
+      pthread_mutex_unlock(&found->m);
+    }
+    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+    return;
+  }
+
+  /* Queue size limiting: if full, either perform a synchronous fetch for waiters or drop the request */
+  if (qlen >= MAX_FETCH_QUEUE) {
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    if (wait) {
+      /* Synchronous fallback: perform fetch inline so caller sees result immediately. Protect with fetch_in_progress guard. */
+      pthread_mutex_lock(&g_nodedb_fetch_lock);
+      while (g_nodedb_fetch_in_progress) pthread_cond_wait(&g_nodedb_fetch_cv, &g_nodedb_fetch_lock);
+      g_nodedb_fetch_in_progress = 1;
+      pthread_mutex_unlock(&g_nodedb_fetch_lock);
+      /* perform canonical fetch once */
+      fetch_remote_nodedb();
+      /* fetch_remote_nodedb clears g_nodedb_fetch_in_progress and broadcasts */
+      pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+      return;
+    }
+    fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request\n", qlen);
+    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+    return;
+  }
+
+  /* Accept into queue */
   if (g_fetch_q_tail) g_fetch_q_tail->next = rq; else g_fetch_q_head = rq;
   g_fetch_q_tail = rq;
   pthread_cond_signal(&g_fetch_q_cv);
   pthread_mutex_unlock(&g_fetch_q_lock);
+
   if (wait) {
     pthread_mutex_lock(&rq->m);
     while (!rq->done) pthread_cond_wait(&rq->cv, &rq->m);
@@ -199,38 +244,37 @@ static void *fetch_worker_thread(void *arg) {
     }
     pthread_mutex_unlock(&g_fetch_q_lock);
     if (!rq) continue;
-    /* perform the actual fetch directly here by calling existing implementation
-     * that was in fetch_remote_nodedb. We'll call it via a helper name.
-     */
-    /* call the inline fetch implementation by duplicating logic: */
-    /* Build a synchronous fetch: obtain primary IP, attempt fetch methods, update cache */
-    {
-      char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
-      char *fresh=NULL; size_t fn=0; int success=0;
-      /* initial DNS wait on first fetch */
-      if (g_nodedb_last_fetch == 0 && g_nodedb_url[0]) {
-        char hostbuf[256] = ""; const char *u = g_nodedb_url; const char *hstart = strstr(u, "://"); if (hstart) hstart += 3; else hstart = u; const char *hend = strchr(hstart, '/'); size_t hlen = hend ? (size_t)(hend - hstart) : strlen(hstart); const char *colon = memchr(hstart, ':', hlen); if (colon) hlen = (size_t)(colon - hstart); if (hlen > 0 && hlen < sizeof(hostbuf)) { memcpy(hostbuf, hstart, hlen); hostbuf[hlen] = '\0'; for (int i = 0; i < g_nodedb_startup_wait; ++i) { struct addrinfo hints, *res = NULL; memset(&hints, 0, sizeof(hints)); hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; if (getaddrinfo(hostbuf, NULL, &hints, &res) == 0) { if (res) freeaddrinfo(res); if (i > 0) fprintf(stderr, "[status-plugin] nodedb fetch: DNS became available after %d seconds\n", i); break; } fprintf(stderr, "[status-plugin] nodedb fetch: waiting for network/DNS to become available (%s) (%d/%d)\n", hostbuf, i+1, g_nodedb_startup_wait); sleep(1); } }
-      }
-      if (strncmp(g_nodedb_url, "http://", 7) == 0) {
-        if (util_http_get_url(g_nodedb_url, &fresh, &fn, 5) == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) { success = 1; fprintf(stderr, "[status-plugin] nodedb fetch: method=internal_http success, got %zu bytes\n", fn); }
-        else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } }
-      }
-#ifdef HAVE_LIBCURL
-      if (!success) {
-        CURL *c = curl_easy_init(); if (c) { struct curl_fetch cf = { NULL, 0 }; curl_easy_setopt(c, CURLOPT_URL, g_nodedb_url); curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L); curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); curl_easy_setopt(c, CURLOPT_USERAGENT, "status-plugin"); struct curl_slist *hdr = NULL; hdr = curl_slist_append(hdr, "Accept: application/json"); curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdr); curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L); curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L); curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb); curl_easy_setopt(c, CURLOPT_WRITEDATA, &cf); CURLcode cres = curl_easy_perform(c); curl_slist_free_all(hdr); curl_easy_cleanup(c); if (cres == CURLE_OK && cf.buf && cf.len > 0 && validate_nodedb_json(cf.buf, cf.len)) { fresh = cf.buf; fn = cf.len; success = 1; fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl success, got %zu bytes\n", fn); } else { if (cf.buf) free(cf.buf); fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl failed (curl code=%d)\n", (int)cres); } } }
-#endif
-#ifndef NO_CURL_FALLBACK
-      if (!success) {
-        const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL}; for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) { char cmd[1024]; snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, g_nodedb_url); if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) { fprintf(stderr, "[status-plugin] nodedb fetch: method=external_curl success with %s, got %zu bytes\n", *curl_path, fn); success = 1; break; } else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } } }
-      }
-#endif
-      if (success) {
-        /* augment and store */
-        int is_object_mapping = 0; if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1; if (is_object_mapping) { char *aug = malloc(fn*2 + 32); if (aug) { size_t o=0; const char *p=fresh; int in_obj=0; int pending_insert=0; char last_n_val[256]; last_n_val[0]=0; int inserted_for_obj=0; while (*p) { if (*p=='{') { in_obj++; inserted_for_obj=0; last_n_val[0]=0; pending_insert=0; } if (*p=='}') { if (pending_insert && last_n_val[0] && !inserted_for_obj) { o += (size_t)snprintf(aug+o, fn*2+32 - o, ",\"hostname\":\"%s\",\"name\":\"%s\"", last_n_val, last_n_val); pending_insert=0; inserted_for_obj=1; } in_obj--; if (in_obj<0) in_obj=0; } if (strncmp(p,"\"n\":\"",5)==0) { const char *vstart = p+5; const char *q=vstart; while(*q && *q!='\"') q++; size_t L=(size_t)(q-vstart); if(L>=sizeof(last_n_val)) L=sizeof(last_n_val)-1; memcpy(last_n_val,vstart,L); last_n_val[L]=0; pending_insert=1; inserted_for_obj=0; } if (pending_insert && strncmp(p,"\"hostname\"",10)==0) { pending_insert=0; inserted_for_obj=1; } if (pending_insert && strncmp(p,"\"name\"",6)==0) { } aug[o++]=*p; p++; if(o>fn*2) break; } aug[o]=0; if (o>0) { free(fresh); fresh=aug; fn=strlen(fresh); } else free(aug); } }
-        pthread_mutex_lock(&g_nodedb_lock); if (g_nodedb_cached) free(g_nodedb_cached); g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL); pthread_mutex_unlock(&g_nodedb_lock); if (g_nodedb_write_disk) { FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} } fresh=NULL;
-      } else if (fresh) { free(fresh); } else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
+
+    /* Process the request by invoking the canonical fetch path with retries/backoff. */
+    int attempt;
+    int succeeded = 0;
+    for (attempt = 0; attempt < MAX_FETCH_RETRIES; ++attempt) {
+      /* Wait for any in-progress fetch to finish, then mark in-progress and call the fetch */
+      pthread_mutex_lock(&g_nodedb_fetch_lock);
+      while (g_nodedb_fetch_in_progress) pthread_cond_wait(&g_nodedb_fetch_cv, &g_nodedb_fetch_lock);
+      g_nodedb_fetch_in_progress = 1;
+      pthread_mutex_unlock(&g_nodedb_fetch_lock);
+
+      time_t prev = g_nodedb_last_fetch;
+      fetch_remote_nodedb();
+      /* If fetch_remote_nodedb updated the last_fetch timestamp we consider it a success */
+      if (g_nodedb_last_fetch > prev) { succeeded = 1; break; }
+
+      /* Backoff before next attempt (if any) */
+      if (attempt + 1 < MAX_FETCH_RETRIES) sleep(FETCH_INITIAL_BACKOFF_SEC << attempt);
     }
-    /* loop */
+
+    /* Notify any waiter(s) attached to this request */
+    pthread_mutex_lock(&rq->m);
+    rq->done = 1;
+    pthread_cond_broadcast(&rq->cv);
+    pthread_mutex_unlock(&rq->m);
+
+    /* If caller didn't wait, the worker is responsible for freeing the request */
+    if (!rq->wait) {
+      pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+    }
+    /* otherwise the creator will free after being signaled */
   }
   return NULL;
 }

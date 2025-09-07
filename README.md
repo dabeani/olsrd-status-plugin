@@ -148,6 +148,12 @@ export OLSRD_STATUS_PLUGIN_NODEDB_TTL=600
 export OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK=1
 ```
 
+* `OLSRD_STATUS_FETCH_STARTUP_WAIT` – optional integer seconds to wait during plugin startup for DNS/network readiness before attempting the first remote fetch. Useful in containers where networking may be delayed. Default is 30 seconds.
+
+```bash
+export OLSRD_STATUS_FETCH_STARTUP_WAIT=60
+```
+
 Logging and debugging
 
 * The plugin logs which environment values are applied or ignored during startup to stderr.
