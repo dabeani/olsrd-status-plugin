@@ -535,8 +535,9 @@ static int transform_devices_to_legacy(const char *devices_json, char **out, siz
     find_json_string_value(objbuf, "uptime", &upt, &uln);
     find_json_string_value(objbuf, "essid", &essid, &esn);
 
-    /* Build one legacy device object */
-    if (!first) json_buf_append(&buf, &len, &cap, ","); first = 0;
+  /* Build one legacy device object */
+  if (!first) json_buf_append(&buf, &len, &cap, ",");
+  first = 0;
     /* addresses array */
     json_buf_append(&buf, &len, &cap, "{");
     /* addresses */
@@ -558,9 +559,15 @@ static int transform_devices_to_legacy(const char *devices_json, char **out, siz
     json_buf_append(&buf, &len, &cap, "\"uptime\":%d", ui);
     json_buf_append(&buf, &len, &cap, "}");
 
-    /* cleanup */
-    if (objbuf) free(objbuf);
-    if (hw) free(hw); if (ipv4) free(ipv4); if (firm) free(firm); if (host) free(host); if (prod) free(prod); if (upt) free(upt); if (essid) free(essid);
+  /* cleanup */
+  if (objbuf) free(objbuf);
+  if (hw) free(hw);
+  if (ipv4) free(ipv4);
+  if (firm) free(firm);
+  if (host) free(host);
+  if (prod) free(prod);
+  if (upt) free(upt);
+  if (essid) free(essid);
 
     q = cur;
   }
