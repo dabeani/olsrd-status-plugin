@@ -15,6 +15,10 @@ typedef struct http_request {
   char query[512];
   char host[128];
   char client_ip[64];
+  /* small buffered header area to batch status+headers into one syscall */
+  char hdr_buf[1024];
+  size_t hdr_len;
+  int hdr_pending;
 } http_request_t;
 
 typedef int (*http_handler_fn)(http_request_t *r);

@@ -13,6 +13,7 @@ extern int g_is_edgerouter;
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <sys/uio.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -197,17 +198,32 @@ int http_server_register_handler(const char *route, http_handler_fn fn) {
 }
 
 void http_send_status(http_request_t *r, int code, const char *status) {
-  char hdr[256];
-  int n = snprintf(hdr, sizeof(hdr),
+  /* Buffer the status line and common headers to reduce syscalls. Caller will flush via http_printf/http_write. */
+  int n = snprintf(r->hdr_buf, sizeof(r->hdr_buf),
                    "HTTP/1.1 %d %s\r\n"
                    "Connection: close\r\n"
                    "Server: olsrd-status-plugin\r\n",
                    code, status ? status : "");
-  ssize_t _rv = write(r->fd, hdr, n); (void)_rv;
+  if (n > 0 && (size_t)n < sizeof(r->hdr_buf)) {
+    r->hdr_len = (size_t)n;
+    r->hdr_pending = 1;
+  } else {
+    /* fallback: immediate write on formatting failure */
+    ssize_t _rv = write(r->fd, r->hdr_buf, (n>0 && n<=(int)sizeof(r->hdr_buf))?n:0); (void)_rv;
+    r->hdr_len = 0; r->hdr_pending = 0;
+  }
 }
 
 void http_write(http_request_t *r, const char *buf, size_t len) {
-  ssize_t _rv2 = write(r->fd, buf, len); (void)_rv2;
+  if (r->hdr_pending) {
+    struct iovec iov[2];
+    iov[0].iov_base = r->hdr_buf; iov[0].iov_len = r->hdr_len;
+    iov[1].iov_base = (void*)buf; iov[1].iov_len = len;
+    ssize_t _rv = writev(r->fd, iov, 2); (void)_rv;
+    r->hdr_pending = 0; r->hdr_len = 0;
+  } else {
+    ssize_t _rv2 = write(r->fd, buf, len); (void)_rv2;
+  }
 }
 
 int http_printf(http_request_t *r, const char *fmt, ...) {
@@ -226,7 +242,17 @@ int http_printf(http_request_t *r, const char *fmt, ...) {
 #pragma GCC diagnostic pop
 #endif
   va_end(ap);
-  if (n > 0) { ssize_t _rv3 = write(r->fd, b, (size_t)n); (void)_rv3; }
+  if (n > 0) {
+    if (r->hdr_pending) {
+      struct iovec iov[2];
+      iov[0].iov_base = r->hdr_buf; iov[0].iov_len = r->hdr_len;
+      iov[1].iov_base = b; iov[1].iov_len = (size_t)n;
+      ssize_t _rv3 = writev(r->fd, iov, 2); (void)_rv3;
+      r->hdr_pending = 0; r->hdr_len = 0;
+    } else {
+      ssize_t _rv3 = write(r->fd, b, (size_t)n); (void)_rv3;
+    }
+  }
   return n;
 }
 
@@ -259,7 +285,7 @@ int http_send_file(http_request_t *r, const char *asset_root, const char *relpat
   return -1;
   }
   const char *m = mime ? mime : guess_mime(relpath);
-  fprintf(stderr, "[status-plugin] http_send_file: serving '%s' (mime=%s)\n", path, m);
+  if (g_log_access) fprintf(stderr, "[status-plugin] http_send_file: serving '%s' (mime=%s)\n", path, m);
   struct stat st;
   if (fstat(fd, &st) == 0) {
     /* Generate Last-Modified header */
