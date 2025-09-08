@@ -194,17 +194,21 @@ static unsigned long g_debug_enqueue_count_discover = 0;
 static unsigned long g_debug_processed_count = 0;
 static unsigned long g_debug_processed_count_nodedb = 0;
 static unsigned long g_debug_processed_count_discover = 0;
-#define DEBUG_INC_ENQUEUED() (g_debug_enqueue_count++)
-#define DEBUG_INC_ENQUEUED_NODEDB() (g_debug_enqueue_count_nodedb++)
-#define DEBUG_INC_ENQUEUED_DISCOVER() (g_debug_enqueue_count_discover++)
-#define DEBUG_INC_PROCESSED() (g_debug_processed_count++)
-#define DEBUG_INC_PROCESSED_NODEDB() (g_debug_processed_count_nodedb++)
-#define DEBUG_INC_PROCESSED_DISCOVER() (g_debug_processed_count_discover++)
+#define DEBUG_INC_ENQUEUED() do { pthread_mutex_lock(&g_debug_lock); g_debug_enqueue_count++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_ENQUEUED_NODEDB() do { pthread_mutex_lock(&g_debug_lock); g_debug_enqueue_count_nodedb++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_ENQUEUED_DISCOVER() do { pthread_mutex_lock(&g_debug_lock); g_debug_enqueue_count_discover++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_PROCESSED() do { pthread_mutex_lock(&g_debug_lock); g_debug_processed_count++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_PROCESSED_NODEDB() do { pthread_mutex_lock(&g_debug_lock); g_debug_processed_count_nodedb++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_PROCESSED_DISCOVER() do { pthread_mutex_lock(&g_debug_lock); g_debug_processed_count_discover++; pthread_mutex_unlock(&g_debug_lock); } while(0)
 #define DEBUG_LOAD_ALL(e,en,ed,p,pn,pd) do { \
+    pthread_mutex_lock(&g_debug_lock); \
     e = g_debug_enqueue_count; en = g_debug_enqueue_count_nodedb; ed = g_debug_enqueue_count_discover; \
     p = g_debug_processed_count; pn = g_debug_processed_count_nodedb; pd = g_debug_processed_count_discover; \
+    pthread_mutex_unlock(&g_debug_lock); \
   } while(0)
 #endif
+
+/* Mutex protecting debug counters when C11 atomics are unavailable */
 static char g_debug_last_fetch_msg[256] = "";
 
 /* Queue / retry tunables */
@@ -2925,7 +2929,7 @@ static int h_status_olsr(http_request_t *r) {
    * Instead minimally reproduce needed fields.
    */
   char *buf=NULL; size_t cap=4096,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{}\n"); return 0; } buf[0]=0;
-  #define APP2(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(buf); send_json(r,"{}\n"); return 0;} if(len+_n+1>cap){ while(cap<len+_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{}\n"); return 0;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len+=_n; buf[len]=0; free(_t);}while(0)
+  #define APP2(fmt,...) do { char *_t=NULL; int _n=asprintf(&_t,fmt,##__VA_ARGS__); if(_n<0||!_t){ if(_t) free(_t); free(buf); send_json(r,"{}\n"); return 0;} if(len+(size_t)_n+1>cap){ while(cap<len+(size_t)_n+1) cap*=2; char *nb=realloc(buf,cap); if(!nb){ free(_t); free(buf); send_json(r,"{}\n"); return 0;} buf=nb;} memcpy(buf+len,_t,(size_t)_n); len += (size_t)_n; buf[len]=0; free(_t);}while(0)
   APP2("{");
   /* hostname/ip */
   char hostname[256]=""; if(gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; APP2("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APP2(",");

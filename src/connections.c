@@ -81,14 +81,14 @@ int render_connections_plain(char **buf_out, size_t *len_out){
     /* snprintf returns the number of characters that would have been written; cap copy to buffer size-1 */ \
     if (_app_n >= (int)sizeof(t)) _app_n = (int)sizeof(t) - 1; \
     if (_app_n > 0) { \
-      if (len + _app_n + 1 > cap) { \
-        while (cap < len + _app_n + 1) cap *= 2; \
+      if (len + (size_t)_app_n + 1 > cap) { \
+        while (cap < len + (size_t)_app_n + 1) cap *= 2; \
         char *nb2 = (char*)realloc(buf, cap); \
         if (!nb2) { free(buf); return -1; } \
         buf = nb2; \
       } \
       memcpy(buf + len, t, (size_t)_app_n); \
-      len += _app_n; \
+      len += (size_t)_app_n; \
       buf[len] = 0; \
     } \
   } while(0)
@@ -160,14 +160,14 @@ int render_connections_json(char **buf_out, size_t *len_out){
     int _app_n = snprintf(t, sizeof(t), fmt, ##__VA_ARGS__); \
     if (_app_n >= (int)sizeof(t)) _app_n = (int)sizeof(t) - 1; \
     if (_app_n > 0) { \
-      if (len + _app_n + 1 > cap) { \
-        while (cap < len + _app_n + 1) cap *= 2; \
+      if (len + (size_t)_app_n + 1 > cap) { \
+        while (cap < len + (size_t)_app_n + 1) cap *= 2; \
         char *nb2 = (char*)realloc(buf, cap); \
         if (!nb2) { free(buf); return -1; } \
         buf = nb2; \
       } \
       memcpy(buf + len, t, (size_t)_app_n); \
-      len += _app_n; \
+      len += (size_t)_app_n; \
       buf[len] = 0; \
     } \
   } while(0)

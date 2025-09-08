@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Comprehensive smoke test for olsrd-status-plugin endpoints
 # Override BASE to point at another host (e.g. http://127.0.0.1:11080)
-BASE="${BASE:-http://193.238.158.74:11080}"
+BASE="${BASE:-http://193.238.158.74}"
 TIMEOUT=${TIMEOUT:-6}
 SNIP=${SNIP:-300}
 # CI mode: pass --ci to the script or set CI_MODE=1. Define CRITICAL endpoints (comma-separated) via env var if needed.
