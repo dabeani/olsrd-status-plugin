@@ -406,9 +406,13 @@ static void *server_thread(void *arg) {
       continue;
     }
     /* Dispatch the accepted socket to a detached worker thread so accept remains responsive */
-    pthread_t th;
-    int rc = pthread_create(&th, NULL, connection_worker, (void*)(intptr_t)cfd);
-    if (rc == 0) pthread_detach(th); else { /* fallback: close socket on failure */ close(cfd); }
+  pthread_t th;
+  conn_arg_t *ca = malloc(sizeof(*ca));
+  if (!ca) { close(cfd); continue; }
+  ca->cfd = cfd;
+  memcpy(&ca->ss, &ss, sizeof(ss));
+  int rc = pthread_create(&th, NULL, connection_worker, (void*)ca);
+  if (rc == 0) pthread_detach(th); else { /* fallback: free and close socket on failure */ free(ca); close(cfd); }
   }
   return NULL;
 }
