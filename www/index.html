@@ -72,9 +72,23 @@
           <div class="tab-content" style="margin-top:0">
         <!-- Status -->
         <div id="tab-status" class="tab-pane active">
+          <div id="status-card" class="panel panel-default" style="padding:10px; margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+              <div>
+                <div style="font-weight:700"><span id="hostname">-</span></div>
+                <div class="small-muted" id="host-ip">-</div>
+              </div>
+              <div style="text-align:right">
+                <div>Uptime: <span id="uptime">-</span></div>
+                <div>Links: <span id="olsr-links-count">-</span></div>
+              </div>
+            </div>
+          </div>
           <dl class="dl-horizontal">
             <dt>System Uptime <span class="glyphicon glyphicon-time" aria-hidden="true"></span></dt>
             <dd><span id="dl-uptime">-</span></dd>
+            <dt>Last Updated <span class="glyphicon glyphicon-time" aria-hidden="true"></span></dt>
+            <dd><span id="last-updated">-</span></dd>
             <dt>IPv4 Default-Route <span class="glyphicon glyphicon-transfer" aria-hidden="true"></span></dt>
             <dd><span id="dl-default-route"><span id="default-route">n/a</span></span></dd>
             <dt>mgmt Devices <span class="glyphicon glyphicon-signal" aria-hidden="true"></span></dt>
@@ -336,6 +350,11 @@
           <strong>Fetch queue critical</strong>
           <div id="fetch-toast-msg" style="font-size:12px; margin-top:6px;"></div>
         </div>
+      </div>
+
+      <!-- Small transient toast for actions (refresh success/error) -->
+      <div id="action-toast" style="display:none; position:fixed; right:18px; bottom:86px; z-index:2500;">
+        <div id="action-toast-body" style="background:#333; color:#fff; padding:8px 12px; border-radius:6px; box-shadow:0 6px 16px rgba(0,0,0,0.25);">Action</div>
       </div>
 
       <footer style="margin-top:20px" class="small-muted">Served by olsrd-status-plugin</footer>

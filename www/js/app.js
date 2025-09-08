@@ -276,6 +276,35 @@ function hideModal(id) {
   try { m.style.display = 'none'; } catch(e) {}
 }
 
+// Modal keyboard handling: Esc to close and focus trap within modal-panel
+window._modalKeyHandler = null;
+function _setupModalKeyboard(modalEl) {
+  try {
+    if (!modalEl) return;
+    // remove existing handler if any
+    if (window._modalKeyHandler) { document.removeEventListener('keydown', window._modalKeyHandler); window._modalKeyHandler = null; }
+    var panel = modalEl.querySelector('.modal-panel');
+    var focusableSelector = 'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    window._modalKeyHandler = function(e){
+      if (e.key === 'Escape' || e.key === 'Esc') { hideModal(modalEl.id); return; }
+      if (e.key === 'Tab') {
+        // focus trap
+        var nodes = panel ? Array.prototype.slice.call(panel.querySelectorAll(focusableSelector)) : [];
+        if (!nodes || nodes.length === 0) return;
+        var first = nodes[0], last = nodes[nodes.length-1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) { last.focus(); e.preventDefault(); }
+        } else {
+          if (document.activeElement === last) { first.focus(); e.preventDefault(); }
+        }
+      }
+    };
+    document.addEventListener('keydown', window._modalKeyHandler);
+    // focus first focusable element if present
+    try { var first = panel.querySelector(focusableSelector); if (first) first.focus(); } catch(e){}
+  } catch(e) {}
+}
+
 // Global sorting state for tables
 var _devicesSort = { key: null, asc: true };
 var _olsrSort = { key: null, asc: true };
@@ -384,8 +413,8 @@ function populateOlsrLinksTable(links) {
   if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-muted">No links found</td></tr>';
     return;
   }
-  // store links in cache if not already
-  try { if (!window._olsr_links) window._olsr_links = links; } catch(e) { window._olsr_links = links; }
+  // always refresh cached links to reflect latest server data
+  try { window._olsr_links = Array.isArray(links) ? links.slice() : (links || []); } catch(e) { window._olsr_links = links || []; }
   links.forEach(function(l){
     var tr = document.createElement('tr');
     if (l.is_default) { tr.style.backgroundColor = '#fff8d5'; }
@@ -393,16 +422,24 @@ function populateOlsrLinksTable(links) {
     tr.appendChild(td(l.intf));
     tr.appendChild(td(l.local));
     tr.appendChild(td(l.remote));
-    if (l.remote_host) {
-      var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
-      tr.appendChild(td(linkHtml));
-    } else { tr.appendChild(td(l.remote_host)); }
-    // attempt to resolve a node name for the remote IP using cached nodedb
-    var nodeName = '';
-    try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
-    var nodeTd = td(nodeName);
-    if (l.node_names) { nodeTd.title = l.node_names; }
-    tr.appendChild(nodeTd);
+    // show remote_host only when present and not identical to remote IP
+    try {
+      if (l.remote_host && String(l.remote_host).trim() && String(l.remote_host).trim() !== String(l.remote).trim()) {
+        var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
+        tr.appendChild(td(linkHtml));
+      } else {
+        tr.appendChild(td(''));
+      }
+    } catch(e){ tr.appendChild(td(l.remote_host || '')); }
+  // attempt to resolve a primary node name for the remote IP using cached nodedb
+  var nodeName = '';
+  try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
+  // prefer explicit primary name from node_names (first entry) otherwise resolved name
+  var primary = nodeName || '';
+  try { if (l.node_names && typeof l.node_names === 'string') { var parts = l.node_names.split(',').map(function(s){return s.trim();}).filter(function(x){return x.length}); if (parts.length) primary = parts[0]; } } catch(e) {}
+  var nodeTd = td(primary);
+  if (l.node_names) { nodeTd.title = l.node_names; }
+  tr.appendChild(nodeTd);
     // LQ / NLQ as numeric badges
     function mkLqBadge(val){ var v = parseFloat(String(val||'')||'0'); var cls = 'lq-low'; if (!isFinite(v) || v <= 0) cls='lq-high'; else if (v < 0.5) cls='lq-low'; else if (v < 0.85) cls='lq-med'; else cls='lq-high'; return '<span class="lq-badge '+cls+'">'+String(val)+'</span>'; }
     tr.appendChild(td(mkLqBadge(l.lq)));
@@ -421,26 +458,37 @@ function populateOlsrLinksTable(links) {
       routesCell.addEventListener('click', function(){ showRoutesFor(l.remote); });
     }
     tr.appendChild(routesCell);
-    var nodesDisplay = l.nodes || '';
+    // nodes column: show numeric count and tooltip with names (avoid duplicating long text in table)
+    var nodeCount = '';
+    try { nodeCount = (typeof l.nodes !== 'undefined' && l.nodes !== null) ? String(l.nodes) : ''; } catch(e) { nodeCount = ''; }
+    var nodesCell = td(nodeCount);
     if (l.node_names) {
-      var names = l.node_names.split(',').slice(0,10); // cap display
-      nodesDisplay += '<div style="font-size:60%;color:#555;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + l.node_names + '">' + names.join(', ') + (l.node_names.split(',').length>10?' …':'') + '</div>';
+      nodesCell.title = l.node_names;
+      // make nodes clickable when there are nodes
+      if (parseInt(nodeCount,10) > 0) { nodesCell.style.cursor = 'pointer'; nodesCell.title = l.node_names; nodesCell.addEventListener('click', function(){ showNodesFor(l.remote, l.node_names); }); }
     }
-    var nodesCell = td(nodesDisplay);
-    // make nodes clickable like routes when there are nodes
-    if (l.nodes && parseInt(l.nodes,10) > 0) {
-      nodesCell.style.cursor = 'pointer'; nodesCell.title = 'Click to view nodes behind this neighbor';
-      nodesCell.addEventListener('click', function(){ showNodesFor(l.remote, l.node_names); });
-    }
-  // metric badges and small spark (routes vs nodes)
+  // metric badges and small spark (routes only - avoid duplicating nodes count which is shown in its own column)
   var metricsHtml = '';
   metricsHtml += '<span class="metric-badge routes small">R:'+ (l.routes || '0') +'</span>';
-  metricsHtml += '<span class="metric-badge nodes small">N:'+ (l.nodes || '0') +'</span>';
-  // simple spark placeholder
-  metricsHtml += '<span class="spark" aria-hidden="true"></span>';
+  // small inline sparkline: draw a minimal SVG based on routes vs nodes (normalized)
+  try {
+    var rnum = parseFloat(String(l.routes||'0').replace(/[^0-9\-\.]/g,'')) || 0;
+    var nnum = parseFloat(String(l.nodes||'0').replace(/[^0-9\-\.]/g,'')) || 0;
+    // create a tiny 40x12 spark where value = routes up to 20
+    var maxv = Math.max(1, rnum, nnum, 8);
+    var w = 40, h = 12, pad = 1;
+    var rx = Math.max(0, Math.min(w-2*pad, Math.round((rnum/maxv) * (w-2*pad))));
+    var nx = Math.max(0, Math.min(w-2*pad, Math.round((nnum/maxv) * (w-2*pad))));
+    var spark = '<svg class="spark" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">';
+    spark += '<rect x="'+pad+'" y="'+(h-3)+'" width="'+(rx||1)+'" height="3" fill="#5a9bd8"></rect>';
+    spark += '<rect x="'+pad+'" y="'+(h-6)+'" width="'+(nx||1)+'" height="3" fill="#8cc152"></rect>';
+    spark += '</svg>';
+    metricsHtml += spark;
+  } catch(e) { metricsHtml += '<span class="spark" aria-hidden="true"></span>'; }
   var metricsTd = td(metricsHtml);
-  metricsTd.title = 'Routes: ' + (l.routes||'0') + ' • Nodes: ' + (l.nodes||'0') + (l.is_default? ' • Default route':'');
+  metricsTd.title = 'Routes: ' + (l.routes||'0') + (l.is_default? ' • Default route':'');
   tr.appendChild(metricsTd);
+  // nodes column (detailed node names + click handler)
   tr.appendChild(nodesCell);
   // Actions column
   var actHtml = '';
@@ -490,14 +538,21 @@ function populateOlsrLinksTable(links) {
     });
   } catch(e){}
 
-  // attach action button handlers after rendering
+  // Use event delegation on the table body for action buttons to avoid accumulating handlers
   try {
-    var openBtns = document.querySelectorAll('.action-open-host');
-    openBtns.forEach(function(b){ b.addEventListener('click', function(){ var h = decodeURIComponent(b.getAttribute('data-host')||''); if (h) window.open('https://'+h, '_blank'); }); });
-    var routesBtns = document.querySelectorAll('.action-show-routes');
-    routesBtns.forEach(function(b){ b.addEventListener('click', function(){ var r = decodeURIComponent(b.getAttribute('data-remote')||''); if (r) showRoutesFor(r); }); });
-    var nodesBtns = document.querySelectorAll('.action-show-nodes');
-    nodesBtns.forEach(function(b){ b.addEventListener('click', function(){ var r = decodeURIComponent(b.getAttribute('data-remote')||''); var names = decodeURIComponent(b.getAttribute('data-names')||''); if (r) showNodesFor(r, names); }); });
+    tbody.onclick = function(e){
+      var target = e.target || e.srcElement;
+      // handle button or inner icon
+      var btn = target.closest ? target.closest('button') : (target.nodeName==='BUTTON' ? target : null);
+      if (!btn) return;
+      if (btn.classList.contains('action-open-host')) {
+        var h = decodeURIComponent(btn.getAttribute('data-host')||''); if (h) window.open('https://'+h, '_blank');
+      } else if (btn.classList.contains('action-show-routes')) {
+        var r = decodeURIComponent(btn.getAttribute('data-remote')||''); if (r) showRoutesFor(r);
+      } else if (btn.classList.contains('action-show-nodes')) {
+        var r = decodeURIComponent(btn.getAttribute('data-remote')||''); var names = decodeURIComponent(btn.getAttribute('data-names')||''); if (r) showNodesFor(r, names);
+      }
+    };
   } catch(e) {}
 }
 
@@ -793,6 +848,9 @@ function updateUI(data) {
   try { resolved = getNodeNameForIp(data.ipv4 || data.ip || ''); } catch(e) { resolved = null; }
   setText('hostname', (resolved || data.hostname) || 'Unknown');
   setText('ip', data.ip || '');
+  // compact status card fields
+  try { var hip = document.getElementById('host-ip'); if (hip) hip.textContent = data.ip || ''; } catch(e){}
+  try { var hn = document.getElementById('hostname'); if (hn) hn.textContent = (resolved || data.hostname) || ''; } catch(e){}
   // prefer human-friendly uptime string if provided by backend
   setText('uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
@@ -857,6 +915,7 @@ function updateUI(data) {
     showTab('tab-olsr2', false);
     var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='none';
   }
+  try { var olcount = (data.links && Array.isArray(data.links)) ? data.links.length : (window._olsr_links? window._olsr_links.length : 0); var el = document.getElementById('olsr-links-count'); if (el) el.textContent = olcount; } catch(e) {}
   // legacy OLSR tab visibility (if backend set olsrd_on or provided links while not olsr2)
   try {
     if (!data.olsr2_on && (data.olsrd_on || (data.links && data.links.length))) {
@@ -874,6 +933,27 @@ function updateUI(data) {
   } else {
     showTab('tab-admin', false);
   }
+  } catch(e) {}
+  try { setLastUpdated(); } catch(e) {}
+}
+
+// update last-updated timestamp helper (called from updateUI)
+function setLastUpdated(ts) {
+  try {
+    var el = document.getElementById('last-updated'); if (!el) return;
+    var text = ts || new Date().toLocaleString(); el.textContent = text;
+  } catch(e) {}
+}
+
+function showActionToast(msg, ms) {
+  try {
+    var toast = document.getElementById('action-toast'); var body = document.getElementById('action-toast-body');
+    if (!toast || !body) return;
+    body.textContent = msg || '';
+    toast.style.display = 'block';
+    toast.style.opacity = '1';
+    if (window._actionToastTimer) { clearTimeout(window._actionToastTimer); window._actionToastTimer = null; }
+    window._actionToastTimer = setTimeout(function(){ try { toast.style.opacity='0'; setTimeout(function(){ toast.style.display='none'; },300); } catch(e){} }, ms || 2000);
   } catch(e) {}
 }
 
@@ -1199,6 +1279,8 @@ function detectPlatformAndLoad() {
           // defer loading connections and versions until tab activation to speed initial paint
           var _connectionsLoaded = false;
           var _versionsLoaded = false;
+          // auto-load Versions tab once on startup for faster access
+          try { if (typeof loadVersions === 'function') { loadVersions(); } } catch(e) {}
           function loadConnections() {
             if (_connectionsLoaded) return Promise.resolve();
             _connectionsLoaded = true;
@@ -1329,6 +1411,8 @@ window.addEventListener('load', function(){
   var refreshLinksBtn = document.getElementById('refresh-links');
   if (refreshLinksBtn) {
     refreshLinksBtn.addEventListener('click', function(){
+  // clear client-side cache to avoid mixing stale DOM rows with new data
+  try { window._olsr_links = []; } catch(e) {}
       var statusEl = document.getElementById('links-status'); var spinner = document.getElementById('refresh-links-spinner');
       try { refreshLinksBtn.disabled = true; } catch(e){}
       if (statusEl) statusEl.textContent = 'Refreshing…';
@@ -1344,7 +1428,8 @@ window.addEventListener('load', function(){
         if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }
         if (statusEl) statusEl.textContent = '';
         _olsrLoaded = true;
-      }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; }).finally(function(){ try{ refreshLinksBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
+        showActionToast('Links refreshed', 2500);
+      }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; showActionToast('Error refreshing links', 4000); }).finally(function(){ try{ refreshLinksBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
     });
   }
 });
