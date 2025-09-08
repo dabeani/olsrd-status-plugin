@@ -180,6 +180,9 @@ window.refreshTab = function(id, url) {
   }).catch(function(e){ el.textContent = "ERR: "+e; });
 };
 
+// UI debug flag (set true in console to enable debug logs)
+window._uiDebug = false;
+
 function setText(id, text) {
   var el = document.getElementById(id);
   if (el) {
@@ -194,7 +197,8 @@ function setText(id, text) {
     // with the real nodename from the cached nodedb (if available). This ensures
     // any codepath that writes the hostname benefits from enrichment.
     try {
-      if (id === 'hostname' && text && typeof text === 'string' && /\bnodename\b/.test(text)) {
+      // Replace 'nodename' token when setting hostname or main-host so UI shows real nodename
+      if ((id === 'hostname' || id === 'main-host') && text && typeof text === 'string' && /\bnodename\b/.test(text)) {
         var ip = '';
         var ipEl = document.getElementById('ip');
         if (ipEl && ipEl.textContent) ip = ipEl.textContent.trim();
@@ -757,7 +761,7 @@ function updateUI(data) {
     if (!data.olsr2_on && (data.olsrd_on || (data.links && data.links.length))) {
       var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
       if (linkTab) {
-        console.debug('Showing OLSR tab via updateUI: olsr2_on=', data.olsr2_on, 'olsrd_on=', data.olsrd_on, 'links_len=', (data.links && data.links.length));
+  if (window._uiDebug) console.debug('Showing OLSR tab via updateUI: olsr2_on=', data.olsr2_on, 'olsrd_on=', data.olsrd_on, 'links_len=', (data.links && data.links.length));
         linkTab.parentElement.style.display = '';
       }
     }
@@ -777,15 +781,13 @@ function updateUI(data) {
 // Render fetch queue metrics (provided by backend in status.fetch_stats)
 function populateFetchStats(fs) {
   try {
-    var tab = document.getElementById('tab-status'); if (!tab) return;
+    var tabWrap = document.getElementById('fetch-tab-wrap'); if (!tabWrap) return;
     var container = document.getElementById('fetch-stats');
     if (!container) {
       container = document.createElement('div');
       container.id = 'fetch-stats';
       container.style.margin = '6px 0 12px 0';
-      var dl = tab.querySelector('dl');
-      if (dl && dl.parentNode) dl.parentNode.insertBefore(container, dl.nextSibling);
-      else tab.insertBefore(container, tab.firstChild);
+      tabWrap.appendChild(container);
     }
   if (!fs || (typeof fs === 'object' && Object.keys(fs).length === 0)) { container.style.display = 'none'; return; }
   container.style.display = '';
@@ -939,17 +941,7 @@ function populateFetchStats(fs) {
 
   // Update top header/nav indicator based on severity
     try {
-      // Also update compact status summary card in header
-      try {
-        var sum = document.getElementById('status-summary');
-        if (sum) {
-          var shtml = '';
-          shtml += '<div class="ss-item">Queued: <span class="ss-queued">' + queued + '</span></div>';
-          if (qcls === 'crit') shtml += '<div class="ss-item ss-crit">CRIT</div>'; else if (qcls === 'warn') shtml += '<div class="ss-item ss-warn">WARN</div>';
-          shtml += '<div class="ss-item" title="Dropped">D:'+dropped+'</div>';
-          sum.innerHTML = shtml;
-        }
-      } catch(e) {}
+  // (status-summary card removed; fetch stats now live in the Fetch Queue tab)
       var hostEl = document.getElementById('nav-host');
       if (hostEl) {
         var hostnameSpan = document.getElementById('hostname');
@@ -1051,12 +1043,12 @@ function detectPlatformAndLoad() {
               // OLSR Links
                 if (data.links && data.links.length) {
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
-                if (linkTab) { console.debug('Showing OLSR tab with links from /status'); linkTab.parentElement.style.display = ''; }
+                if (linkTab) { if (window._uiDebug) console.debug('Showing OLSR tab with links from /status'); linkTab.parentElement.style.display = ''; }
                 populateOlsrLinksTable(data.links);
               } else {
                 // Keep tab visible; it will lazy-load on click
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
-                if (linkTab) { console.debug('Keeping OLSR tab visible (no links yet)'); linkTab.parentElement.style.display = ''; }
+                if (linkTab) { if (window._uiDebug) console.debug('Keeping OLSR tab visible (no links yet)'); linkTab.parentElement.style.display = ''; }
               }
         // capture legacy olsrd_on flag if provided by backend full status later
         if (typeof status.olsrd_on === 'boolean') data.olsrd_on = status.olsrd_on;
@@ -1219,12 +1211,12 @@ window.addEventListener('load', function(){
   mt.addEventListener('click', function(e){
     var a = e.target.closest('a'); if(!a) return;
     if (a.getAttribute('href') === '#tab-olsr' && !_olsrLoaded) {
-      console.debug('OLSR tab clicked, lazy-loading /olsr/links');
+  if (window._uiDebug) console.debug('OLSR tab clicked, lazy-loading /olsr/links');
       fetch('/olsr/links',{cache:'no-store'}).then(function(r){return r.json();}).then(function(o){
-        console.debug('Received /olsr/links', o && (o.links? o.links.length : 'no links'));
+  if (window._uiDebug) console.debug('Received /olsr/links', o && (o.links? o.links.length : 'no links'));
         if (o.links && o.links.length) { populateOlsrLinksTable(o.links); }
         _olsrLoaded = true;
-      }).catch(function(e){ console.debug('Failed to load /olsr/links', e); });
+  }).catch(function(e){ if (window._uiDebug) console.debug('Failed to load /olsr/links', e); });
     } else if (a.getAttribute('href') === '#tab-traceroute') {
       ensureTraceroutePreloaded();
     }
@@ -1882,11 +1874,11 @@ function runTraceroute(){
   if (!st.olsr2_on && (st.olsrd_on || (st.links && Array.isArray(st.links) && st.links.length))) show = true;
       var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
       if (linkTab) {
-        console.debug('detectLegacyOlsrd: setting OLSR tab visibility to', show);
+  if (window._uiDebug) console.debug('detectLegacyOlsrd: setting OLSR tab visibility to', show);
         linkTab.parentElement.style.display = show? '' : 'none';
       }
       if (cb) cb(show);
-  }).catch(function(err){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) { console.debug('detectLegacyOlsrd: fetch failed, leaving OLSR tab visibility unchanged:', err); } if(cb) cb(false); });
+  }).catch(function(err){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) { if (window._uiDebug) console.debug('detectLegacyOlsrd: fetch failed, leaving OLSR tab visibility unchanged:', err); } if(cb) cb(false); });
   }
   detectLegacyOlsrd();
 

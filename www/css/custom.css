@@ -52,12 +52,7 @@
 .modal-body-scroll { border:1px solid #ddd; border-radius:4px; max-height:520px; overflow:auto; }
 .modal-pre { margin:0; padding:12px; font-family:monospace; font-size:12px; }
 
-/* Compact status summary card in header */
-.status-summary-card { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; background:#f6f9ff; border:1px solid #e0efff; font-size:13px; color:#013369; }
-.status-summary-card .ss-item { display:flex; align-items:center; gap:6px; }
-.status-summary-card .ss-queued { font-weight:700; color:#013369; }
-.status-summary-card .ss-crit { color:#b94a48; font-weight:700; }
-.status-summary-card .ss-warn { color:#6a4a00; font-weight:700; }
+/* status-summary-card removed: styles intentionally deleted */
 
 /* Modal close button alignment helper */
 .modal-panel .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-bottom:8px; }
