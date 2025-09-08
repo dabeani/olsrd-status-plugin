@@ -6,6 +6,9 @@ int path_exists(const char *p);
 extern int g_is_edgerouter;
 #include <sys/types.h>
 #include <sys/socket.h>
+#if defined(__linux__)
+#include <sys/sendfile.h>
+#endif
 #include <sys/stat.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -30,6 +33,8 @@ static pthread_t g_srv_th;
 static int g_run = 0;
 static char g_asset_root[512] = {0};
 static http_handler_node_t *g_handlers = NULL;
+/* control whether per-request access logging is enabled (env OLSRD_STATUS_ACCESS_LOG=0 disables) */
+static int g_log_access = 1;
 /* simple allow-list storage */
 typedef struct cidr_entry {
   struct in6_addr addr;
@@ -271,6 +276,20 @@ int http_send_file(http_request_t *r, const char *asset_root, const char *relpat
     http_send_status(r, 200, "OK");
     http_printf(r, "Content-Type: %s\r\n\r\n", m);
   }
+  /* Try to use efficient zero-copy sendfile when available */
+#if defined(__linux__)
+  off_t offset = 0;
+  while (offset < st.st_size) {
+    ssize_t s = sendfile(r->fd, fd, &offset, st.st_size - offset);
+    if (s < 0) {
+      if (errno == EINTR) continue;
+      /* fallback to userspace copy */
+      break;
+    }
+    if (s == 0) break;
+  }
+  if (offset >= st.st_size) { close(fd); return 0; }
+#endif
   char buf[16384];
   ssize_t n;
   while ((n = read(fd, buf, sizeof(buf))) > 0) {
@@ -297,6 +316,69 @@ static void urldecode(char *s) {
   *o = 0;
 }
 
+/* per-connection worker: wraps the existing inline handling into a thread */
+static void *connection_worker(void *arg) {
+  int cfd = (int)(intptr_t)arg;
+  char buf[8192];
+  ssize_t n = read(cfd, buf, sizeof(buf)-1);
+  if (n <= 0) { close(cfd); return NULL; }
+  if ((size_t)n >= sizeof(buf)-1) { close(cfd); return NULL; }
+  buf[n] = 0;
+  http_request_t r = {0};
+  r.fd = cfd;
+  snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+  /* Determine client IP not available directly here; leave as unknown */
+  char *sp1 = strchr(buf, ' ');
+  if (!sp1) { close(cfd); return NULL; }
+  *sp1 = 0;
+  snprintf(r.method, sizeof(r.method), "%.7s", buf);
+  if (!(strcmp(r.method, "GET") == 0 || strcmp(r.method, "HEAD") == 0)) {
+    http_send_status(&r, 405, "Method Not Allowed");
+    http_printf(&r, "Content-Type: text/plain\r\n\r\nMethod not allowed\n");
+    close(cfd);
+    return NULL;
+  }
+  char *sp2 = strchr(sp1+1, ' ');
+  if (!sp2) { close(cfd); return NULL; }
+  *sp2 = 0;
+  char *path = sp1+1;
+  char *q = strchr(path, '?');
+  if (q) { *q = 0; size_t qlen = strnlen(q+1, sizeof(r.query)-1); if (qlen >= sizeof(r.query)-1) qlen = sizeof(r.query)-1; memcpy(r.query, q+1, qlen); r.query[qlen]=0; urldecode(r.query); }
+  size_t plen = strnlen(path, sizeof(r.path)-1); if (plen >= sizeof(r.path)-1) plen = sizeof(r.path)-1; memcpy(r.path, path, plen); r.path[plen]=0;
+  char *hosth = strcasestr(sp2+1, "\nHost:"); if (hosth) { hosth += 6; while (*hosth==' ' || *hosth=='\t') hosth++; char *e = strpbrk(hosth, "\r\n"); if (e) *e = 0; size_t hlen = strnlen(hosth, sizeof(r.host)-1); if (hlen >= sizeof(r.host)-1) hlen = sizeof(r.host)-1; memcpy(r.host, hosth, hlen); r.host[hlen]=0; }
+  if (g_log_access) fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r.method, r.path, r.client_ip, r.query, r.host);
+
+  /* Enforce allow-list even for static assets */
+  if (!http_is_client_allowed(r.client_ip)) {
+    if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, r.path);
+    struct linger _lg = {1, 0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg)); close(cfd); return NULL;
+  }
+  if (starts_with(r.path, "/css/") || starts_with(r.path, "/js/") || starts_with(r.path, "/fonts/")) {
+    if (g_log_access) fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r.path, g_asset_root);
+    http_send_file(&r, g_asset_root, r.path+1, NULL);
+    close(cfd); return NULL;
+  }
+  /* dispatch to registered handlers */
+  http_handler_node_t *nptr = g_handlers;
+  int handled = 0;
+  while (nptr) {
+    if (strcmp(nptr->route, r.path) == 0) {
+      handled = 1;
+      if (!http_is_client_allowed(r.client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, nptr->route); struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); return NULL; }
+      nptr->fn(&r);
+      break;
+    }
+    nptr = nptr->next;
+  }
+  if (!handled) {
+    if (g_log_access) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r.path);
+    http_send_status(&r, 404, "Not Found");
+    http_printf(&r, "Content-Type: text/plain\r\n\r\nnot found: %s\n", r.path);
+  }
+  close(cfd);
+  return NULL;
+}
+
 static void *server_thread(void *arg) {
   (void)arg;
   while (g_run) {
@@ -308,123 +390,17 @@ static void *server_thread(void *arg) {
       if (!g_run) break;
       continue;
     }
-    char buf[8192];
-    ssize_t n = read(cfd, buf, sizeof(buf)-1);
-    if (n <= 0) { close(cfd); continue; }
-    /* if we filled the buffer completely, the request may be too large -> reject */
-    if ((size_t)n >= sizeof(buf)-1) {
-      /* respond with 413 Payload Too Large and close */
-      http_request_t r = {0}; r.fd = cfd; snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
-      http_send_status(&r, 413, "Payload Too Large");
-      http_printf(&r, "Content-Type: text/plain\r\n\r\nRequest too large\n");
-      close(cfd);
-      continue;
-    }
-    buf[n] = 0;
-    http_request_t r = {0};
-    r.fd = cfd;
-    snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
-    if (ss.ss_family == AF_INET) {
-      struct sockaddr_in *in = (struct sockaddr_in*)&ss;
-      inet_ntop(AF_INET, &in->sin_addr, r.client_ip, sizeof(r.client_ip));
-    } else if (ss.ss_family == AF_INET6) {
-      struct sockaddr_in6 *in6 = (struct sockaddr_in6*)&ss;
-      inet_ntop(AF_INET6, &in6->sin6_addr, r.client_ip, sizeof(r.client_ip));
-    }
-    char *sp1 = strchr(buf, ' ');
-    if (!sp1) { close(cfd); continue; }
-    *sp1 = 0;
-    /* accept only safe methods to reduce attack surface */
-    snprintf(r.method, sizeof(r.method), "%.7s", buf);
-    if (!(strcmp(r.method, "GET") == 0 || strcmp(r.method, "HEAD") == 0)) {
-      http_send_status(&r, 405, "Method Not Allowed");
-      http_printf(&r, "Content-Type: text/plain\r\n\r\nMethod not allowed\n");
-      close(cfd);
-      continue;
-    }
-    char *sp2 = strchr(sp1+1, ' ');
-    if (!sp2) { close(cfd); continue; }
-    *sp2 = 0;
-    char *path = sp1+1;
-    char *q = strchr(path, '?');
-    if (q) {
-      *q = 0;
-      /* copy query safely */
-      size_t qlen = strnlen(q+1, sizeof(r.query)-1);
-      if (qlen >= sizeof(r.query)-1) qlen = sizeof(r.query)-1;
-      memcpy(r.query, q+1, qlen); r.query[qlen]=0; urldecode(r.query);
-    }
-    /* copy path safely */
-    size_t plen = strnlen(path, sizeof(r.path)-1);
-    if (plen >= sizeof(r.path)-1) plen = sizeof(r.path)-1;
-    memcpy(r.path, path, plen); r.path[plen]=0;
-    char *hosth = strcasestr(sp2+1, "\nHost:");
-    if (hosth) {
-      hosth += 6;
-      while (*hosth==' ' || *hosth=='\t') hosth++;
-      char *e = strpbrk(hosth, "\r\n");
-      if (e) *e = 0;
-      /* copy host safely */
-      size_t hlen = strnlen(hosth, sizeof(r.host)-1);
-      if (hlen >= sizeof(r.host)-1) hlen = sizeof(r.host)-1;
-      memcpy(r.host, hosth, hlen); r.host[hlen]=0;
-    }
-    /* Log incoming request */
-    fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r.method, r.path, r.client_ip, r.query, r.host);
-    /* Enforce allow-list even for static assets */
-    if (!http_is_client_allowed(r.client_ip)) {
-      fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, r.path);
-      /* Immediately cut the connection by forcing a TCP RST (linger=0) */
-      struct linger _lg = {1, 0};
-      setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg));
-      close(cfd);
-      continue;
-    }
-    if (starts_with(r.path, "/css/") || starts_with(r.path, "/js/") || starts_with(r.path, "/fonts/")) {
-      fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r.path, g_asset_root);
-      http_send_file(&r, g_asset_root, r.path+1, NULL);
-      close(cfd);
-      continue;
-    }
-    http_handler_node_t *nptr = g_handlers;
-    int handled = 0;
-    int sock_closed = 0;
-    while (nptr) {
-      if (strcmp(nptr->route, r.path) == 0) {
-        handled = 1;
-        fprintf(stderr, "[httpd] dispatch to handler: %s\n", nptr->route);
-        /* enforce access control */
-        if (!http_is_client_allowed(r.client_ip)) {
-          fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, nptr->route);
-          /* Immediately reset connection (linger=0) and mark socket closed so outer loop won't close again */
-          struct linger _lg2 = {1, 0};
-          setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2));
-          close(cfd);
-          sock_closed = 1;
-        } else {
-          nptr->fn(&r);
-        }
-        break;
-      }
-      nptr = nptr->next;
-    }
-    if (sock_closed) {
-      /* socket already force-closed due to allow-list rejection; move to next accept */
-      continue;
-    }
-
-    if (!handled) {
-      fprintf(stderr, "[httpd] 404 Not Found: %s\n", r.path);
-      http_send_status(&r, 404, "Not Found");
-      http_printf(&r, "Content-Type: text/plain\r\n\r\nnot found: %s\n", r.path);
-    }
-    close(cfd);
+    /* Dispatch the accepted socket to a detached worker thread so accept remains responsive */
+    pthread_t th;
+    int rc = pthread_create(&th, NULL, connection_worker, (void*)(intptr_t)cfd);
+    if (rc == 0) pthread_detach(th); else { /* fallback: close socket on failure */ close(cfd); }
   }
   return NULL;
 }
 
 int http_server_start(const char *bind_ip, int port, const char *asset_root) {
   if (asset_root) snprintf(g_asset_root, sizeof(g_asset_root), "%s", asset_root);
+  const char *alog = getenv("OLSRD_STATUS_ACCESS_LOG"); if (alog && alog[0]=='0') g_log_access = 0; else g_log_access = 1;
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
   int one = 1;
