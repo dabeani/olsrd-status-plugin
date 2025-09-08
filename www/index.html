@@ -62,6 +62,7 @@
             <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
             <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
             <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
+            <li role="presentation"><a href="#tab-log"><span class="glyphicon glyphicon-list" aria-hidden="true"></span> Log</a></li>
             <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
             <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
             <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
@@ -326,6 +327,16 @@
               </thead>
               <tbody></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- Log -->
+        <div id="tab-log" class="tab-pane">
+          <h3>Log <button id="refresh-log" class="btn btn-xs btn-default"><span class="spin" id="refresh-log-spinner"></span>Refresh</button>
+            <span id="log-status" class="small-muted"></span></h3>
+          <div class="table-search-container"><input id="log-filter" class="table-search-input form-control input-sm" placeholder="Filter log lines..."></div>
+          <div style="margin-top:8px">
+            <pre id="log-pre" style="max-height:520px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px; font-size:12px; white-space:pre-wrap; word-break:break-word;">Loading...</pre>
           </div>
         </div>
 

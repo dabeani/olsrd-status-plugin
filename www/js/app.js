@@ -1427,6 +1427,11 @@ window.addEventListener('load', function(){
   }).catch(function(e){ if (window._uiDebug) console.debug('Failed to load /olsr/links', e); });
     } else if (a.getAttribute('href') === '#tab-traceroute') {
       ensureTraceroutePreloaded();
+    } else if (a.getAttribute('href') === '#tab-log') {
+      // lazy-load /log content
+      if (window._logLoaded) return;
+      var pre = document.getElementById('log-pre'); if (pre) pre.textContent = 'Loading...';
+      fetch('/log', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { renderLogText(t); window._logLoaded = true; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; });
     }
   });
   // Refresh button support for OLSR Links
@@ -1625,6 +1630,41 @@ document.addEventListener('DOMContentLoaded', function() {
 
   detectPlatformAndLoad();
 });
+
+// --- Log tab helpers ---
+function parseLogLine(line) {
+  // naive parse: try to extract timestamp and level prefix like "2025-09-09 12:00:00 [INFO] ..."
+  try {
+    var m = line.match(/^\s*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})\s*(?:\[([^\]]+)\])?\s*(.*)$/);
+    if (m) return { ts: m[1], level: (m[2]||'').toUpperCase(), msg: m[3] };
+  } catch(e) {}
+  return { ts: '', level: '', msg: line };
+}
+
+function renderLogText(text) {
+  var pre = document.getElementById('log-pre'); if (!pre) return;
+  var lines = (text || '').split(/\r?\n/);
+  // Build HTML with simple color coding for log levels
+  var out = lines.map(function(ln){ var p = parseLogLine(ln); var cls=''; if (p.level==='ERROR' || p.level==='ERR' || p.level==='CRITICAL') cls='color:#a94442;'; else if (p.level==='WARN' || p.level==='WARNING') cls='color:#8a6d3b;'; else if (p.level==='INFO') cls='color:#31708f;'; else if (p.level==='DEBUG') cls='color:#3a3a3a;'; var ts = p.ts?('<span style="color:#666; font-size:11px; margin-right:6px">'+p.ts+'</span> '):''; var level = p.level?('<span style="font-weight:600; margin-right:6px;">['+p.level+']</span> '):''; return '<div style="padding:2px 0; '+cls+'">'+ts+level+('<span style="white-space:pre-wrap">'+escapeHtml(p.msg)+'</span>')+'</div>'; }).join('');
+  pre.innerHTML = out || '<span class="text-muted">(no log lines)</span>';
+  // wire filter input
+  var filter = document.getElementById('log-filter');
+  if (filter) {
+    filter.oninput = function(){ var q = (filter.value||'').trim().toLowerCase(); if (!q) { pre.innerHTML = out; return; } var fo = lines.filter(function(l){ return l.toLowerCase().indexOf(q) !== -1; }).map(function(ln){ var p=parseLogLine(ln); var cls=''; if (p.level==='ERROR'||p.level==='ERR'||p.level==='CRITICAL') cls='color:#a94442;'; else if (p.level==='WARN'||p.level==='WARNING') cls='color:#8a6d3b;'; else if (p.level==='INFO') cls='color:#31708f;'; else if (p.level==='DEBUG') cls='color:#3a3a3a;'; var ts = p.ts?('<span style="color:#666; font-size:11px; margin-right:6px">'+p.ts+'</span> '):''; var level = p.level?('<span style="font-weight:600; margin-right:6px;">['+p.level+']</span> '):''; return '<div style="padding:2px 0; '+cls+'">'+ts+level+('<span style="white-space:pre-wrap">'+escapeHtml(p.msg)+'</span>')+'</div>'; }).join(''); pre.innerHTML = fo || '<span class="text-muted">(no matching lines)</span>'; };
+  }
+}
+
+function refreshLog() {
+  var btn = document.getElementById('refresh-log'); var spinner = document.getElementById('refresh-log-spinner'); var status = document.getElementById('log-status'); var pre = document.getElementById('log-pre');
+  try { if (btn) btn.disabled = true; if (spinner) spinner.classList.add('rotate'); if (status) status.textContent = 'Refreshing...'; if (pre) pre.textContent = 'Loading...'; } catch(e){}
+  fetch('/log', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { renderLogText(t); window._logLoaded = true; if (status) status.textContent = ''; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; if (status) status.textContent = 'Error'; }).finally(function(){ try { if (btn) btn.disabled = false; if (spinner) spinner.classList.remove('rotate'); } catch(e){} });
+}
+
+// escape HTML simple helper
+function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// wire refresh button on load
+window.addEventListener('load', function(){ var r = document.getElementById('refresh-log'); if (r) r.addEventListener('click', function(){ refreshLog(); }); var f = document.getElementById('log-filter'); if (f) { f.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); refreshLog(); } }); } });
 
 // Enable simple client-side sorting for tables whose TH elements contain a data-key attribute
 function enableTableSorting() {
