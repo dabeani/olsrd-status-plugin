@@ -371,7 +371,7 @@ function populateOlsrLinksTable(links) {
   if (!tbody) return; tbody.innerHTML = '';
   if (!links || !Array.isArray(links) || links.length === 0) {
     var tbody = document.querySelector('#olsrLinksTable tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="text-muted">No links found</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-muted">No links found</td></tr>';
     return;
   }
   links.forEach(function(l){
@@ -385,6 +385,10 @@ function populateOlsrLinksTable(links) {
       var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
       tr.appendChild(td(linkHtml));
     } else { tr.appendChild(td(l.remote_host)); }
+  // attempt to resolve a node name for the remote IP using cached nodedb
+  var nodeName = '';
+  try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
+  tr.appendChild(td(nodeName));
     tr.appendChild(td(l.lq));
     tr.appendChild(td(l.nlq));
     tr.appendChild(td(l.cost));
@@ -420,11 +424,12 @@ function populateOlsrLinksTable(links) {
           case 1: key='local'; break;
           case 2: key='remote'; break;
           case 3: key='remote_host'; break;
-          case 4: key='lq'; break;
-          case 5: key='nlq'; break;
-          case 6: key='cost'; break;
-          case 7: key='routes'; break;
-          case 8: key='nodes'; break;
+          case 4: key='remote_node'; break;
+          case 5: key='lq'; break;
+          case 6: key='nlq'; break;
+          case 7: key='cost'; break;
+          case 8: key='routes'; break;
+          case 9: key='nodes'; break;
         }
         if (!key) return;
         if (_olsrSort.key === key) _olsrSort.asc = !_olsrSort.asc; else { _olsrSort.key = key; _olsrSort.asc = true; }
