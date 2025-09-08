@@ -28,3 +28,18 @@
 
 /* small sort mark (▲/▼) */
 .sort-mark { font-size: 11px; color: #666; }
+
+/* New layout styles */
+.layout-root { max-width:1200px; margin: 0 auto; }
+.site-header { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #eee; margin-bottom:12px; }
+.site-header .brand h3 { margin:0; font-weight:600; }
+.sidebar { padding-right:12px; }
+.sidebar .nav { background: #fafafa; border:1px solid #eee; padding:8px; border-radius:6px; }
+.content { min-height:400px; }
+
+/* smaller adjustments for mobile */
+@media (max-width: 768px) {
+  .sidebar { order:2; margin-top:12px; }
+  .content { order:1; }
+  .layout-root { padding: 6px; }
+}

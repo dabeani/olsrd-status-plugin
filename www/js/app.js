@@ -1365,6 +1365,11 @@ function populateNavHost(host, ip) {
     newInner = (ipPart ? (ipPart + ' ') : '') + (iconHtml || '') + '<span id="hostname">' + (displayHost || '') + '</span>';
     // Replace contents atomically
     el.innerHTML = newInner;
+    // Also update compact header host element if present
+    var mainHostEl = document.getElementById('main-host');
+    if (mainHostEl) {
+      try { mainHostEl.textContent = displayHost || ''; } catch(e) { mainHostEl.innerText = displayHost || ''; }
+    }
   } catch (e) {
     // fallback simple text
     el.textContent = (ip ? ip + ' - ' : '') + (host || '');

@@ -41,24 +41,34 @@
     </style>
   </head>
   <body>
-    <div class="container">
-  <!-- Tabs (matching bmk-webstatus.py ordering and labels) -->
-      <ul id="mainTabs" class="nav nav-tabs">
-        <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
-        <li role="presentation" class="active"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status</a></li>
-        <li role="presentation"><a href="#tab-olsr"><span class="glyphicon glyphicon-random" aria-hidden="true"></span> OLSR Links</a></li>
-  <li role="presentation" id="tab-olsrd2-links" style="display:none"><a href="#tab-neighbors"><span class="glyphicon glyphicon-link" aria-hidden="true"></span> OLSRd2-Links</a></li>
-        <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
-        <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
-        <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
-        <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
-        <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
-        <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
-  <li id="nav-host" style="float:right; padding:8px 12px; cursor:pointer"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></li>
-        <li id="nav-login" style="float:right; display:none; padding:6px 12px;"><a id="nav-login-link" href="#" target="_blank"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Login</a></li>
-      </ul>
+    <div class="container layout-root">
+      <header class="site-header clearfix">
+        <div class="brand">
+          <h3 style="margin:0">Web Status <small id="main-host">&nbsp;</small></h3>
+        </div>
+        <div class="header-actions">
+          <div id="nav-host"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></div>
+        </div>
+      </header>
 
-      <div class="tab-content" style="margin-top:15px">
+      <div class="row">
+        <aside class="col-sm-3 sidebar">
+          <ul id="mainTabs" class="nav nav-pills nav-stacked">
+            <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
+            <li role="presentation" class="active"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status</a></li>
+            <li role="presentation"><a href="#tab-olsr"><span class="glyphicon glyphicon-random" aria-hidden="true"></span> OLSR Links</a></li>
+            <li role="presentation" id="tab-olsrd2-links" style="display:none"><a href="#tab-neighbors"><span class="glyphicon glyphicon-link" aria-hidden="true"></span> OLSRd2-Links</a></li>
+            <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
+            <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
+            <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
+            <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
+            <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
+            <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
+          </ul>
+        </aside>
+
+        <main class="col-sm-9 content" style="margin-top:8px;">
+          <div class="tab-content" style="margin-top:0">
         <!-- Status -->
         <div id="tab-status" class="tab-pane active">
           <dl class="dl-horizontal">
@@ -307,7 +317,10 @@
           <p><a id="adminLink" href="#" target="_blank">Login</a></p>
         </div>
 
+          </div>
+        </main>
       </div>
+
       <!-- Toast for critical fetch queue alerts -->
       <div id="fetch-toast" style="display:none; position:fixed; right:18px; bottom:18px; z-index:2500;">
         <div id="fetch-toast-body" style="background:#b94a48; color:#fff; padding:12px 16px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.3);">
