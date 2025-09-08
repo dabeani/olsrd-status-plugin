@@ -21,6 +21,7 @@ extern int g_is_edgerouter;
 #include <errno.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <netinet/tcp.h>
 
 typedef struct http_handler_node {
   char route[64];
@@ -327,6 +328,12 @@ static void *connection_worker(void *arg) {
   int cfd = ca->cfd;
   struct sockaddr_storage ss = ca->ss;
   free(ca);
+  /* Harden per-connection socket: set a short recv timeout so slow clients can't hang the worker */
+  struct timeval tv;
+  tv.tv_sec = 5; tv.tv_usec = 0;
+  setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  /* Disable Nagle to reduce latency for small responses */
+  int _one = 1; setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &_one, sizeof(_one));
   char buf[8192];
   ssize_t n = read(cfd, buf, sizeof(buf)-1);
   if (n <= 0) { close(cfd); return NULL; }
@@ -337,12 +344,18 @@ static void *connection_worker(void *arg) {
   snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
   if (ss.ss_family == AF_INET) {
     struct sockaddr_in *in = (struct sockaddr_in*)&ss;
-    inet_ntop(AF_INET, &in->sin_addr, r.client_ip, sizeof(r.client_ip));
+    if (inet_ntop(AF_INET, &in->sin_addr, r.client_ip, sizeof(r.client_ip)) == NULL) {
+      snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+      if (g_log_access) fprintf(stderr, "[httpd][warn] inet_ntop(AF_INET) failed: %s\n", strerror(errno));
+    }
   } else if (ss.ss_family == AF_INET6) {
     struct sockaddr_in6 *in6 = (struct sockaddr_in6*)&ss;
-    inet_ntop(AF_INET6, &in6->sin6_addr, r.client_ip, sizeof(r.client_ip));
+    if (inet_ntop(AF_INET6, &in6->sin6_addr, r.client_ip, sizeof(r.client_ip)) == NULL) {
+      snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+      if (g_log_access) fprintf(stderr, "[httpd][warn] inet_ntop(AF_INET6) failed: %s\n", strerror(errno));
+    }
   }
-  /* Determine client IP not available directly here; leave as unknown */
+  /* If for any reason we couldn't determine the client IP, leave as 'unknown' */
   char *sp1 = strchr(buf, ' ');
   if (!sp1) { close(cfd); return NULL; }
   *sp1 = 0;
@@ -410,7 +423,10 @@ static void *server_thread(void *arg) {
   conn_arg_t *ca = malloc(sizeof(*ca));
   if (!ca) { close(cfd); continue; }
   ca->cfd = cfd;
-  memcpy(&ca->ss, &ss, sizeof(ss));
+  /* copy only up to sl bytes (clamped) to avoid overruns; zero the rest */
+  size_t copy_len = (sl <= sizeof(ca->ss)) ? (size_t)sl : sizeof(ca->ss);
+  memset(&ca->ss, 0, sizeof(ca->ss));
+  memcpy(&ca->ss, &ss, copy_len);
   int rc = pthread_create(&th, NULL, connection_worker, (void*)ca);
   if (rc == 0) pthread_detach(th); else { /* fallback: free and close socket on failure */ free(ca); close(cfd); }
   }
