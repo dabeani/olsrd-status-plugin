@@ -45,6 +45,12 @@ typedef struct cidr_entry {
 } cidr_entry_t;
 static cidr_entry_t *g_allowed = NULL;
 
+/* forward declare conn_arg_t for pool usage; full struct defined later */
+typedef struct conn_arg conn_arg_t;
+
+/* --- connection/request object pools and optional thread-pool --- */
+
+
 static int parse_cidr(const char *s, struct in6_addr *out_addr, int *out_prefix) {
   if (!s || !out_addr || !out_prefix) return -1;
   char tmp[128]; snprintf(tmp, sizeof(tmp), "%s", s);
@@ -347,13 +353,21 @@ static void urldecode(char *s) {
 typedef struct conn_arg {
   int cfd;
   struct sockaddr_storage ss;
+  struct conn_arg *next;
 } conn_arg_t;
+
+/* forward prototypes for functions implemented below */
+static void conn_arg_free(conn_arg_t *ca);
+static http_request_t *http_request_alloc(void);
+static void http_request_free(http_request_t *r);
+static void *connection_worker(void *arg);
 
 static void *connection_worker(void *arg) {
   conn_arg_t *ca = (conn_arg_t*)arg;
   int cfd = ca->cfd;
   struct sockaddr_storage ss = ca->ss;
-  free(ca);
+  /* return conn_arg to pool early so its memory can be reused immediately */
+  conn_arg_free(ca);
   /* Harden per-connection socket: set a short recv timeout so slow clients can't hang the worker */
   struct timeval tv;
   tv.tv_sec = 5; tv.tv_usec = 0;
@@ -365,71 +379,166 @@ static void *connection_worker(void *arg) {
   if (n <= 0) { close(cfd); return NULL; }
   if ((size_t)n >= sizeof(buf)-1) { close(cfd); return NULL; }
   buf[n] = 0;
-  http_request_t r = {0};
-  r.fd = cfd;
-  snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+  http_request_t *r = http_request_alloc(); if (!r) { close(cfd); return NULL; }
+  r->fd = cfd;
+  snprintf(r->client_ip, sizeof(r->client_ip), "unknown");
   if (ss.ss_family == AF_INET) {
     struct sockaddr_in *in = (struct sockaddr_in*)&ss;
-    if (inet_ntop(AF_INET, &in->sin_addr, r.client_ip, sizeof(r.client_ip)) == NULL) {
-      snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+    if (inet_ntop(AF_INET, &in->sin_addr, r->client_ip, sizeof(r->client_ip)) == NULL) {
+      snprintf(r->client_ip, sizeof(r->client_ip), "unknown");
       if (g_log_access) fprintf(stderr, "[httpd][warn] inet_ntop(AF_INET) failed: %s\n", strerror(errno));
     }
   } else if (ss.ss_family == AF_INET6) {
     struct sockaddr_in6 *in6 = (struct sockaddr_in6*)&ss;
-    if (inet_ntop(AF_INET6, &in6->sin6_addr, r.client_ip, sizeof(r.client_ip)) == NULL) {
-      snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+    if (inet_ntop(AF_INET6, &in6->sin6_addr, r->client_ip, sizeof(r->client_ip)) == NULL) {
+      snprintf(r->client_ip, sizeof(r->client_ip), "unknown");
       if (g_log_access) fprintf(stderr, "[httpd][warn] inet_ntop(AF_INET6) failed: %s\n", strerror(errno));
     }
   }
   /* If for any reason we couldn't determine the client IP, leave as 'unknown' */
   char *sp1 = strchr(buf, ' ');
-  if (!sp1) { close(cfd); return NULL; }
+  if (!sp1) { close(cfd); http_request_free(r); return NULL; }
   *sp1 = 0;
-  snprintf(r.method, sizeof(r.method), "%.7s", buf);
-  if (!(strcmp(r.method, "GET") == 0 || strcmp(r.method, "HEAD") == 0)) {
-    http_send_status(&r, 405, "Method Not Allowed");
-    http_printf(&r, "Content-Type: text/plain\r\n\r\nMethod not allowed\n");
-    close(cfd);
-    return NULL;
+  snprintf(r->method, sizeof(r->method), "%.7s", buf);
+  if (!(strcmp(r->method, "GET") == 0 || strcmp(r->method, "HEAD") == 0)) {
+    http_send_status(r, 405, "Method Not Allowed");
+    http_printf(r, "Content-Type: text/plain\r\n\r\nMethod not allowed\n");
+    close(cfd); http_request_free(r); return NULL;
   }
   char *sp2 = strchr(sp1+1, ' ');
-  if (!sp2) { close(cfd); return NULL; }
+  if (!sp2) { close(cfd); http_request_free(r); return NULL; }
   *sp2 = 0;
   char *path = sp1+1;
-  char *q = strchr(path, '?');
-  if (q) { *q = 0; size_t qlen = strnlen(q+1, sizeof(r.query)-1); if (qlen >= sizeof(r.query)-1) qlen = sizeof(r.query)-1; memcpy(r.query, q+1, qlen); r.query[qlen]=0; urldecode(r.query); }
-  size_t plen = strnlen(path, sizeof(r.path)-1); if (plen >= sizeof(r.path)-1) plen = sizeof(r.path)-1; memcpy(r.path, path, plen); r.path[plen]=0;
-  char *hosth = strcasestr(sp2+1, "\nHost:"); if (hosth) { hosth += 6; while (*hosth==' ' || *hosth=='\t') hosth++; char *e = strpbrk(hosth, "\r\n"); if (e) *e = 0; size_t hlen = strnlen(hosth, sizeof(r.host)-1); if (hlen >= sizeof(r.host)-1) hlen = sizeof(r.host)-1; memcpy(r.host, hosth, hlen); r.host[hlen]=0; }
-  if (g_log_access) fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r.method, r.path, r.client_ip, r.query, r.host);
+  char *q = strchr(path, '?'); if (q) { *q = 0; size_t qlen = strnlen(q+1, sizeof(r->query)-1); if (qlen >= sizeof(r->query)-1) qlen = sizeof(r->query)-1; memcpy(r->query, q+1, qlen); r->query[qlen]=0; urldecode(r->query); }
+  size_t plen = strnlen(path, sizeof(r->path)-1); if (plen >= sizeof(r->path)-1) plen = sizeof(r->path)-1; memcpy(r->path, path, plen); r->path[plen]=0;
+  char *hosth = strcasestr(sp2+1, "\nHost:"); if (hosth) { hosth += 6; while (*hosth==' ' || *hosth=='\t') hosth++; char *e = strpbrk(hosth, "\r\n"); if (e) *e = 0; size_t hlen = strnlen(hosth, sizeof(r->host)-1); if (hlen >= sizeof(r->host)-1) hlen = sizeof(r->host)-1; memcpy(r->host, hosth, hlen); r->host[hlen]=0; }
+  if (g_log_access) fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r->method, r->path, r->client_ip, r->query, r->host);
 
   /* Enforce allow-list even for static assets */
-  if (!http_is_client_allowed(r.client_ip)) {
-    if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, r.path);
-    struct linger _lg = {1, 0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg)); close(cfd); return NULL;
-  }
-  if (starts_with(r.path, "/css/") || starts_with(r.path, "/js/") || starts_with(r.path, "/fonts/")) {
-    if (g_log_access) fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r.path, g_asset_root);
-    http_send_file(&r, g_asset_root, r.path+1, NULL);
-    close(cfd); return NULL;
-  }
+  if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, r->path); struct linger _lg = {1, 0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg)); close(cfd); http_request_free(r); return NULL; }
+  if (starts_with(r->path, "/css/") || starts_with(r->path, "/js/") || starts_with(r->path, "/fonts/")) { if (g_log_access) fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r->path, g_asset_root); http_send_file(r, g_asset_root, r->path+1, NULL); close(cfd); http_request_free(r); return NULL; }
   /* dispatch to registered handlers */
   http_handler_node_t *nptr = g_handlers;
   int handled = 0;
   while (nptr) {
-    if (strcmp(nptr->route, r.path) == 0) {
+    if (strcmp(nptr->route, r->path) == 0) {
       handled = 1;
-      if (!http_is_client_allowed(r.client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, nptr->route); struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); return NULL; }
-      nptr->fn(&r);
+      if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, nptr->route); struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); http_request_free(r); return NULL; }
+      nptr->fn(r);
       break;
     }
     nptr = nptr->next;
   }
   if (!handled) {
-    if (g_log_access) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r.path);
-    http_send_status(&r, 404, "Not Found");
-    http_printf(&r, "Content-Type: text/plain\r\n\r\nnot found: %s\n", r.path);
+    if (g_log_access) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r->path);
+    http_send_status(r, 404, "Not Found");
+    http_printf(r, "Content-Type: text/plain\r\n\r\nnot found: %s\n", r->path);
   }
   close(cfd);
+  http_request_free(r);
+  return NULL;
+}
+
+/* --- connection/request object pools and optional thread-pool --- */
+static pthread_mutex_t g_conn_pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static conn_arg_t *g_conn_pool = NULL; /* freelist head */
+static int g_conn_pool_len = 0;
+static int g_conn_pool_max = 128;
+
+typedef struct http_req_pool_node { struct http_req_pool_node *next; } http_req_pool_node_t;
+static pthread_mutex_t g_req_pool_lock = PTHREAD_MUTEX_INITIALIZER;
+static http_req_pool_node_t *g_req_pool = NULL;
+static int g_req_pool_len = 0;
+static int g_req_pool_max = 128;
+
+/* task queue for thread-pool */
+static pthread_mutex_t g_task_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_task_cond = PTHREAD_COND_INITIALIZER;
+static struct task_node { conn_arg_t *ca; struct task_node *next; } *g_task_head = NULL, *g_task_tail = NULL;
+static int g_task_count = 0;
+
+static pthread_t *g_pool_workers = NULL;
+static int g_pool_size = 0;
+static int g_pool_enabled = 0; /* enabled if env OLSRD_STATUS_THREAD_POOL=1 */
+
+/* Allocate/free conn_arg_t with small freelist fallback to malloc */
+static conn_arg_t *conn_arg_alloc(void) {
+  conn_arg_t *ca = NULL;
+  pthread_mutex_lock(&g_conn_pool_lock);
+  if (g_conn_pool) {
+    ca = g_conn_pool; g_conn_pool = g_conn_pool->next; g_conn_pool_len--; pthread_mutex_unlock(&g_conn_pool_lock); memset(ca,0,sizeof(*ca)); return ca;
+  }
+  pthread_mutex_unlock(&g_conn_pool_lock);
+  ca = calloc(1, sizeof(*ca));
+  return ca;
+}
+
+static void conn_arg_free(conn_arg_t *ca) {
+  if (!ca) return;
+  pthread_mutex_lock(&g_conn_pool_lock);
+  if (g_conn_pool_len < g_conn_pool_max) {
+    ca->next = g_conn_pool; g_conn_pool = ca; g_conn_pool_len++; pthread_mutex_unlock(&g_conn_pool_lock); return;
+  }
+  pthread_mutex_unlock(&g_conn_pool_lock);
+  free(ca);
+}
+
+/* http_request pool - node-sized pool; http_request_t may be larger but we reuse memory */
+static http_request_t *http_request_alloc(void) {
+  http_req_pool_node_t *n = NULL;
+  pthread_mutex_lock(&g_req_pool_lock);
+  if (g_req_pool) {
+    n = g_req_pool; g_req_pool = g_req_pool->next; g_req_pool_len--; pthread_mutex_unlock(&g_req_pool_lock);
+    http_request_t *r = (http_request_t*)n; memset(r,0,sizeof(*r)); return r;
+  }
+  pthread_mutex_unlock(&g_req_pool_lock);
+  http_request_t *r = calloc(1, sizeof(*r)); return r;
+}
+
+static void http_request_free(http_request_t *r) {
+  if (!r) return;
+  pthread_mutex_lock(&g_req_pool_lock);
+  if (g_req_pool_len < g_req_pool_max) {
+    http_req_pool_node_t *n = (http_req_pool_node_t*)r; n->next = g_req_pool; g_req_pool = n; g_req_pool_len++; pthread_mutex_unlock(&g_req_pool_lock); return;
+  }
+  pthread_mutex_unlock(&g_req_pool_lock);
+  free(r);
+}
+
+/* task queue push/pop */
+static void task_queue_push(conn_arg_t *ca) {
+  struct task_node *t = malloc(sizeof(*t)); if (!t) { /* fallback: spawn thread directly */
+    pthread_t th; int rc = pthread_create(&th, NULL, connection_worker, (void*)ca); if (rc==0) pthread_detach(th); else { free(ca); close(ca->cfd); }
+    return;
+  }
+  t->ca = ca; t->next = NULL;
+  pthread_mutex_lock(&g_task_lock);
+  if (!g_task_tail) { g_task_head = g_task_tail = t; } else { g_task_tail->next = t; g_task_tail = t; }
+  g_task_count++;
+  pthread_cond_signal(&g_task_cond);
+  pthread_mutex_unlock(&g_task_lock);
+}
+
+static conn_arg_t *task_queue_pop(void) {
+  pthread_mutex_lock(&g_task_lock);
+  while (g_run && !g_task_head) pthread_cond_wait(&g_task_cond, &g_task_lock);
+  if (!g_run && !g_task_head) { pthread_mutex_unlock(&g_task_lock); return NULL; }
+  struct task_node *t = g_task_head; g_task_head = t->next; if (!g_task_head) g_task_tail = NULL; g_task_count--;
+  pthread_mutex_unlock(&g_task_lock);
+  conn_arg_t *ca = t->ca; free(t); return ca;
+}
+
+/* pool worker thread */
+static void *pool_worker(void *arg) {
+  (void)arg;
+  while (g_run) {
+    conn_arg_t *ca = task_queue_pop();
+    if (!ca) break;
+    /* handle connection inline */
+    connection_worker((void*)ca);
+    /* connection_worker frees ca internally? ensure freeing here if not */
+    /* connection_worker frees the conn_arg at start; double-free avoided because we changed semantics below */
+  }
   return NULL;
 }
 
@@ -444,17 +553,20 @@ static void *server_thread(void *arg) {
       if (!g_run) break;
       continue;
     }
-    /* Dispatch the accepted socket to a detached worker thread so accept remains responsive */
-  pthread_t th;
-  conn_arg_t *ca = malloc(sizeof(*ca));
-  if (!ca) { close(cfd); continue; }
-  ca->cfd = cfd;
-  /* copy only up to sl bytes (clamped) to avoid overruns; zero the rest */
-  size_t copy_len = (sl <= sizeof(ca->ss)) ? (size_t)sl : sizeof(ca->ss);
-  memset(&ca->ss, 0, sizeof(ca->ss));
-  memcpy(&ca->ss, &ss, copy_len);
-  int rc = pthread_create(&th, NULL, connection_worker, (void*)ca);
-  if (rc == 0) pthread_detach(th); else { /* fallback: free and close socket on failure */ free(ca); close(cfd); }
+    /* Dispatch accepted socket using pooled conn_arg and either push to task queue or spawn a detached thread */
+    conn_arg_t *ca = conn_arg_alloc();
+    if (!ca) { close(cfd); continue; }
+    ca->cfd = cfd;
+    /* copy only up to sl bytes (clamped) to avoid overruns; zero the rest */
+    size_t copy_len = (sl <= sizeof(ca->ss)) ? (size_t)sl : sizeof(ca->ss);
+    memset(&ca->ss, 0, sizeof(ca->ss));
+    memcpy(&ca->ss, &ss, copy_len);
+    if (g_pool_enabled && g_pool_size > 0) {
+      task_queue_push(ca);
+    } else {
+      pthread_t th; int rc = pthread_create(&th, NULL, connection_worker, (void*)ca);
+      if (rc == 0) pthread_detach(th); else { /* fallback: free and close socket on failure */ conn_arg_free(ca); close(cfd); }
+    }
   }
   return NULL;
 }
@@ -475,6 +587,21 @@ int http_server_start(const char *bind_ip, int port, const char *asset_root) {
   if (listen(fd, 64) < 0) { close(fd); return -1; }
   g_srv_fd = fd;
   g_run = 1;
+  /* thread-pool opt-in via env OLSRD_STATUS_THREAD_POOL=1, size via OLSRD_STATUS_THREAD_POOL_SIZE */
+  const char *tp = getenv("OLSRD_STATUS_THREAD_POOL");
+  if (tp && tp[0] == '1') {
+    g_pool_enabled = 1;
+    const char *ts = getenv("OLSRD_STATUS_THREAD_POOL_SIZE");
+    int psz = 4;
+    if (ts) { char *endptr = NULL; long v = strtol(ts, &endptr, 10); if (endptr && *endptr == '\0' && v > 0 && v <= 128) psz = (int)v; }
+    g_pool_size = psz;
+    g_pool_workers = calloc(g_pool_size, sizeof(pthread_t));
+    for (int i = 0; i < g_pool_size; ++i) {
+      if (pthread_create(&g_pool_workers[i], NULL, pool_worker, NULL) != 0) {
+        /* on failure, reduce pool size */ g_pool_size = i; break;
+      }
+    }
+  }
   if (pthread_create(&g_srv_th, NULL, server_thread, NULL) != 0) {
     close(fd); g_srv_fd = -1; g_run = 0; return -1;
   }
@@ -485,7 +612,15 @@ void http_server_stop(void) {
   if (!g_run) return;
   g_run = 0;
   if (g_srv_fd >= 0) { shutdown(g_srv_fd, SHUT_RDWR); close(g_srv_fd); g_srv_fd = -1; }
+  /* wake up the server thread and pool workers */
+  pthread_cond_broadcast(&g_task_cond);
   pthread_join(g_srv_th, NULL);
+  if (g_pool_enabled && g_pool_workers) {
+    /* wake workers and join them */
+    pthread_cond_broadcast(&g_task_cond);
+    for (int i = 0; i < g_pool_size; ++i) pthread_join(g_pool_workers[i], NULL);
+    free(g_pool_workers); g_pool_workers = NULL; g_pool_size = 0; g_pool_enabled = 0;
+  }
   http_handler_node_t *n = g_handlers;
   while (n) { http_handler_node_t *nx = n->next; free(n); n = nx; }
   g_handlers = NULL;
