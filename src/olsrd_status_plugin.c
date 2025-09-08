@@ -3143,13 +3143,18 @@ static int h_fetch_debug(http_request_t *r) {
   while (it) { qlen++; it = it->next; }
   /* Build JSON array of simple objects: {"force":0|1,"wait":0|1,"type":N} */
   char *buf = NULL; size_t cap = 1024; size_t len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); pthread_mutex_unlock(&g_fetch_q_lock); return 0; } buf[0]=0;
-  len += snprintf(buf+len, cap-len, "{\"queue_length\":%d,\"requests\":[", qlen);
+  /* Use json_appendf to safely grow the buffer and avoid signed/unsigned arithmetic */
+  if (json_appendf(&buf, &len, &cap, "{\"queue_length\":%d,\"requests\":[", qlen) != 0) {
+    free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
+  }
   it = g_fetch_q_head; int first=1; while (it) {
     if (!first) {
-      len += snprintf(buf+len, cap-len, ",");
+      if (json_appendf(&buf, &len, &cap, ",") != 0) { free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; }
     }
     first = 0;
-    len += snprintf(buf+len, cap-len, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type);
+    if (json_appendf(&buf, &len, &cap, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type) != 0) {
+      free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
+    }
     it = it->next;
   }
   unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
@@ -3159,7 +3164,9 @@ static int h_fetch_debug(http_request_t *r) {
     int _cp_len = 0, _task_count = 0, _pool_enabled = 0, _pool_size = 0;
     extern void httpd_get_runtime_stats(int*,int*,int*,int*);
     httpd_get_runtime_stats(&_cp_len, &_task_count, &_pool_enabled, &_pool_size);
-    len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, g_debug_last_fetch_msg, _cp_len, _task_count, _pool_enabled, _pool_size);
+    if (json_appendf(&buf, &len, &cap, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, g_debug_last_fetch_msg, _cp_len, _task_count, _pool_enabled, _pool_size) != 0) {
+      free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
+    }
   }
   pthread_mutex_unlock(&g_fetch_q_lock);
   send_json(r, buf);
