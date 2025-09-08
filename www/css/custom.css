@@ -63,8 +63,13 @@
 .metric-badge.routes { background:#2b9af3; }
 .metric-badge.nodes { background:#6cc070; }
 .lq-badge { display:inline-block; padding:3px 6px; border-radius:6px; font-size:11px; color:#fff; }
-.lq-low { background:#6cc070; }
-.lq-med { background:#ffd166; color:#5a3b00; }
-.lq-high { background:#ef476f; }
+.lq-low { background:#2ecc71; }
+.lq-med { background:#f6c85f; color:#5a3b00; }
+.lq-high { background:#e74c3c; }
+/* ETX badge: green good -> red bad */
+.etx-badge { display:inline-block; padding:3px 6px; border-radius:6px; font-size:11px; color:#fff; margin-right:6px; }
+.etx-good { background:#2ecc71; }
+.etx-med { background:#f6c85f; color:#5a3b00; }
+.etx-bad { background:#e74c3c; }
 .spark { display:inline-block; width:64px; height:18px; vertical-align:middle; background:linear-gradient(90deg,#e6f2ff,#fff); border-radius:4px; }
 .action-btn { margin-left:6px; }

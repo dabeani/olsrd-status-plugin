@@ -410,7 +410,7 @@ function populateOlsrLinksTable(links) {
   if (!tbody) return; tbody.innerHTML = '';
   if (!links || !Array.isArray(links) || links.length === 0) {
     var tbody = document.querySelector('#olsrLinksTable tbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-muted">No links found</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-muted">No links found</td></tr>';
     return;
   }
   // always refresh cached links to reflect latest server data
@@ -452,6 +452,25 @@ function populateOlsrLinksTable(links) {
       costHtml = '<span class="metric-badge small" style="background:#5a9bd8;">'+costNum+'</span>';
     }
     tr.appendChild(td(costHtml));
+    // ETX rendering: prefer explicit etx field, otherwise compute from cost/lq where possible
+    try {
+      var etxVal = null;
+      if (typeof l.etx !== 'undefined' && l.etx !== null && l.etx !== '') etxVal = parseFloat(String(l.etx).replace(/[^0-9\.\-]/g,''));
+      else if (l.cost) {
+        var cnum = parseFloat(String(l.cost).replace(/[^0-9\.\-]/g,''));
+        if (!isNaN(cnum) && cnum > 0) {
+          etxVal = (cnum > 100 ? (cnum / 1000) : cnum);
+        }
+      }
+      var etxHtml = '';
+      if (etxVal === null || !isFinite(etxVal)) {
+        etxHtml = '<span class="etx-badge etx-med">n/a</span>';
+      } else {
+        var etxCls = (etxVal <= 1.5) ? 'etx-good' : (etxVal <= 3.0 ? 'etx-med' : 'etx-bad');
+        etxHtml = '<span class="etx-badge '+etxCls+'">'+(Math.round(etxVal*100)/100) +'</span>';
+      }
+      tr.appendChild(td(etxHtml));
+    } catch(e) { tr.appendChild(td('')); }
     var routesCell = td(l.routes || '');
     if (l.routes && parseInt(l.routes,10) > 0) {
       routesCell.style.cursor='pointer'; routesCell.title='Click to view routes via this neighbor';
@@ -515,9 +534,11 @@ function populateOlsrLinksTable(links) {
           case 5: key='lq'; break;
           case 6: key='nlq'; break;
           case 7: key='cost'; break;
-          case 8: key='routes'; break;
-          case 9: key='nodes'; break;
-        }
+          case 8: key='etx'; break;
+          case 9: key='routes'; break;
+          case 10: key='nodes'; break;
+          case 11: key='actions'; break;
+        };
         if (!key) return;
         if (_olsrSort.key === key) _olsrSort.asc = !_olsrSort.asc; else { _olsrSort.key = key; _olsrSort.asc = true; }
         // sort the cached links array and re-render
@@ -526,7 +547,7 @@ function populateOlsrLinksTable(links) {
           arr.sort(function(a,b){
             var ka = a[_olsrSort.key]; var kb = b[_olsrSort.key];
             // numeric compare for certain keys
-            if (_olsrSort.key === 'lq' || _olsrSort.key === 'nlq' || _olsrSort.key === 'cost' || _olsrSort.key === 'routes' || _olsrSort.key === 'nodes') {
+          if (_olsrSort.key === 'lq' || _olsrSort.key === 'nlq' || _olsrSort.key === 'cost' || _olsrSort.key === 'routes' || _olsrSort.key === 'nodes' || _olsrSort.key === 'etx') {
               var an = parseFloat(String(ka||'').replace(/[^0-9\.\-]/g,'')); var bn = parseFloat(String(kb||'').replace(/[^0-9\.\-]/g,''));
               if (!isNaN(an) && !isNaN(bn)) return _olsrSort.asc ? (an - bn) : (bn - an);
             }
@@ -849,8 +870,8 @@ function updateUI(data) {
   setText('hostname', (resolved || data.hostname) || 'Unknown');
   setText('ip', data.ip || '');
   // compact status card fields
-  try { var hip = document.getElementById('host-ip'); if (hip) hip.textContent = data.ip || ''; } catch(e){}
-  try { var hn = document.getElementById('hostname'); if (hn) hn.textContent = (resolved || data.hostname) || ''; } catch(e){}
+  try { var hip = document.getElementById('status-host-ip'); if (hip) hip.textContent = data.ip || ''; } catch(e){}
+  try { var hn = document.getElementById('status-hostname'); if (hn) hn.textContent = (resolved || data.hostname) || ''; } catch(e){}
   // prefer human-friendly uptime string if provided by backend
   setText('uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
@@ -916,6 +937,7 @@ function updateUI(data) {
     var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='none';
   }
   try { var olcount = (data.links && Array.isArray(data.links)) ? data.links.length : (window._olsr_links? window._olsr_links.length : 0); var el = document.getElementById('olsr-links-count'); if (el) el.textContent = olcount; } catch(e) {}
+  try { var su = document.getElementById('status-uptime'); if (su) su.textContent = data.uptime_linux || data.uptime_str || data.uptime || ''; } catch(e) {}
   // legacy OLSR tab visibility (if backend set olsrd_on or provided links while not olsr2)
   try {
     if (!data.olsr2_on && (data.olsrd_on || (data.links && data.links.length))) {

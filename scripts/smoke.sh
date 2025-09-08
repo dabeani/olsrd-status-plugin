@@ -7,7 +7,7 @@ SNIP=${SNIP:-300}
 # CI mode: pass --ci to the script or set CI_MODE=1. Define CRITICAL endpoints (comma-separated) via env var if needed.
 CI_MODE=0
 if [ "$1" = "--ci" ] || [ "$CI_MODE" = "1" ]; then CI_MODE=1; fi
-CRITICAL=${CRITICAL:-"/status,/capabilities,/olsrd.json?q=links"}
+CRITICAL=${CRITICAL:-"/status,/status/lite,/capabilities,/olsrd.json?q=links,/olsr/links"}
 
 echo "Testing $BASE..."
 
@@ -48,13 +48,18 @@ endpoints=(
   "/js/app.js"
   "/js/jquery.min.js"
   "/js/bootstrap.min.js"
+  "/css/custom.css"
   "/status"
+  "/status/lite"
   "/capabilities"
+  "/fetch_debug"
   "/connections.json"
   "/connections"
   "/versions.json"
   "/nodedb.json"
   "/airos"
+  "/olsr/links"
+  "/olsr/routes?via=193.238.156.86"
   "/traceroute?target=8.8.8.8"
 )
 
