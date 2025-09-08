@@ -2753,6 +2753,13 @@ static int h_status_lite(http_request_t *r) {
     /* also include a suggested UI autos-refresh ms value */
     APP_L("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
   }
+  /* httpd runtime stats: connection pool and task queue */
+  {
+    int _cp_len = 0, _task_count = 0, _pool_enabled = 0, _pool_size = 0;
+    extern void httpd_get_runtime_stats(int*,int*,int*,int*);
+    httpd_get_runtime_stats(&_cp_len, &_task_count, &_pool_enabled, &_pool_size);
+    APP_L("\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d},", _cp_len, _task_count, _pool_enabled, _pool_size);
+  }
   /* default route */
   char def_ip[64]="", def_dev[64]="", def_hostname[256]=""; char *rout=NULL; size_t rn=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout){ char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } } p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } } free(rout);} if(def_ip[0]){ struct in_addr ina; if(inet_aton(def_ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he && he->h_name) snprintf(def_hostname,sizeof(def_hostname),"%s",he->h_name); }}
   APP_L("\"default_route\":{");
@@ -3143,7 +3150,13 @@ static int h_fetch_debug(http_request_t *r) {
   }
   unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
   DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
-  len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\"}}", _de, _den, _ded, _dp, _dpn, _dpd, g_debug_last_fetch_msg);
+  /* include httpd runtime stats */
+  {
+    int _cp_len = 0, _task_count = 0, _pool_enabled = 0, _pool_size = 0;
+    extern void httpd_get_runtime_stats(int*,int*,int*,int*);
+    httpd_get_runtime_stats(&_cp_len, &_task_count, &_pool_enabled, &_pool_size);
+    len += snprintf(buf+len, cap-len, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, g_debug_last_fetch_msg, _cp_len, _task_count, _pool_enabled, _pool_size);
+  }
   pthread_mutex_unlock(&g_fetch_q_lock);
   send_json(r, buf);
   free(buf);

@@ -362,6 +362,9 @@ static http_request_t *http_request_alloc(void);
 static void http_request_free(http_request_t *r);
 static void *connection_worker(void *arg);
 
+/* exported accessor for runtime httpd stats (conn pool + task queue) */
+void httpd_get_runtime_stats(int *conn_pool_len, int *task_count, int *pool_enabled, int *pool_size);
+
 static void *connection_worker(void *arg) {
   conn_arg_t *ca = (conn_arg_t*)arg;
   int cfd = ca->cfd;
@@ -372,6 +375,10 @@ static void *connection_worker(void *arg) {
   struct timeval tv;
   tv.tv_sec = 5; tv.tv_usec = 0;
   setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  /* also set a small send timeout so slow receivers don't stall workers indefinitely */
+  struct timeval stv;
+  stv.tv_sec = 5; stv.tv_usec = 0;
+  setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
   /* Disable Nagle to reduce latency for small responses */
   int _one = 1; setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &_one, sizeof(_one));
   char buf[8192];
@@ -481,6 +488,22 @@ static void conn_arg_free(conn_arg_t *ca) {
   }
   pthread_mutex_unlock(&g_conn_pool_lock);
   free(ca);
+}
+
+void httpd_get_runtime_stats(int *conn_pool_len, int *task_count, int *pool_enabled, int *pool_size) {
+  int cp = 0, tc = 0, pe = 0, ps = 0;
+  pthread_mutex_lock(&g_conn_pool_lock);
+  cp = g_conn_pool_len;
+  pthread_mutex_unlock(&g_conn_pool_lock);
+  pthread_mutex_lock(&g_task_lock);
+  tc = g_task_count;
+  pe = g_pool_enabled;
+  ps = g_pool_size;
+  pthread_mutex_unlock(&g_task_lock);
+  if (conn_pool_len) *conn_pool_len = cp;
+  if (task_count) *task_count = tc;
+  if (pool_enabled) *pool_enabled = pe;
+  if (pool_size) *pool_size = ps;
 }
 
 /* http_request pool - node-sized pool; http_request_t may be larger but we reuse memory */
