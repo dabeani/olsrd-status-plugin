@@ -358,9 +358,19 @@ function populateDevicesTable(devices, airos) {
         }
         if (!key) return;
         if (_devicesSort.key === key) _devicesSort.asc = !_devicesSort.asc; else { _devicesSort.key = key; _devicesSort.asc = true; }
-        var copy = devices.slice();
-        copy.sort(function(a,b){ var ka = String(a[_devicesSort.key]||'').toLowerCase(); var kb = String(b[_devicesSort.key]||'').toLowerCase(); if (ka<kb) return _devicesSort.asc?-1:1; if (ka>kb) return _devicesSort.asc?1:-1; return 0; });
-        populateDevicesTable(copy, airos);
+        try {
+          var arr = window._devices_data = window._devices_data || devices.slice();
+          arr.sort(function(a,b){
+            var ka = a[_devicesSort.key]; var kb = b[_devicesSort.key];
+            // numeric-aware fields
+            if (_devicesSort.key === 'signal' || _devicesSort.key === 'tx_rate' || _devicesSort.key === 'rx_rate') {
+              var an = parseFloat(String(ka||'').replace(/[^0-9\.\-]/g,'')); var bn = parseFloat(String(kb||'').replace(/[^0-9\.\-]/g,''));
+              if (!isNaN(an) && !isNaN(bn)) return _devicesSort.asc ? (an - bn) : (bn - an);
+            }
+            ka = String(ka||'').toLowerCase(); kb = String(kb||'').toLowerCase(); if (ka < kb) return _devicesSort.asc?-1:1; if (ka>kb) return _devicesSort.asc?1:-1; return 0;
+          });
+          populateDevicesTable(arr, airos);
+        } catch(e) { populateDevicesTable(devices, airos); }
       };
     });
   } catch(e){}
@@ -374,6 +384,8 @@ function populateOlsrLinksTable(links) {
   if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-muted">No links found</td></tr>';
     return;
   }
+  // store links in cache if not already
+  try { if (!window._olsr_links) window._olsr_links = links; } catch(e) { window._olsr_links = links; }
   links.forEach(function(l){
     var tr = document.createElement('tr');
     if (l.is_default) { tr.style.backgroundColor = '#fff8d5'; }
@@ -385,13 +397,24 @@ function populateOlsrLinksTable(links) {
       var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
       tr.appendChild(td(linkHtml));
     } else { tr.appendChild(td(l.remote_host)); }
-  // attempt to resolve a node name for the remote IP using cached nodedb
-  var nodeName = '';
-  try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
-  tr.appendChild(td(nodeName));
-    tr.appendChild(td(l.lq));
-    tr.appendChild(td(l.nlq));
-    tr.appendChild(td(l.cost));
+    // attempt to resolve a node name for the remote IP using cached nodedb
+    var nodeName = '';
+    try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
+    var nodeTd = td(nodeName);
+    if (l.node_names) { nodeTd.title = l.node_names; }
+    tr.appendChild(nodeTd);
+    // LQ / NLQ as numeric badges
+    function mkLqBadge(val){ var v = parseFloat(String(val||'')||'0'); var cls = 'lq-low'; if (!isFinite(v) || v <= 0) cls='lq-high'; else if (v < 0.5) cls='lq-low'; else if (v < 0.85) cls='lq-med'; else cls='lq-high'; return '<span class="lq-badge '+cls+'">'+String(val)+'</span>'; }
+    tr.appendChild(td(mkLqBadge(l.lq)));
+    tr.appendChild(td(mkLqBadge(l.nlq)));
+    // cost numeric rendering
+    var costVal = l.cost || '';
+    var costNum = parseFloat(String(costVal).replace(/[^0-9\.\-]/g,''));
+    var costHtml = '<span class="metric-badge small" style="background:#888;">'+(costVal||'')+'</span>';
+    if (!isNaN(costNum)) {
+      costHtml = '<span class="metric-badge small" style="background:#5a9bd8;">'+costNum+'</span>';
+    }
+    tr.appendChild(td(costHtml));
     var routesCell = td(l.routes || '');
     if (l.routes && parseInt(l.routes,10) > 0) {
       routesCell.style.cursor='pointer'; routesCell.title='Click to view routes via this neighbor';
@@ -409,7 +432,23 @@ function populateOlsrLinksTable(links) {
       nodesCell.style.cursor = 'pointer'; nodesCell.title = 'Click to view nodes behind this neighbor';
       nodesCell.addEventListener('click', function(){ showNodesFor(l.remote, l.node_names); });
     }
-    tr.appendChild(nodesCell);
+  // metric badges and small spark (routes vs nodes)
+  var metricsHtml = '';
+  metricsHtml += '<span class="metric-badge routes small">R:'+ (l.routes || '0') +'</span>';
+  metricsHtml += '<span class="metric-badge nodes small">N:'+ (l.nodes || '0') +'</span>';
+  // simple spark placeholder
+  metricsHtml += '<span class="spark" aria-hidden="true"></span>';
+  var metricsTd = td(metricsHtml);
+  metricsTd.title = 'Routes: ' + (l.routes||'0') + ' • Nodes: ' + (l.nodes||'0') + (l.is_default? ' • Default route':'');
+  tr.appendChild(metricsTd);
+  tr.appendChild(nodesCell);
+  // Actions column
+  var actHtml = '';
+  if (l.remote_host) actHtml += '<button class="btn btn-xs btn-default action-open-host" data-host="'+encodeURIComponent(l.remote_host)+'" title="Open remote host">Open</button> ';
+  if (l.routes && parseInt(l.routes,10)>0) actHtml += '<button class="btn btn-xs btn-primary action-show-routes" data-remote="'+encodeURIComponent(l.remote)+'">Routes</button> ';
+  if (l.nodes && parseInt(l.nodes,10)>0) actHtml += '<button class="btn btn-xs btn-info action-show-nodes" data-remote="'+encodeURIComponent(l.remote)+'" data-names="'+(l.node_names?encodeURIComponent(l.node_names):'')+'">Nodes</button>';
+  var actTd = td(actHtml);
+  tr.appendChild(actTd);
     tbody.appendChild(tr);
   });
   // wire header sorting to re-sort the links array and re-render
@@ -433,12 +472,33 @@ function populateOlsrLinksTable(links) {
         }
         if (!key) return;
         if (_olsrSort.key === key) _olsrSort.asc = !_olsrSort.asc; else { _olsrSort.key = key; _olsrSort.asc = true; }
-        var copy = links.slice();
-        copy.sort(function(a,b){ var ka = String(a[_olsrSort.key]||'').toLowerCase(); var kb = String(b[_olsrSort.key]||'').toLowerCase(); if (ka<kb) return _olsrSort.asc?-1:1; if (ka>kb) return _olsrSort.asc?1:-1; return 0; });
-        populateOlsrLinksTable(copy);
+        // sort the cached links array and re-render
+        try {
+          var arr = window._olsr_links = window._olsr_links || links.slice();
+          arr.sort(function(a,b){
+            var ka = a[_olsrSort.key]; var kb = b[_olsrSort.key];
+            // numeric compare for certain keys
+            if (_olsrSort.key === 'lq' || _olsrSort.key === 'nlq' || _olsrSort.key === 'cost' || _olsrSort.key === 'routes' || _olsrSort.key === 'nodes') {
+              var an = parseFloat(String(ka||'').replace(/[^0-9\.\-]/g,'')); var bn = parseFloat(String(kb||'').replace(/[^0-9\.\-]/g,''));
+              if (!isNaN(an) && !isNaN(bn)) return _olsrSort.asc ? (an - bn) : (bn - an);
+            }
+            ka = String(ka||'').toLowerCase(); kb = String(kb||'').toLowerCase(); if (ka < kb) return _olsrSort.asc?-1:1; if (ka>kb) return _olsrSort.asc?1:-1; return 0;
+          });
+          populateOlsrLinksTable(arr);
+        } catch(e) { try{ populateOlsrLinksTable(links); } catch(_){} }
       };
     });
   } catch(e){}
+
+  // attach action button handlers after rendering
+  try {
+    var openBtns = document.querySelectorAll('.action-open-host');
+    openBtns.forEach(function(b){ b.addEventListener('click', function(){ var h = decodeURIComponent(b.getAttribute('data-host')||''); if (h) window.open('https://'+h, '_blank'); }); });
+    var routesBtns = document.querySelectorAll('.action-show-routes');
+    routesBtns.forEach(function(b){ b.addEventListener('click', function(){ var r = decodeURIComponent(b.getAttribute('data-remote')||''); if (r) showRoutesFor(r); }); });
+    var nodesBtns = document.querySelectorAll('.action-show-nodes');
+    nodesBtns.forEach(function(b){ b.addEventListener('click', function(){ var r = decodeURIComponent(b.getAttribute('data-remote')||''); var names = decodeURIComponent(b.getAttribute('data-names')||''); if (r) showNodesFor(r, names); }); });
+  } catch(e) {}
 }
 
 function showNodesFor(remoteIp, nodeNames) {
@@ -787,6 +847,8 @@ function updateUI(data) {
     }
   } catch(e) { setText('default-route', 'n/a'); }
   populateDevicesTable(data.devices, data.airos);
+  // cache devices for client-side sorting and re-render
+  try { window._devices_data = Array.isArray(data.devices) ? data.devices : []; } catch(e) { window._devices_data = []; }
   if (data.olsr2_on) {
     showTab('tab-olsr2', true);
     var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='';
@@ -1085,7 +1147,8 @@ function detectPlatformAndLoad() {
                 if (data.links && data.links.length) {
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
                 if (linkTab) { if (window._uiDebug) console.debug('Showing OLSR tab with links from /status'); linkTab.parentElement.style.display = ''; }
-                populateOlsrLinksTable(data.links);
+                try { window._olsr_links = Array.isArray(data.links) ? data.links : []; } catch(e) { window._olsr_links = data.links || []; }
+                populateOlsrLinksTable(window._olsr_links);
               } else {
                 // Keep tab visible; it will lazy-load on click
                 var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
@@ -2009,4 +2072,9 @@ function runTraceroute(){
 document.addEventListener('DOMContentLoaded', function(){
   var closeBtn = document.getElementById('fetch-debug-close');
   if (closeBtn) closeBtn.addEventListener('click', function(){ hideModal('fetch-debug-modal'); });
+  var rClose = document.getElementById('route-modal-close'); if (rClose) rClose.addEventListener('click', function(){ hideModal('route-modal'); });
+  var nClose = document.getElementById('node-modal-close'); if (nClose) nClose.addEventListener('click', function(){ hideModal('node-modal'); });
+  // overlay clicks: close any modal when clicking the overlay outside the panel
+  var overlays = document.querySelectorAll('.modal-overlay');
+  overlays.forEach(function(o){ o.addEventListener('click', function(e){ if (e.target === o) { try { o.setAttribute('aria-hidden','true'); o.style.display='none'; } catch(e){} } }); });
 });

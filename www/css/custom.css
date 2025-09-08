@@ -56,3 +56,15 @@
 
 /* Modal close button alignment helper */
 .modal-panel .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-bottom:8px; }
+
+/* Small metric badges and sparklines in OLSR links */
+.metric-badge { display:inline-block; padding:4px 8px; border-radius:12px; font-size:11px; color:#fff; margin-right:6px; }
+.metric-badge.small { padding:2px 6px; font-size:10px; border-radius:10px; }
+.metric-badge.routes { background:#2b9af3; }
+.metric-badge.nodes { background:#6cc070; }
+.lq-badge { display:inline-block; padding:3px 6px; border-radius:6px; font-size:11px; color:#fff; }
+.lq-low { background:#6cc070; }
+.lq-med { background:#ffd166; color:#5a3b00; }
+.lq-high { background:#ef476f; }
+.spark { display:inline-block; width:64px; height:18px; vertical-align:middle; background:linear-gradient(90deg,#e6f2ff,#fff); border-radius:4px; }
+.action-btn { margin-left:6px; }
