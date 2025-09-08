@@ -47,6 +47,7 @@
           <h3 style="margin:0">Web Status <small id="main-host">&nbsp;</small></h3>
         </div>
         <div class="header-actions">
+          <div id="status-summary" class="status-summary-card" aria-hidden="false"></div>
           <div id="nav-host"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></div>
         </div>
       </header>
@@ -193,8 +194,8 @@
         </div>
 
         <!-- Simple Modal for Route Details -->
-        <div id="route-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; overflow:auto;">
-          <div style="background:#fff; margin:50px auto; padding:18px 22px 20px; max-width:900px; border:1px solid #bbb; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+        <div id="route-modal" class="modal-overlay" aria-hidden="true">
+          <div class="modal-panel">
             <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-bottom:10px;">
               <div style="display:flex; align-items:center; gap:12px;">
                 <h4 id="route-modal-title" style="margin:0; font-weight:600;">Routes</h4>
@@ -228,8 +229,8 @@
         </div>
 
           <!-- Simple Modal for Node Details -->
-          <div id="node-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; overflow:auto;">
-            <div style="background:#fff; margin:50px auto; padding:18px 22px 20px; max-width:900px; border:1px solid #bbb; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+          <div id="node-modal" class="modal-overlay" aria-hidden="true">
+            <div class="modal-panel">
               <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-bottom:10px;">
                 <div style="display:flex; align-items:center; gap:12px;">
                   <h4 id="node-modal-title" style="margin:0; font-weight:600;">Nodes</h4>
@@ -265,14 +266,14 @@
             </div>
           </div>
               <!-- Fetch debug modal -->
-              <div id="fetch-debug-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2100; overflow:auto;">
-                <div style="background:#fff; margin:60px auto; padding:14px; max-width:920px; border:1px solid #bbb; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+              <div id="fetch-debug-modal" class="modal-overlay" aria-hidden="true">
+                <div class="modal-panel modal-panel-sm">
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                     <h4 style="margin:0;">Fetch Queue Debug</h4>
                     <div style="display:flex; gap:8px; align-items:center;"><button id="fetch-debug-close" class="btn btn-xs btn-default">Close</button></div>
                   </div>
-                  <div style="border:1px solid #ddd; border-radius:4px; max-height:520px; overflow:auto;">
-                    <pre id="fetch-debug-body" style="margin:0; padding:12px; font-family:monospace; font-size:12px;">Loading...</pre>
+                    <div class="modal-body-scroll">
+                    <pre id="fetch-debug-body" class="modal-pre">Loading...</pre>
                   </div>
                 </div>
               </div>

@@ -863,6 +863,17 @@ function populateFetchStats(fs) {
 
   // Update top header/nav indicator based on severity
     try {
+      // Also update compact status summary card in header
+      try {
+        var sum = document.getElementById('status-summary');
+        if (sum) {
+          var shtml = '';
+          shtml += '<div class="ss-item">Queued: <span class="ss-queued">' + queued + '</span></div>';
+          if (qcls === 'crit') shtml += '<div class="ss-item ss-crit">CRIT</div>'; else if (qcls === 'warn') shtml += '<div class="ss-item ss-warn">WARN</div>';
+          shtml += '<div class="ss-item" title="Dropped">D:'+dropped+'</div>';
+          sum.innerHTML = shtml;
+        }
+      } catch(e) {}
       var hostEl = document.getElementById('nav-host');
       if (hostEl) {
         var hostnameSpan = document.getElementById('hostname');
@@ -1333,6 +1344,50 @@ document.addEventListener('DOMContentLoaded', function() {
 
   detectPlatformAndLoad();
 });
+
+// Enable simple client-side sorting for tables whose TH elements contain a data-key attribute
+function enableTableSorting() {
+  function sortTable(table, colIndex, asc) {
+    var tbody = table.tBodies[0]; if (!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    rows.sort(function(a,b){
+      var ta = (a.children[colIndex] && a.children[colIndex].textContent) ? a.children[colIndex].textContent.trim() : '';
+      var tb = (b.children[colIndex] && b.children[colIndex].textContent) ? b.children[colIndex].textContent.trim() : '';
+      // try numeric compare
+      var na = parseFloat(ta.replace(/[^0-9\-\.]/g, ''));
+      var nb = parseFloat(tb.replace(/[^0-9\-\.]/g, ''));
+      if (!isNaN(na) && !isNaN(nb)) {
+        return asc ? na - nb : nb - na;
+      }
+      // fallback: localeCompare
+      return asc ? ta.localeCompare(tb) : tb.localeCompare(ta);
+    });
+    // re-append rows
+    rows.forEach(function(r){ tbody.appendChild(r); });
+  }
+
+  var tables = document.querySelectorAll('table');
+  tables.forEach(function(table){
+    var ths = table.querySelectorAll('th');
+    ths.forEach(function(th, idx){
+      if (th.getAttribute('data-key')) {
+        th.style.cursor = 'pointer';
+        var asc = true;
+        th.addEventListener('click', function(){
+          sortTable(table, idx, asc);
+          // toggle asc/desc and show a simple mark
+          var mark = th.querySelector('.sort-mark');
+          if (!mark) { mark = document.createElement('span'); mark.className='sort-mark'; th.appendChild(mark); }
+          mark.textContent = asc ? ' ▲' : ' ▼';
+          asc = !asc;
+        });
+      }
+    });
+  });
+}
+
+// initialize sorting behaviors early
+try { enableTableSorting(); } catch(e) {}
 
 // Populate dynamic nav entries (host + login) after status load
 function populateNavHost(host, ip) {
