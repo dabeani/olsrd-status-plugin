@@ -231,6 +231,37 @@ function setHTML(id, html) {
   if (el) el.innerHTML = html;
 }
 
+// Resolve a node's human name from the loaded nodedb using an IP or CIDR.
+function getNodeNameForIp(ip) {
+  try {
+    if (!ip) return null;
+    if (!window._nodedb_cache) return null;
+    function ip2int(ipstr){ return ipstr.split('.').reduce(function(acc,x){return (acc<<8)+parseInt(x,10);},0) >>>0; }
+    var rip = null;
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) rip = ip2int(ip);
+    var best = null;
+    Object.keys(window._nodedb_cache).forEach(function(k){
+      if (!k) return;
+      var v = window._nodedb_cache[k];
+      if (!v) return;
+      // exact match
+      if (k === ip) { best = v.n || best; return; }
+      // direct host field match
+      if (v.h && v.h === ip) { best = v.n || best; return; }
+      // CIDR match
+      if (k.indexOf('/') > -1 && rip !== null) {
+        try {
+          var parts = k.split('/'); var net = parts[0]; var bits = parseInt(parts[1],10);
+          var nint = ip2int(net);
+          var mask = bits===0?0: (~0 << (32-bits)) >>>0;
+          if ((rip & mask) === (nint & mask)) { best = v.n || best; return; }
+        } catch(e) {}
+      }
+    });
+    return best || null;
+  } catch(e) { return null; }
+}
+
 /* Modal helpers: manage aria-hidden and visibility centrally */
 function showModal(id) {
   var m = document.getElementById(id);
@@ -692,13 +723,16 @@ function populateNeighborsTable(neighbors) {
 
 function updateUI(data) {
   try {
-  setText('hostname', data.hostname || 'Unknown');
+  // Prefer resolved nodename from nodedb when available
+  var resolved = null;
+  try { resolved = getNodeNameForIp(data.ipv4 || data.ip || ''); } catch(e) { resolved = null; }
+  setText('hostname', (resolved || data.hostname) || 'Unknown');
   setText('ip', data.ip || '');
   // prefer human-friendly uptime string if provided by backend
   setText('uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
-  try { setText('main-host', data.hostname || ''); } catch(e) {}
+  try { setText('main-host', (resolved || data.hostname) || ''); } catch(e) {}
   try {
     // Build FQDN explicitly from backend fields. Prefer explicit node identifiers
     // (data.node, data.nodename, data.node_name, data.net) and fall back to a
@@ -1010,7 +1044,9 @@ function detectPlatformAndLoad() {
         if (adminTabLink) adminTabLink.style.display = (caps.show_admin_link? '' : 'none');
       } catch(e){}
   var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsrd_on: false, olsr2info: '', admin: null };
-    // Fetch summary first for fast paint
+  // Fetch nodedb early so we can enrich hostnames when rendering
+  try { fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ window._nodedb_cache = nb || {}; }).catch(function(){}); } catch(e){}
+  // Fetch summary first for fast paint
     fetch('/status/lite',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
         if (s.hostname) data.hostname = s.hostname;
         if (s.ip) data.ip = s.ip;
