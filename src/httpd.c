@@ -374,8 +374,9 @@ static void *server_thread(void *arg) {
     /* Enforce allow-list even for static assets */
     if (!http_is_client_allowed(r.client_ip)) {
       fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, r.path);
-      http_send_status(&r, 403, "Forbidden");
-      http_printf(&r, "Content-Type: text/plain\r\n\r\nforbidden\n");
+      /* Immediately cut the connection by forcing a TCP RST (linger=0) */
+      struct linger _lg = {1, 0};
+      setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg));
       close(cfd);
       continue;
     }
@@ -387,6 +388,7 @@ static void *server_thread(void *arg) {
     }
     http_handler_node_t *nptr = g_handlers;
     int handled = 0;
+    int sock_closed = 0;
     while (nptr) {
       if (strcmp(nptr->route, r.path) == 0) {
         handled = 1;
@@ -394,8 +396,11 @@ static void *server_thread(void *arg) {
         /* enforce access control */
         if (!http_is_client_allowed(r.client_ip)) {
           fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r.client_ip, nptr->route);
-          http_send_status(&r, 403, "Forbidden");
-          http_printf(&r, "Content-Type: text/plain\r\n\r\nforbidden\n");
+          /* Immediately reset connection (linger=0) and mark socket closed so outer loop won't close again */
+          struct linger _lg2 = {1, 0};
+          setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2));
+          close(cfd);
+          sock_closed = 1;
         } else {
           nptr->fn(&r);
         }
@@ -403,6 +408,11 @@ static void *server_thread(void *arg) {
       }
       nptr = nptr->next;
     }
+    if (sock_closed) {
+      /* socket already force-closed due to allow-list rejection; move to next accept */
+      continue;
+    }
+
     if (!handled) {
       fprintf(stderr, "[httpd] 404 Not Found: %s\n", r.path);
       http_send_status(&r, 404, "Not Found");
