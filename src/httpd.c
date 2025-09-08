@@ -508,7 +508,7 @@ static void http_request_free(http_request_t *r) {
 /* task queue push/pop */
 static void task_queue_push(conn_arg_t *ca) {
   struct task_node *t = malloc(sizeof(*t)); if (!t) { /* fallback: spawn thread directly */
-    pthread_t th; int rc = pthread_create(&th, NULL, connection_worker, (void*)ca); if (rc==0) pthread_detach(th); else { free(ca); close(ca->cfd); }
+    pthread_t th; int rc = pthread_create(&th, NULL, connection_worker, (void*)ca); if (rc==0) pthread_detach(th); else { conn_arg_free(ca); close(ca->cfd); }
     return;
   }
   t->ca = ca; t->next = NULL;
@@ -564,8 +564,8 @@ static void *server_thread(void *arg) {
     if (g_pool_enabled && g_pool_size > 0) {
       task_queue_push(ca);
     } else {
-      pthread_t th; int rc = pthread_create(&th, NULL, connection_worker, (void*)ca);
-      if (rc == 0) pthread_detach(th); else { /* fallback: free and close socket on failure */ conn_arg_free(ca); close(cfd); }
+            pthread_t th; int rc = pthread_create(&th, NULL, connection_worker, (void*)ca);
+            if (rc == 0) pthread_detach(th); else { /* fallback: free and close socket on failure */ conn_arg_free(ca); close(cfd); }
     }
   }
   return NULL;
