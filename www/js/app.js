@@ -227,6 +227,24 @@ function setHTML(id, html) {
   if (el) el.innerHTML = html;
 }
 
+/* Modal helpers: manage aria-hidden and visibility centrally */
+function showModal(id) {
+  var m = document.getElementById(id);
+  if (!m) return;
+  try { m.setAttribute('aria-hidden','false'); } catch(e) {}
+  try { m.style.display = ''; } catch(e) {}
+}
+function hideModal(id) {
+  var m = document.getElementById(id);
+  if (!m) return;
+  try { m.setAttribute('aria-hidden','true'); } catch(e) {}
+  try { m.style.display = 'none'; } catch(e) {}
+}
+
+// Global sorting state for tables
+var _devicesSort = { key: null, asc: true };
+var _olsrSort = { key: null, asc: true };
+
 function showTab(tabId, show) {
   var el = document.getElementById(tabId);
   if (el) el.style.display = show ? '' : 'none';
@@ -282,6 +300,35 @@ function populateDevicesTable(devices, airos) {
     warn.innerHTML = 'Warnung: Frequenzüberlappung erkannt!';
     table.parentNode.insertBefore(warn, table);
   }
+  // attach header sort clicks to sort the provided devices array and re-render
+  try {
+    var headers = document.querySelectorAll('#devicesTable thead th');
+    headers.forEach(function(h, idx){
+      // Allow clicking headers to sort by inferred keys (map index to property)
+      h.style.cursor = 'pointer';
+      h.onclick = function(){
+        var key = null;
+        switch(idx) {
+          case 0: key = 'ipv4'; break;
+          case 1: key = 'hostname'; break;
+          case 2: key = 'product'; break;
+          case 3: key = 'uptime'; break;
+          case 4: key = 'mode'; break;
+          case 5: key = 'essid'; break;
+          case 6: key = 'firmware'; break;
+          case 7: key = 'signal'; break;
+          case 8: key = 'tx_rate'; break;
+          case 9: key = 'rx_rate'; break;
+          case 10: key = 'wireless'; break;
+        }
+        if (!key) return;
+        if (_devicesSort.key === key) _devicesSort.asc = !_devicesSort.asc; else { _devicesSort.key = key; _devicesSort.asc = true; }
+        var copy = devices.slice();
+        copy.sort(function(a,b){ var ka = String(a[_devicesSort.key]||'').toLowerCase(); var kb = String(b[_devicesSort.key]||'').toLowerCase(); if (ka<kb) return _devicesSort.asc?-1:1; if (ka>kb) return _devicesSort.asc?1:-1; return 0; });
+        populateDevicesTable(copy, airos);
+      };
+    });
+  } catch(e){}
 }
 
 function populateOlsrLinksTable(links) {
@@ -326,6 +373,32 @@ function populateOlsrLinksTable(links) {
     tr.appendChild(nodesCell);
     tbody.appendChild(tr);
   });
+  // wire header sorting to re-sort the links array and re-render
+  try {
+    var lheaders = document.querySelectorAll('#olsrLinksTable thead th');
+    lheaders.forEach(function(h, idx){
+      h.style.cursor = 'pointer';
+      h.onclick = function(){
+        var key = null;
+        switch(idx) {
+          case 0: key='intf'; break;
+          case 1: key='local'; break;
+          case 2: key='remote'; break;
+          case 3: key='remote_host'; break;
+          case 4: key='lq'; break;
+          case 5: key='nlq'; break;
+          case 6: key='cost'; break;
+          case 7: key='routes'; break;
+          case 8: key='nodes'; break;
+        }
+        if (!key) return;
+        if (_olsrSort.key === key) _olsrSort.asc = !_olsrSort.asc; else { _olsrSort.key = key; _olsrSort.asc = true; }
+        var copy = links.slice();
+        copy.sort(function(a,b){ var ka = String(a[_olsrSort.key]||'').toLowerCase(); var kb = String(b[_olsrSort.key]||'').toLowerCase(); if (ka<kb) return _olsrSort.asc?-1:1; if (ka>kb) return _olsrSort.asc?1:-1; return 0; });
+        populateOlsrLinksTable(copy);
+      };
+    });
+  } catch(e){}
 }
 
 function showNodesFor(remoteIp, nodeNames) {
@@ -432,8 +505,8 @@ function showNodesFor(remoteIp, nodeNames) {
     window._nodedb_cache_list = found;
     if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; }
     renderRows(found);
-    if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2);
-    modal.style.display='block';
+  if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2);
+  showModal('node-modal');
     // wire header sort clicks
     try {
       var headers = document.querySelectorAll('#node-modal-table thead th[data-key]');
@@ -442,7 +515,7 @@ function showNodesFor(remoteIp, nodeNames) {
     return;
   }
 
-  fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ try{ window._nodedb_cache = nb || {}; var found = findNodes(nb || {}); window._nodedb_cache_list = found; if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; } renderRows(found); if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2); modal.style.display='block'; }catch(e){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error rendering nodes</td></tr>'; if(bodyPre) bodyPre.textContent='Error'; modal.style.display='block'; } }).catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error loading nodedb.json</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading nodedb.json'; modal.style.display='block'; });
+  fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ try{ window._nodedb_cache = nb || {}; var found = findNodes(nb || {}); window._nodedb_cache_list = found; if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; } renderRows(found); if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2); showModal('node-modal'); }catch(e){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error rendering nodes</td></tr>'; if(bodyPre) bodyPre.textContent='Error'; showModal('node-modal'); } }).catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error loading nodedb.json</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading nodedb.json'; showModal('node-modal'); });
   // attach header sort clicks for fetched path as well
   try {
     var headers = document.querySelectorAll('#node-modal-table thead th[data-key]');
@@ -565,27 +638,27 @@ function showRoutesFor(remoteIp) {
         }
         return { destination: destination, device: device, metric: metric, raw: line };
       });
-      if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = (obj && typeof obj.count==='number'? obj.count : allRoutes.length); }
-      renderTable(allRoutes);
+  if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = (obj && typeof obj.count==='number'? obj.count : allRoutes.length); }
+  renderTable(allRoutes);
       if (bodyPre) {
         var header=''; if (obj && !Array.isArray(obj) && typeof obj.count==='number') header='Via '+(obj.via||remoteIp)+' ('+obj.count+' routes)\n\n';
         bodyPre.textContent = header + routesArr.join('\n');
       }
     })
     .catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="4" class="text-danger">Error loading routes</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading routes'; });
-  modal.style.display='block';
+  showModal('route-modal');
 }
 
 window.addEventListener('load', function(){
   var c = document.getElementById('route-modal-close');
-  if (c) c.addEventListener('click', function(){ var m=document.getElementById('route-modal'); if (m) m.style.display='none'; });
+  if (c) c.addEventListener('click', function(){ hideModal('route-modal'); });
   var m = document.getElementById('route-modal');
-  if (m) m.addEventListener('click', function(e){ if (e.target === m) m.style.display='none'; });
+  if (m) m.addEventListener('click', function(e){ if (e.target === m) hideModal('route-modal'); });
 
   var nc = document.getElementById('node-modal-close');
-  if (nc) nc.addEventListener('click', function(){ var m=document.getElementById('node-modal'); if (m) m.style.display='none'; window._nodeModal_state = null; if (_nodeModalKeyHandler) { document.removeEventListener('keydown', _nodeModalKeyHandler); _nodeModalKeyHandler = null; } });
+  if (nc) nc.addEventListener('click', function(){ hideModal('node-modal'); window._nodeModal_state = null; if (_nodeModalKeyHandler) { document.removeEventListener('keydown', _nodeModalKeyHandler); _nodeModalKeyHandler = null; } });
   var nm = document.getElementById('node-modal');
-  if (nm) nm.addEventListener('click', function(e){ if (e.target === nm) { nm.style.display='none'; window._nodeModal_state = null; if (_nodeModalKeyHandler) { document.removeEventListener('keydown', _nodeModalKeyHandler); _nodeModalKeyHandler = null; } } });
+  if (nm) nm.addEventListener('click', function(e){ if (e.target === nm) { hideModal('node-modal'); window._nodeModal_state = null; if (_nodeModalKeyHandler) { document.removeEventListener('keydown', _nodeModalKeyHandler); _nodeModalKeyHandler = null; } } });
 });
 
 // keyboard nav state for node modal
@@ -857,7 +930,7 @@ function populateFetchStats(fs) {
     if (dbg) dbg.addEventListener('click', function(){
       var modal = document.getElementById('fetch-debug-modal'); var body = document.getElementById('fetch-debug-body');
       if (!modal || !body) return;
-      body.textContent = 'Loading...'; modal.style.display = 'block';
+  body.textContent = 'Loading...'; showModal('fetch-debug-modal');
       fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
     });
 
@@ -912,7 +985,7 @@ function populateFetchStats(fs) {
         } catch(e){}
         // make header clickable to open fetch debug modal
         try {
-          hostEl.onclick = function(){ var dbgModal = document.getElementById('fetch-debug-modal'); if (dbgModal) dbgModal.style.display = 'block'; var body = document.getElementById('fetch-debug-body'); if (body) { body.textContent='Loading...'; fetch('/fetch_debug', {cache:'no-store'}).then(function(r){return r.text();}).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; }); } };
+          hostEl.onclick = function(){ var body = document.getElementById('fetch-debug-body'); if (body) { body.textContent='Loading...'; fetch('/fetch_debug', {cache:'no-store'}).then(function(r){return r.text();}).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; }); } showModal('fetch-debug-modal'); };
         } catch(e){}
       }
     } catch(e) { /* ignore header update errors */ }
@@ -1433,10 +1506,11 @@ function populateNavHost(host, ip) {
   try {
     el.style.cursor = 'pointer';
     el.addEventListener('click', function(){
-      var modal = document.getElementById('fetch-debug-modal'); var body = document.getElementById('fetch-debug-body');
-      if (!modal || !body) return;
-      body.textContent = 'Loading...'; modal.style.display = 'block';
+      var body = document.getElementById('fetch-debug-body');
+      if (!body) return;
+      body.textContent = 'Loading...';
       fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
+      showModal('fetch-debug-modal');
     });
   } catch(e) {}
 }
@@ -1893,5 +1967,5 @@ function runTraceroute(){
 // Wire fetch debug modal close on DOM load so it's always available
 document.addEventListener('DOMContentLoaded', function(){
   var closeBtn = document.getElementById('fetch-debug-close');
-  if (closeBtn) closeBtn.addEventListener('click', function(){ var m = document.getElementById('fetch-debug-modal'); if (m) m.style.display='none'; });
+  if (closeBtn) closeBtn.addEventListener('click', function(){ hideModal('fetch-debug-modal'); });
 });
