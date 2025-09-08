@@ -1873,8 +1873,8 @@ function runTraceroute(){
     // Reuse existing status endpoint: if olsr2_on true we consider olsrd2; need explicit legacy check
     fetch('/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
       // If olsr2_on is true assume olsrd2; hide legacy links tab unless links array exists AND st.olsr2_on is false
-      var show = false;
-      if (!st.olsr2_on && st.links && Array.isArray(st.links) && st.links.length) show = true;
+  var show = false;
+  if (!st.olsr2_on && (st.olsrd_on || (st.links && Array.isArray(st.links) && st.links.length))) show = true;
       var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
       if (linkTab) linkTab.parentElement.style.display = show? '' : 'none';
       if (cb) cb(show);
