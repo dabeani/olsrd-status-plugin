@@ -317,8 +317,16 @@ static void urldecode(char *s) {
 }
 
 /* per-connection worker: wraps the existing inline handling into a thread */
+typedef struct conn_arg {
+  int cfd;
+  struct sockaddr_storage ss;
+} conn_arg_t;
+
 static void *connection_worker(void *arg) {
-  int cfd = (int)(intptr_t)arg;
+  conn_arg_t *ca = (conn_arg_t*)arg;
+  int cfd = ca->cfd;
+  struct sockaddr_storage ss = ca->ss;
+  free(ca);
   char buf[8192];
   ssize_t n = read(cfd, buf, sizeof(buf)-1);
   if (n <= 0) { close(cfd); return NULL; }
@@ -327,6 +335,13 @@ static void *connection_worker(void *arg) {
   http_request_t r = {0};
   r.fd = cfd;
   snprintf(r.client_ip, sizeof(r.client_ip), "unknown");
+  if (ss.ss_family == AF_INET) {
+    struct sockaddr_in *in = (struct sockaddr_in*)&ss;
+    inet_ntop(AF_INET, &in->sin_addr, r.client_ip, sizeof(r.client_ip));
+  } else if (ss.ss_family == AF_INET6) {
+    struct sockaddr_in6 *in6 = (struct sockaddr_in6*)&ss;
+    inet_ntop(AF_INET6, &in6->sin6_addr, r.client_ip, sizeof(r.client_ip));
+  }
   /* Determine client IP not available directly here; leave as unknown */
   char *sp1 = strchr(buf, ' ');
   if (!sp1) { close(cfd); return NULL; }
