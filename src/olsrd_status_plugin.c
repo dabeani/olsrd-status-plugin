@@ -3408,17 +3408,21 @@ struct kv_cache_entry { char key[128]; char val[256]; time_t ts; };
 static struct kv_cache_entry g_host_cache[CACHE_SIZE];
 /* separate cache for OLSRd proxy responses; uses same slot size as kv_cache_entry */
 static struct kv_cache_entry g_olsr_cache[CACHE_SIZE];
+/* mutex protecting both small in-process caches */
+static pthread_mutex_t g_kv_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int olsr_cache_get(const char *key, char *out, size_t outlen) {
   if (!key || !out) return 0;
   unsigned long h = 1469598103934665603UL;
   for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
   int idx = (int)(h % CACHE_SIZE);
-  if (g_olsr_cache[idx].key[0] == 0) return 0;
-  if (strcmp(g_olsr_cache[idx].key, key) != 0) return 0;
-  if (difftime(time(NULL), g_olsr_cache[idx].ts) > CACHE_TTL) return 0;
+  pthread_mutex_lock(&g_kv_cache_lock);
+  if (g_olsr_cache[idx].key[0] == 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
+  if (strcmp(g_olsr_cache[idx].key, key) != 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
+  if (difftime(time(NULL), g_olsr_cache[idx].ts) > CACHE_TTL) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
   /* copy up to outlen-1 chars */
   snprintf(out, outlen, "%s", g_olsr_cache[idx].val);
+  pthread_mutex_unlock(&g_kv_cache_lock);
   return 1;
 }
 
@@ -3427,10 +3431,12 @@ static void olsr_cache_set(const char *key, const char *val) {
   unsigned long h = 1469598103934665603UL;
   for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
   int idx = (int)(h % CACHE_SIZE);
+  pthread_mutex_lock(&g_kv_cache_lock);
   snprintf(g_olsr_cache[idx].key, sizeof(g_olsr_cache[idx].key), "%s", key);
   /* store truncated value (safe) */
   snprintf(g_olsr_cache[idx].val, sizeof(g_olsr_cache[idx].val), "%s", val);
   g_olsr_cache[idx].ts = time(NULL);
+  pthread_mutex_unlock(&g_kv_cache_lock);
 }
 
 static void cache_set(struct kv_cache_entry *cache, const char *key, const char *val) {
@@ -3438,9 +3444,11 @@ static void cache_set(struct kv_cache_entry *cache, const char *key, const char 
   unsigned long h = 1469598103934665603UL;
   for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
   int idx = (int)(h % CACHE_SIZE);
+  pthread_mutex_lock(&g_kv_cache_lock);
   snprintf(cache[idx].key, sizeof(cache[idx].key), "%s", key);
   snprintf(cache[idx].val, sizeof(cache[idx].val), "%s", val);
   cache[idx].ts = time(NULL);
+  pthread_mutex_unlock(&g_kv_cache_lock);
 }
 
 static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, size_t outlen) {
@@ -3448,10 +3456,12 @@ static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, s
   unsigned long h = 1469598103934665603UL;
   for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
   int idx = (int)(h % CACHE_SIZE);
-  if (cache[idx].key[0] == 0) return 0;
-  if (strcmp(cache[idx].key, key) != 0) return 0;
-  if (difftime(time(NULL), cache[idx].ts) > CACHE_TTL) return 0;
+  pthread_mutex_lock(&g_kv_cache_lock);
+  if (cache[idx].key[0] == 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
+  if (strcmp(cache[idx].key, key) != 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
+  if (difftime(time(NULL), cache[idx].ts) > CACHE_TTL) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
   snprintf(out, outlen, "%s", cache[idx].val);
+  pthread_mutex_unlock(&g_kv_cache_lock);
   return 1;
 }
 
