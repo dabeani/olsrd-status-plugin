@@ -3497,9 +3497,13 @@ static int h_traceroute(http_request_t *r) {
         if (hop_count + 1 > hop_cap) {
           size_t newcap = hop_cap * 2;
           tr_hop_t *tmp = (tr_hop_t*)realloc(hops, sizeof(tr_hop_t) * newcap);
-          if (!tmp) break; hop_cap = newcap; hops = tmp;
+          if (!tmp) {
+            break;
+          }
+          hop_cap = newcap;
+          hops = tmp;
         }
-        tr_hop_t *hh = &hops[hop_count]; memset(hh, 0, sizeof(*hh)); strncpy(hh->hop, hopbuf, sizeof(hh->hop)-1);
+        tr_hop_t *hh = &hops[hop_count]; memset(hh, 0, sizeof(*hh)); snprintf(hh->hop, sizeof(hh->hop), "%s", hopbuf);
         /* extract IP/host and latency numbers */
         char ip[64]=""; char host[128]=""; char *p2=sp; /* rest of line */
         /* attempt parentheses ip */
@@ -3518,18 +3522,19 @@ static int h_traceroute(http_request_t *r) {
         /* collect all latency samples (numbers followed by ms) */
         double samples[8]; int sc=0; char *scan=p2; while(*scan && sc<8){ while(*scan && !isdigit((unsigned char)*scan) && *scan!='*') scan++; if(*scan=='*'){ scan++; continue; } char *endp=NULL; double val=strtod(scan,&endp); if(endp && val>=0){ while(*endp==' ') endp++; if(strncasecmp(endp,"ms",2)==0){ samples[sc++]=val; scan=endp+2; continue; } } if(endp==scan){ scan++; } else scan=endp; }
         char latency[128]=""; if(sc==1) snprintf(latency,sizeof(latency),"%.3gms",samples[0]); else if(sc>1){ size_t off=0; for(int i=0;i<sc;i++){ int w=snprintf(latency+off,sizeof(latency)-off,"%s%.3gms", i?"/":"", samples[i]); if(w<0|| (size_t)w>=sizeof(latency)-off) break; off+=(size_t)w; } }
-        strncpy(hh->ip, ip, sizeof(hh->ip)-1);
-        strncpy(hh->host, host, sizeof(hh->host)-1);
-        strncpy(hh->ping, latency, sizeof(hh->ping)-1);
+  snprintf(hh->ip, sizeof(hh->ip), "%s", ip);
+  snprintf(hh->host, sizeof(hh->host), "%s", host);
+  snprintf(hh->ping, sizeof(hh->ping), "%s", latency);
         hop_count++;
         line=strtok_r(NULL,"\n",&saveptr);
       }
       /* Resolve missing hostnames via system resolver (resolve_ip_to_hostname) */
       for (size_t i = 0; i < hop_count; i++) {
-        if ((!hops[i].host || hops[i].host[0]==0) && hops[i].ip && hops[i].ip[0]) {
+        /* hops[i].host and hops[i].ip are fixed-size arrays; check contents, not pointer value */
+        if (hops[i].host[0] == '\0' && hops[i].ip[0] != '\0') {
           char resolved[256] = "";
           if (resolve_ip_to_hostname(hops[i].ip, resolved, sizeof(resolved)) == 0) {
-            strncpy(hops[i].host, resolved, sizeof(hops[i].host)-1);
+            snprintf(hops[i].host, sizeof(hops[i].host), "%s", resolved);
           }
         }
       }
