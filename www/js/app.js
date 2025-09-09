@@ -233,6 +233,34 @@ function setHTML(id, html) {
   if (el) el.innerHTML = html;
 }
 
+// Robustly fetch /status and parse the last top-level JSON object from the
+// response text. Returns a Promise that resolves to the parsed object or
+// rejects on network/error conditions.
+function safeFetchStatus(fetchOptions) {
+  fetchOptions = fetchOptions || {cache:'no-store'};
+  return fetch('/status', fetchOptions).then(function(r){ return r.text(); }).then(function(txt){
+    // Fast-path: attempt JSON.parse of the whole body
+    try { return JSON.parse(txt); } catch(e) {}
+    // Otherwise extract last balanced JSON object and parse
+    function extractLastJsonObject(str) {
+      if (!str) return null;
+      var lastCandidate = null; var depth = 0; var start = -1;
+      for (var i = 0; i < str.length; i++) {
+        var ch = str.charAt(i);
+        if (ch === '{') { if (depth === 0) start = i; depth++; }
+        else if (ch === '}') { depth--; if (depth === 0 && start !== -1) { lastCandidate = str.substring(start, i+1); start = -1; } }
+      }
+      return lastCandidate;
+    }
+    try {
+      var candidate = extractLastJsonObject(txt);
+      if (candidate) return JSON.parse(candidate);
+    } catch(e2) {}
+    // If all attempts fail, throw to let callers handle error
+    throw new Error('Failed to parse /status response');
+  });
+}
+
 // Resolve a node's human name from the loaded nodedb using an IP or CIDR.
 function getNodeNameForIp(ip) {
   try {
@@ -1265,7 +1293,7 @@ function populateFetchStats(fs) {
     if (ref) ref.addEventListener('click', function(){
       try { ref.disabled = true; if (refSpinner) refSpinner.classList.add('rotate'); } catch(e){}
       fetch('/status/lite', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s.fetch_stats) populateFetchStats(s.fetch_stats); } catch(e){} }).catch(function(){
-        fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
+    safeFetchStatus({cache:'no-store'}).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
       }).finally(function(){ try{ if (refSpinner) refSpinner.classList.remove('rotate'); ref.disabled=false; }catch(e){} });
     });
 
@@ -1621,22 +1649,29 @@ window.addEventListener('load', function(){
           try { console.error('ensureTraceroutePreloaded: failed to parse /status JSON', e); } catch(_){}
           // Attempt to salvage first JSON object from possibly wrapped text
           try {
-            function extractFirstJsonObject(str) {
+            // If /status returns wrapped text or multiple JSON blobs concatenated,
+            // prefer the last top-level JSON object (most recent /status payload).
+            function extractLastJsonObject(str) {
               if (!str) return null;
-              var start = str.indexOf('{');
-              if (start === -1) return null;
+              var lastCandidate = null;
               var depth = 0;
-              for (var i = start; i < str.length; i++) {
+              var start = -1;
+              for (var i = 0; i < str.length; i++) {
                 var ch = str.charAt(i);
-                if (ch === '{') depth++;
-                else if (ch === '}') {
+                if (ch === '{') {
+                  if (depth === 0) start = i;
+                  depth++;
+                } else if (ch === '}') {
                   depth--;
-                  if (depth === 0) return str.substring(start, i + 1);
+                  if (depth === 0 && start !== -1) {
+                    lastCandidate = str.substring(start, i + 1);
+                    start = -1;
+                  }
                 }
               }
-              return null;
+              return lastCandidate;
             }
-            var candidate = extractFirstJsonObject(txt);
+            var candidate = extractLastJsonObject(txt);
             if (candidate) st = JSON.parse(candidate);
             try { console.log('ensureTraceroutePreloaded: salvaged JSON length=', candidate?candidate.length:0); } catch(e){}
           } catch(e2) { st = null; }
@@ -1996,7 +2031,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Load status data to populate main-host if not already loaded
         try {
           if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
-            fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st) { updateUI(st); } window._statusLoaded = true; window._statusLoadedAt = Date.now(); } catch(e){} }).catch(function(){});
+            safeFetchStatus({cache:'no-store'}).then(function(st){ try { if (st) { updateUI(st); } window._statusLoaded = true; window._statusLoadedAt = Date.now(); } catch(e){} }).catch(function(){});
           }
         } catch(e) {}
       }
@@ -2016,9 +2051,9 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('Loading status tab content...');
         setTabLoading('tab-status');
         try {
-          if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
+            if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
             console.log('Fetching /status API...');
-            fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st) { console.log('Status data received:', Object.keys(st)); updateUI(st); if (st.links && Array.isArray(st.links) && st.links.length) { try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){} } } window._statusLoaded = true; window._statusLoadedAt = Date.now(); setTabLoaded('tab-status'); } catch(e){ setTabError('tab-status'); } }).catch(function(){ setTabError('tab-status'); });
+            safeFetchStatus({cache:'no-store'}).then(function(st){ try { if (st) { console.log('Status data received:', Object.keys(st)); updateUI(st); if (st.links && Array.isArray(st.links) && st.links.length) { try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){} } } window._statusLoaded = true; window._statusLoadedAt = Date.now(); setTabLoaded('tab-status'); } catch(e){ setTabError('tab-status'); } }).catch(function(){ setTabError('tab-status'); });
           } else {
             console.log('Status already loaded recently');
             setTabLoaded('tab-status');
@@ -2095,7 +2130,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (id === '#tab-traceroute') {
         try {
           // ensure any precomputed traceroute in /status is rendered
-          fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try {
+          safeFetchStatus({cache:'no-store'}).then(function(st){ try {
               if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
                 var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
                 populateTracerouteTable(hops);
@@ -2874,22 +2909,29 @@ function runTraceroute(){
           // Salvage attempt: extract the first balanced JSON object (handles
           // additional non-JSON text or concatenated JSON blobs).
           try {
-            function extractFirstJsonObject(str) {
+            // Prefer the last top-level JSON object in case the response contains
+            // wrapper text or multiple concatenated JSON blobs.
+            function extractLastJsonObject(str) {
               if (!str) return null;
-              var start = str.indexOf('{');
-              if (start === -1) return null;
+              var lastCandidate = null;
               var depth = 0;
-              for (var i = start; i < str.length; i++) {
+              var start = -1;
+              for (var i = 0; i < str.length; i++) {
                 var ch = str.charAt(i);
-                if (ch === '{') depth++;
-                else if (ch === '}') {
+                if (ch === '{') {
+                  if (depth === 0) start = i;
+                  depth++;
+                } else if (ch === '}') {
                   depth--;
-                  if (depth === 0) return str.substring(start, i + 1);
+                  if (depth === 0 && start !== -1) {
+                    lastCandidate = str.substring(start, i + 1);
+                    start = -1;
+                  }
                 }
               }
-              return null;
+              return lastCandidate;
             }
-            var candidate = extractFirstJsonObject(statusText);
+            var candidate = extractLastJsonObject(statusText);
             if (candidate) st = JSON.parse(candidate);
           } catch (e2) {
             if (window._uiDebug) console.debug('detectLegacyOlsrd: status parse failed', e2, statusText && statusText.slice ? statusText.slice(0,200) : statusText);
