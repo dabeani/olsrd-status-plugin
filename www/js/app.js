@@ -1737,9 +1737,10 @@ document.addEventListener('DOMContentLoaded', function() {
   var tabPanes = document.querySelectorAll('.tab-pane');
 
   function switchTab(targetId) {
-    // Hide all tab panes
+    // Hide all tab panes (mark hidden + remove active)
     tabPanes.forEach(function(pane) {
       pane.classList.remove('active');
+      pane.classList.add('hidden');
     });
 
     // Remove active class from all tab links
@@ -1750,9 +1751,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Show target tab pane
     var targetPane = document.querySelector(targetId);
     if (targetPane) {
-  // ensure the pane isn't hidden by capability toggles
-  targetPane.classList.remove('hidden');
-  targetPane.classList.add('active');
+      // ensure the pane isn't hidden by capability toggles
+      targetPane.classList.remove('hidden');
+      targetPane.classList.add('active');
     }
 
     // Add active class to clicked tab link
