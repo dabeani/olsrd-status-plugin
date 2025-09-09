@@ -32,6 +32,18 @@
 
 #include <stdarg.h>
 
+/* Thread-safe IP -> hostname resolver using getnameinfo */
+static int resolve_ip_to_hostname(const char *ip, char *out, size_t outlen) {
+  if (!ip || !out || outlen == 0) return -1;
+  struct sockaddr_in sa; memset(&sa, 0, sizeof(sa)); sa.sin_family = AF_INET;
+  if (inet_pton(AF_INET, ip, &sa.sin_addr) != 1) return -1;
+  char host[NI_MAXHOST]; host[0] = '\0';
+  int rc = getnameinfo((struct sockaddr*)&sa, sizeof(sa), host, sizeof(host), NULL, 0, 0);
+  if (rc != 0) return -1;
+  snprintf(out, outlen, "%s", host);
+  return 0;
+}
+
 #if __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
 # include <stdatomic.h>
 # define HAVE_C11_ATOMICS 1
@@ -1601,7 +1613,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj, "localIP", &v, &vlen) || find_json_string_value(obj, "localIp", &v, &vlen) || find_json_string_value(obj, "local", &v, &vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "remoteIP", &v, &vlen) || find_json_string_value(obj, "remoteIp", &v, &vlen) || find_json_string_value(obj, "remote", &v, &vlen) || find_json_string_value(obj, "neighborIP", &v, &vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if (!remote[0]) { q = r; continue; }
-      if (remote[0]) { struct in_addr ina_r; if (inet_aton(remote,&ina_r)) { struct hostent *hre=gethostbyaddr(&ina_r,sizeof(ina_r),AF_INET); if(hre&&hre->h_name) snprintf(remote_host,sizeof(remote_host),"%s",hre->h_name); } }
+  if (remote[0]) { char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv)) == 0) snprintf(remote_host, sizeof(remote_host), "%s", rv); }
       if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq,sizeof(lq),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq,sizeof(nlq),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
@@ -1686,7 +1698,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if(find_json_string_value(obj,"localIP",&v,&vlen) || find_json_string_value(obj,"local",&v,&vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"remoteIP",&v,&vlen) || find_json_string_value(obj,"remote",&v,&vlen) || find_json_string_value(obj,"neighborIP",&v,&vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if(!remote[0]) { scan=r; continue; }
-      if(remote[0]){ struct in_addr ina_r; if(inet_aton(remote,&ina_r)){ struct hostent *hre=gethostbyaddr(&ina_r,sizeof(ina_r),AF_INET); if(hre&&hre->h_name) snprintf(remote_host,sizeof(remote_host),"%s",hre->h_name); } }
+  if(remote[0]){ char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv)) == 0) snprintf(remote_host, sizeof(remote_host), "%s", rv); }
   if(!first) json_buf_append(&buf,&len,&cap,",");
   first=0;
       json_buf_append(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
@@ -3537,14 +3549,10 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
   if (!ipv4 || !out) return;
   out[0]=0;
   if (cache_get(g_host_cache, ipv4, out, outlen)) return;
-  /* try reverse DNS */
-  struct in_addr ina; if (inet_aton(ipv4, &ina)) {
-    struct hostent *he = gethostbyaddr(&ina, sizeof(ina), AF_INET);
-    if (he && he->h_name) {
-      snprintf(out, outlen, "%s", he->h_name);
-      cache_set(g_host_cache, ipv4, out);
-      return;
-    }
+  /* try reverse DNS using thread-safe resolver */
+  if (resolve_ip_to_hostname(ipv4, out, outlen) == 0) {
+    cache_set(g_host_cache, ipv4, out);
+    return;
   }
   /* try cached remote node_db first */
   fetch_remote_nodedb_if_needed();
