@@ -327,6 +327,8 @@ function populateDevicesTable(devices, airos) {
   // diagnostics: lightweight logging to help trace empty tabs issue
   try { if (window._uiDebug) console.debug('populateDevicesTable called, devices=', (devices && devices.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   tbody.innerHTML = '';
+  // Ensure parent pane is not accidentally hidden (help with intermittent empty-tab issue)
+  try { var pane = document.getElementById('tab-status'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e) {}
   if (!devices || !Array.isArray(devices) || devices.length === 0) {
     var tbody = document.querySelector('#devicesTable tbody');
     if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No devices found</td></tr>';
@@ -532,6 +534,8 @@ function populateOlsrLinksTable(links) {
   });
   // after populating, ensure the table is visible when inside an active tab (avoid race where CSS hides it)
   try { var pane = document.getElementById('tab-olsr'); if (pane && pane.classList.contains('active')) { /* no-op but forces style recalculation in some browsers */ pane.style.display = ''; setTimeout(function(){ pane.style.display = ''; }, 10); } } catch(e) {}
+  // Also proactively remove any hidden class from the OLSR pane so content is visible
+  try { var pane2 = document.getElementById('tab-olsr'); if (pane2) { pane2.classList.remove('hidden'); pane2.style.display = ''; } } catch(e) {}
   // wire header sorting to re-sort the links array and re-render
   try {
     var lheaders = document.querySelectorAll('#olsrLinksTable thead th');
@@ -872,6 +876,8 @@ function populateNeighborsTable(neighbors) {
     tr.appendChild(td(n.metric));
     tbody.appendChild(tr);
   });
+  // ensure neighbors pane is visible
+  try { var pane = document.getElementById('tab-neighbors'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e) {}
 }
 
 function updateUI(data) {
@@ -1893,6 +1899,8 @@ function renderLogPage() {
     // wire buttons
     try { prev.addEventListener('click', function(){ if (window._log_cache.page>0) { window._log_cache.page--; renderLogPage(); } }); next.addEventListener('click', function(){ if ((window._log_cache.page+1)*window._log_cache.pageSize < (window._log_cache.filtered.length || window._log_cache.lines.length)) { window._log_cache.page++; renderLogPage(); } }); } catch(e){}
   }
+  // Ensure log tab pane is visible after rendering
+  try { var pane = document.getElementById('tab-log'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e){}
 }
 
 function renderLogArray(lines) {
@@ -2279,6 +2287,8 @@ function renderConnectionsTable(c, nodedb) {
   });
   var headers = document.querySelectorAll('#connectionsTable th');
   headers.forEach(function(h){ h.style.cursor='pointer'; h.onclick = function(){ sortTableByColumn(h.getAttribute('data-key')); }; });
+  // Ensure the connections tab pane is visible after rendering (fix intermittent hidden-tab issue)
+  try { var pane = document.getElementById('tab-connections'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e){}
 }
 
 function renderVersionsPanel(v) {
@@ -2439,6 +2449,8 @@ function populateTracerouteTable(tracerouteData) {
     } else tr.appendChild(td(''));
     tbody.appendChild(tr);
   });
+  // Ensure traceroute tab pane is visible after rendering
+  try { var pane = document.getElementById('tab-traceroute'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e){}
 }
           // expose nodedb for traceroute hostname enrichment
           try { window._nodedb_cache = nodedb; } catch(e){}
@@ -2713,3 +2725,40 @@ document.addEventListener('DOMContentLoaded', function(){
   var overlays = document.querySelectorAll('.modal-overlay');
   overlays.forEach(function(o){ o.addEventListener('click', function(e){ if (e.target === o) { try { o.setAttribute('aria-hidden','true'); o.style.display='none'; } catch(e){} } }); });
 });
+
+// Runtime debug overlay (non-invasive): shows computed display and table row counts for key tabs
+(function(){
+  function createDebugOverlay(){
+    if (document.getElementById('ui-debug-overlay')) return;
+    var o = document.createElement('div');
+    o.id = 'ui-debug-overlay';
+    o.style.position = 'fixed'; o.style.right = '12px'; o.style.top = '12px'; o.style.zIndex = '9999';
+    o.style.background = 'rgba(0,0,0,0.7)'; o.style.color = '#fff'; o.style.padding = '8px 10px';
+    o.style.fontSize = '12px'; o.style.lineHeight = '1.2'; o.style.borderRadius = '6px'; o.style.maxWidth = '360px';
+    o.style.fontFamily = 'monospace'; o.style.whiteSpace = 'pre-wrap'; o.style.pointerEvents = 'none';
+    document.body.appendChild(o);
+    function update(){
+      try {
+        var ids = ['#tab-status','#tab-olsr','#tab-stats','#tab-connections','#tab-versions','#tab-traceroute','#tab-log'];
+        var out = [];
+        ids.forEach(function(id){
+          var el = document.querySelector(id);
+          if (!el) { out.push(id + ': MISSING'); return; }
+          var cs = window.getComputedStyle(el);
+          var tables = el.querySelectorAll('table');
+          var rows = [];
+          tables.forEach(function(t){ try { var r = t.querySelectorAll('tbody tr').length; rows.push((t.id||t.className||t.tagName)+':'+r); } catch(e){} });
+          out.push(id + ' display=' + cs.display + ' visible=' + (cs.display!=='none') + ' childNodes=' + (el.childNodes?el.childNodes.length:0) + ' rows={' + rows.join(',') + '}');
+        });
+        out.push('window._olsr_links=' + (window._olsr_links? window._olsr_links.length : 0) + '  _logLoaded=' + (window._logLoaded?1:0) + '  _statusLoaded=' + (window._statusLoaded?1:0));
+        o.textContent = out.join('\n');
+      } catch(e) { /* ignore */ }
+    }
+    update();
+    o._interval = setInterval(update, 1500);
+  }
+  if (window._uiDebug) {
+    if (document.readyState === 'complete' || document.readyState === 'interactive') createDebugOverlay();
+    else document.addEventListener('DOMContentLoaded', createDebugOverlay);
+  }
+})();
