@@ -2047,7 +2047,29 @@ document.addEventListener('DOMContentLoaded', function() {
       if (id === '#tab-traceroute') {
         try {
           // ensure any precomputed traceroute in /status is rendered
-          fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) { var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; }); populateTracerouteTable(hops); } } catch(e){} }).catch(function(){
+          fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try {
+              if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
+                var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
+                populateTracerouteTable(hops);
+                return;
+              }
+              // If server provided only a trace_target (no precomputed hops), trigger a live traceroute
+              // when the user opens the Traceroute tab. Guard with flags so we don't run repeatedly.
+              if (st && st.trace_target && !(st.trace_to_uplink && st.trace_to_uplink.length)) {
+                try {
+                  var trInput = document.getElementById('tr-host');
+                  if (trInput) {
+                    trInput.value = st.trace_target;
+                    // Only auto-run once per session unless the table is empty and not populated earlier
+                    if (!window._traceroutePopulatedAt && !window._tracerouteAutoRunDone) {
+                      window._tracerouteAutoRunDone = true;
+                      setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+                    }
+                  }
+                } catch(e) {}
+              }
+            } catch(e){}
+          }).catch(function(){
             // Show fallback content when API fails
             var tbody = document.querySelector('#tracerouteTable tbody');
             if (tbody) {
