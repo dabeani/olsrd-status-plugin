@@ -1762,6 +1762,18 @@ document.addEventListener('DOMContentLoaded', function() {
       // ensure the pane isn't hidden by capability toggles
       targetPane.classList.remove('hidden');
       targetPane.classList.add('active');
+      // diagnostic: log pane state & key child counts to help debug empty-tab issues
+      try {
+        if (window._uiDebug) {
+          var paneStyle = window.getComputedStyle(targetPane);
+          console.debug('switchTab: activated', targetId, 'classes=', targetPane.className, 'computedDisplay=', paneStyle.display, 'visible=', paneStyle.display !== 'none');
+          // count visible rows in any table inside the pane
+          var tables = targetPane.querySelectorAll('table');
+          tables.forEach(function(t){ try { var trs = t.querySelectorAll('tbody tr'); console.debug(' switchTab: table', t.id || t.className || t.tagName, 'tbodyRows=', trs.length); } catch(e){} });
+          // count direct child nodes
+          console.debug(' switchTab: childNodes=', targetPane.childNodes ? targetPane.childNodes.length : 0);
+        }
+      } catch(e){}
     }
 
     // Add active class to clicked tab link
@@ -1784,6 +1796,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // onTabShown: called whenever a tab becomes active
   function onTabShown(id) {
+  try { if (window._uiDebug) { var pane = document.querySelector(id); if (pane) { var cs = window.getComputedStyle(pane); console.debug('onTabShown: id=', id, 'classes=', pane.className, 'computedDisplay=', cs.display, 'visible=', cs.display!=='none'); } } } catch(e){}
     try {
       if (id === '#tab-log') {
         // if log not yet loaded, auto-refresh
