@@ -1603,6 +1603,7 @@ window.addEventListener('load', function(){
   // Automatically start traceroute with predefined traceroute_to destination at initial load
   ensureTraceroutePreloaded();
   function ensureTraceroutePreloaded(){
+    try { console.log('ensureTraceroutePreloaded: start'); } catch(e){}
     var tbody = document.querySelector('#tracerouteTable tbody');
     if (tbody) {
       // Always clear table before populating
@@ -1612,7 +1613,9 @@ window.addEventListener('load', function(){
       .then(function(r){ return r.json(); })
       .then(function(st){
         var summaryEl = document.getElementById('traceroute-summary');
+        try { console.log('ensureTraceroutePreloaded: /status returned, trace_to_uplink present=', !!(st && st.trace_to_uplink && st.trace_to_uplink.length)); } catch(e){}
         if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
+          console.log('ensureTraceroutePreloaded: using precomputed hops count=', st.trace_to_uplink.length);
           var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
           if (trTab) trTab.parentElement.style.display = '';
           var hops = st.trace_to_uplink.map(function(h){
@@ -1629,6 +1632,7 @@ window.addEventListener('load', function(){
             summaryEl.setAttribute('aria-label', 'Traceroute summary: destination ' + (st.trace_target || '') + ', ' + hops.length + ' hops');
           }
         } else {
+          try { console.log('ensureTraceroutePreloaded: no precomputed hops; trace_target=', st && st.trace_target); } catch(e){}
           // Show empty/error state
           if (tbody) {
             // Only show fallback 'no data' when we haven't already successfully populated
@@ -1654,6 +1658,7 @@ window.addEventListener('load', function(){
           // avoid repeated runs during subsequent events.
           try {
             if (!window._tracerouteAutoRunDone && st && st.trace_target) {
+              try { console.log('ensureTraceroutePreloaded: attempting auto-run traceroute for', st.trace_target); } catch(e){}
               var trInput = document.getElementById('tr-host');
               if (trInput) {
                 trInput.value = st.trace_target;
@@ -1661,6 +1666,8 @@ window.addEventListener('load', function(){
                 window._tracerouteAutoRunDone = true;
                 // give the DOM a tick before running to ensure UI elements are ready
                 setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+              } else {
+                try { console.error('ensureTraceroutePreloaded: tr-host input not found when attempting auto-run'); } catch(e){}
               }
             }
           } catch(e) {}
