@@ -1689,46 +1689,52 @@ window.addEventListener('load', function(){
       // Always clear table before populating
       while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
     }
-    fetch('/status', {cache:'no-store'})
-      .then(function(r){ return r.text(); })
-      .then(function(txt){
-        // Log raw response to help diagnose non-JSON or wrapped responses
-        try { console.log('ensureTraceroutePreloaded: /status raw length=', txt && txt.length); } catch(e){}
-        var st = null;
+    // Try the dedicated traceroute endpoint first (clean JSON). Fall back to /status if not available.
+    fetch('/status/traceroute', {cache:'no-store'}).then(function(r){
+      if (r && r.ok) return r.json();
+      // non-200 -> fallback to full /status text salvage
+      return fetch('/status', {cache:'no-store'}).then(function(r2){ return r2.text(); });
+    }).then(function(txtOrObj){
+      // txtOrObj may be already-parsed object (from r.json()) or raw text from /status
+      var txt = null; var st = null;
+      if (typeof txtOrObj === 'object') {
+        st = txtOrObj;
+      } else {
+        txt = txtOrObj;
+      }
+      // Log raw response to help diagnose non-JSON or wrapped responses
+      try { console.log('ensureTraceroutePreloaded: /status raw length=', txt && txt.length); } catch(e){}
+      if (!st) {
         try {
           st = JSON.parse(txt);
         } catch(e) {
           try { console.error('ensureTraceroutePreloaded: failed to parse /status JSON', e); } catch(_){}
-          // Attempt to salvage first JSON object from possibly wrapped text
           try {
             // If /status returns wrapped text or multiple JSON blobs concatenated,
-            // prefer the last top-level JSON object (most recent /status payload).
-            function extractLastJsonObject(str) {
-              if (!str) return null;
-              var lastCandidate = null;
-              var depth = 0;
-              var start = -1;
+            // prefer the best candidate extracted from top-level JSON objects.
+            function findTopLevelJsonCandidates(str) {
+              var res = [];
+              if (!str) return res;
+              var depth = 0, start = -1;
               for (var i = 0; i < str.length; i++) {
                 var ch = str.charAt(i);
-                if (ch === '{') {
-                  if (depth === 0) start = i;
-                  depth++;
-                } else if (ch === '}') {
-                  depth--;
-                  if (depth === 0 && start !== -1) {
-                    lastCandidate = str.substring(start, i + 1);
-                    start = -1;
-                  }
-                }
+                if (ch === '{') { if (depth === 0) start = i; depth++; }
+                else if (ch === '}') { depth--; if (depth === 0 && start !== -1) { res.push(str.substring(start, i+1)); start = -1; } }
               }
-              return lastCandidate;
+              return res;
             }
-            var candidate = extractLastJsonObject(txt);
-            if (candidate) st = JSON.parse(candidate);
-            try { console.log('ensureTraceroutePreloaded: salvaged JSON length=', candidate?candidate.length:0); } catch(e){}
+            var candidates = findTopLevelJsonCandidates(txt || '');
+            var best = null, bestScore = -Infinity;
+            for (var j = 0; j < candidates.length; j++) {
+              var s = candidates[j];
+              try { var o = JSON.parse(s); if (!o || typeof o !== 'object') continue; var score = 0; if (o.hasOwnProperty('trace_target')) score += 200; if (o.hasOwnProperty('trace_to_uplink')) score += 150; try { score += Object.keys(o).length; } catch(e){} var known = ['queue_length','dropped','processed','unique_routes','unique_nodes','thresholds']; for (var k = 0; k < known.length; k++) if (o.hasOwnProperty(known[k])) score += 5; if (score > bestScore || (score === bestScore && j >= 0)) { best = o; bestScore = score; } } catch(e2){}
+            }
+            if (best) st = best;
+            try { console.log('ensureTraceroutePreloaded: salvaged JSON candidate keys=', st?Object.keys(st):null); } catch(e){}
           } catch(e2) { st = null; }
         }
-        return st;
+      }
+      return st;
       })
       .then(function(st){
         var summaryEl = document.getElementById('traceroute-summary');
