@@ -959,6 +959,65 @@ function updateUI(data) {
   try { setLastUpdated(); } catch(e) {}
 }
 
+// --- Statistics graphs: maintain short in-memory series and render sparklines ---
+window._stats_series = window._stats_series || { olsr_routes: [], olsr_nodes: [], fetch_queued: [], fetch_processing: [] };
+var STATS_SERIES_MAX = 60; // keep last 60 samples (~1 min at 1s sampling)
+
+function pushStat(seriesName, value) {
+  try {
+    var s = window._stats_series[seriesName] = window._stats_series[seriesName] || [];
+    s.push(Number(value) || 0);
+    if (s.length > STATS_SERIES_MAX) s.shift();
+  } catch(e) {}
+}
+
+function renderSparkline(containerId, series, color) {
+  var el = document.getElementById(containerId); if (!el) return;
+  var w = el.clientWidth || 300; var h = el.clientHeight || 80; var pad = 4;
+  var maxv = Math.max(1, Math.max.apply(null, series)); var minv = Math.min.apply(null, series);
+  var pts = series.map(function(v,i){ var x = Math.round((i/(series.length-1||1))*(w-2*pad))+pad; var y = Math.round(h- pad - ((v - minv)/(maxv - minv || 1))*(h-2*pad)); return x+','+y; });
+  var svg = '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">';
+  // area
+  if (pts.length) {
+    svg += '<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>';
+    // small circles on last point
+    var last = pts[pts.length-1].split(','); svg += '<circle cx="'+last[0]+'" cy="'+last[1]+'" r="3" fill="'+color+'"></circle>';
+  }
+  svg += '</svg>';
+  el.innerHTML = svg;
+}
+
+// Hook into updateUI to sample stats when status payload contains them
+var _original_updateUI = updateUI;
+updateUI = function(data) {
+  try {
+    // sample olsr routes/nodes if available in payload
+    try {
+      var routes = 0; var nodes = 0;
+      if (data.links && Array.isArray(data.links)) {
+        // count unique routes approximated by sum of link.routes
+        routes = data.links.reduce(function(acc,l){ return acc + (parseInt(l.routes,10)||0); }, 0);
+        nodes = data.links.reduce(function(acc,l){ return acc + (parseInt(l.nodes,10)||0); }, 0);
+      } else if (typeof data.olsr_routes_count === 'number') {
+        routes = data.olsr_routes_count;
+      }
+      pushStat('olsr_routes', routes);
+      pushStat('olsr_nodes', nodes);
+    } catch(e) {}
+    // sample fetch queue metrics if provided
+    try {
+      var fq = (data.fetch_stats && (data.fetch_stats.queued_count || data.fetch_stats.queue_length || data.fetch_stats.queued)) || 0;
+      var fp = (data.fetch_stats && (data.fetch_stats.processing_count || data.fetch_stats.processing || data.fetch_stats.in_progress)) || 0;
+      pushStat('fetch_queued', fq);
+      pushStat('fetch_processing', fp);
+    } catch(e) {}
+    // render graphs
+    try { renderSparkline('olsr-graph', window._stats_series.olsr_routes || [], '#5a9bd8'); } catch(e){}
+    try { renderSparkline('fetch-graph', window._stats_series.fetch_queued || [], '#f39c12'); } catch(e){}
+  } catch(e) {}
+  try { _original_updateUI(data); } catch(e) {}
+};
+
 // update last-updated timestamp helper (called from updateUI)
 function setLastUpdated(ts) {
   try {
@@ -1431,7 +1490,7 @@ window.addEventListener('load', function(){
       // lazy-load /log content
       if (window._logLoaded) return;
       var pre = document.getElementById('log-pre'); if (pre) pre.textContent = 'Loading...';
-      fetch('/log', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { renderLogText(t); window._logLoaded = true; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; });
+  fetch('/log?lines=100', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(obj){ try { var lines = obj && Array.isArray(obj.lines) ? obj.lines : []; renderLogArray(lines); window._logLoaded = true; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; });
     }
   });
   // Refresh button support for OLSR Links
@@ -1641,23 +1700,42 @@ function parseLogLine(line) {
   return { ts: '', level: '', msg: line };
 }
 
-function renderLogText(text) {
+// Render log lines (paginated). Expects an array of lines (strings) in data.lines
+window._log_cache = window._log_cache || { lines: [], filtered: [], page: 0, pageSize: 20 };
+function renderLogPage() {
   var pre = document.getElementById('log-pre'); if (!pre) return;
-  var lines = (text || '').split(/\r?\n/);
-  // Build HTML with simple color coding for log levels
-  var out = lines.map(function(ln){ var p = parseLogLine(ln); var cls=''; if (p.level==='ERROR' || p.level==='ERR' || p.level==='CRITICAL') cls='color:#a94442;'; else if (p.level==='WARN' || p.level==='WARNING') cls='color:#8a6d3b;'; else if (p.level==='INFO') cls='color:#31708f;'; else if (p.level==='DEBUG') cls='color:#3a3a3a;'; var ts = p.ts?('<span style="color:#666; font-size:11px; margin-right:6px">'+p.ts+'</span> '):''; var level = p.level?('<span style="font-weight:600; margin-right:6px;">['+p.level+']</span> '):''; return '<div style="padding:2px 0; '+cls+'">'+ts+level+('<span style="white-space:pre-wrap">'+escapeHtml(p.msg)+'</span>')+'</div>'; }).join('');
-  pre.innerHTML = out || '<span class="text-muted">(no log lines)</span>';
-  // wire filter input
-  var filter = document.getElementById('log-filter');
-  if (filter) {
-    filter.oninput = function(){ var q = (filter.value||'').trim().toLowerCase(); if (!q) { pre.innerHTML = out; return; } var fo = lines.filter(function(l){ return l.toLowerCase().indexOf(q) !== -1; }).map(function(ln){ var p=parseLogLine(ln); var cls=''; if (p.level==='ERROR'||p.level==='ERR'||p.level==='CRITICAL') cls='color:#a94442;'; else if (p.level==='WARN'||p.level==='WARNING') cls='color:#8a6d3b;'; else if (p.level==='INFO') cls='color:#31708f;'; else if (p.level==='DEBUG') cls='color:#3a3a3a;'; var ts = p.ts?('<span style="color:#666; font-size:11px; margin-right:6px">'+p.ts+'</span> '):''; var level = p.level?('<span style="font-weight:600; margin-right:6px;">['+p.level+']</span> '):''; return '<div style="padding:2px 0; '+cls+'">'+ts+level+('<span style="white-space:pre-wrap">'+escapeHtml(p.msg)+'</span>')+'</div>'; }).join(''); pre.innerHTML = fo || '<span class="text-muted">(no matching lines)</span>'; };
-  }
+  var cache = window._log_cache; var lines = cache.filtered.length ? cache.filtered : cache.lines;
+  var total = lines.length || 0;
+  var pages = Math.max(1, Math.ceil(total / cache.pageSize));
+  if (cache.page >= pages) cache.page = pages - 1;
+  var start = cache.page * cache.pageSize; var end = Math.min(total, start + cache.pageSize);
+  var slice = lines.slice(start, end);
+  var out = slice.map(function(ln){ var p = parseLogLine(ln); var cls=''; if (p.level==='ERROR' || p.level==='ERR' || p.level==='CRITICAL') cls='color:#a94442;'; else if (p.level==='WARN' || p.level==='WARNING') cls='color:#8a6d3b;'; else if (p.level==='INFO') cls='color:#31708f;'; else if (p.level==='DEBUG') cls='color:#3a3a3a;'; var ts = p.ts?('<span style="color:#666; font-size:11px; margin-right:6px">'+p.ts+'</span> '):''; var level = p.level?('<span style="font-weight:600; margin-right:6px;">['+p.level+']</span> '):''; return '<div style="padding:6px 4px; border-bottom:1px solid #f1f1f1; '+cls+'">'+ts+level+('<span style="white-space:pre-wrap">'+escapeHtml(p.msg)+'</span>')+'</div>'; }).join('');
+  if (!out) out = '<div class="text-muted" style="padding:8px">(no log lines)</div>';
+  // pagination controls
+  var pager = '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">';
+  pager += '<div>Showing '+(start+1)+'-'+(end)+' of '+total+' entries</div>';
+  pager += '<div>';
+  pager += '<button id="log-prev" class="btn btn-xs btn-default" '+(cache.page===0?'disabled':'')+'>Prev</button> ';
+  pager += '<span style="margin:0 6px">Page '+(cache.page+1)+'/'+pages+'</span>';
+  pager += '<button id="log-next" class="btn btn-xs btn-default" '+(cache.page+1>=pages?'disabled':'')+'>Next</button>';
+  pager += '</div></div>';
+  pre.innerHTML = out + pager;
+  // wire pager buttons
+  try { var prev = document.getElementById('log-prev'); if (prev) prev.addEventListener('click', function(){ if (window._log_cache.page>0) { window._log_cache.page--; renderLogPage(); } }); var next = document.getElementById('log-next'); if (next) next.addEventListener('click', function(){ if ((window._log_cache.page+1)*window._log_cache.pageSize < (window._log_cache.filtered.length || window._log_cache.lines.length)) { window._log_cache.page++; renderLogPage(); } }); } catch(e){}
+}
+
+function renderLogArray(lines) {
+  window._log_cache.lines = Array.isArray(lines) ? lines.slice().reverse() : []; // newest first
+  window._log_cache.filtered = [];
+  window._log_cache.page = 0;
+  renderLogPage();
 }
 
 function refreshLog() {
   var btn = document.getElementById('refresh-log'); var spinner = document.getElementById('refresh-log-spinner'); var status = document.getElementById('log-status'); var pre = document.getElementById('log-pre');
   try { if (btn) btn.disabled = true; if (spinner) spinner.classList.add('rotate'); if (status) status.textContent = 'Refreshing...'; if (pre) pre.textContent = 'Loading...'; } catch(e){}
-  fetch('/log', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { renderLogText(t); window._logLoaded = true; if (status) status.textContent = ''; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; if (status) status.textContent = 'Error'; }).finally(function(){ try { if (btn) btn.disabled = false; if (spinner) spinner.classList.remove('rotate'); } catch(e){} });
+  fetch('/log?lines=100', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(obj){ try { var lines = obj && Array.isArray(obj.lines) ? obj.lines : []; renderLogArray(lines); window._logLoaded = true; if (status) status.textContent = ''; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; if (status) status.textContent = 'Error'; }).finally(function(){ try { if (btn) btn.disabled = false; if (spinner) spinner.classList.remove('rotate'); } catch(e){} });
 }
 
 // escape HTML simple helper
@@ -1665,6 +1743,8 @@ function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,
 
 // wire refresh button on load
 window.addEventListener('load', function(){ var r = document.getElementById('refresh-log'); if (r) r.addEventListener('click', function(){ refreshLog(); }); var f = document.getElementById('log-filter'); if (f) { f.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); refreshLog(); } }); } });
+// filter wiring
+document.addEventListener('DOMContentLoaded', function(){ var f = document.getElementById('log-filter'); if (!f) return; f.addEventListener('input', function(){ var q = (f.value||'').trim().toLowerCase(); if (!q) { window._log_cache.filtered = []; window._log_cache.page = 0; renderLogPage(); return; } var lines = window._log_cache.lines || []; window._log_cache.filtered = lines.filter(function(l){ return l.toLowerCase().indexOf(q) !== -1; }); window._log_cache.page = 0; renderLogPage(); }); });
 
 // Enable simple client-side sorting for tables whose TH elements contain a data-key attribute
 function enableTableSorting() {

@@ -57,7 +57,7 @@
             <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
             <li role="presentation" class="active"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status</a></li>
             <li role="presentation"><a href="#tab-olsr"><span class="glyphicon glyphicon-random" aria-hidden="true"></span> OLSR Links</a></li>
-            <li role="presentation"><a href="#tab-fetch"><span class="glyphicon glyphicon-time" aria-hidden="true"></span> Fetch Queue</a></li>
+            <li role="presentation"><a href="#tab-stats"><span class="glyphicon glyphicon-signal" aria-hidden="true"></span> Statistics</a></li>
             <li role="presentation" id="tab-olsrd2-links" style="display:none"><a href="#tab-neighbors"><span class="glyphicon glyphicon-link" aria-hidden="true"></span> OLSRd2-Links</a></li>
             <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
             <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
@@ -118,10 +118,22 @@
           </div>
         </div>
 
-        <!-- Fetch Queue -->
-        <div id="tab-fetch" class="tab-pane">
-          <h3>Fetch Queue</h3>
-          <div id="fetch-tab-wrap"></div>
+        <!-- Statistics -->
+        <div id="tab-stats" class="tab-pane">
+          <h3>Statistics</h3>
+          <div id="fetch-tab-wrap">
+            <div id="stats-graphs" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start;">
+              <div id="stats-graph-olsr" style="flex:1; min-width:220px;">
+                <div style="font-weight:600; margin-bottom:6px">OLSR: routes / nodes</div>
+                <div id="olsr-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px;"></div>
+              </div>
+              <div id="stats-graph-fetch" style="flex:1; min-width:220px;">
+                <div style="font-weight:600; margin-bottom:6px">Fetch Queue</div>
+                <div id="fetch-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px;"></div>
+              </div>
+            </div>
+            <div id="fetch-stats" style="margin-top:12px"></div>
+          </div>
         </div>
 
         <!-- Main / Willkommen -->

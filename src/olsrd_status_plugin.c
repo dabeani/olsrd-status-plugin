@@ -3888,7 +3888,7 @@ static int get_query_param(http_request_t *r, const char *key, char *out, size_t
 /* In-process stderr capture: pipe stderr into a reader thread and store recent lines
  * in a circular buffer so the /log HTTP endpoint can return recent plugin logs.
  */
-#define LOG_BUF_LINES 8192
+#define LOG_BUF_LINES 100
 #define LOG_LINE_MAX 512
 static char g_log_buf[LOG_BUF_LINES][LOG_LINE_MAX];
 static int g_log_head = 0; /* next write index */
@@ -3968,7 +3968,7 @@ static void stop_stderr_capture(void) {
 
 /* HTTP handler for /log - supports ?lines=N or ?minutes=M (approximate) */
 static int h_log(http_request_t *r) {
-  char qv[64]; int lines = 2000;
+  char qv[64]; int lines = 100;
   if (get_query_param(r, "lines", qv, sizeof(qv))) { lines = atoi(qv); if (lines <= 0) lines = 2000; if (lines > LOG_BUF_LINES) lines = LOG_BUF_LINES; }
   if (get_query_param(r, "minutes", qv, sizeof(qv))) {
     int mins = atoi(qv); if (mins > 0) {
