@@ -2562,12 +2562,38 @@ function runTraceroute(){
             st = null;
           }
         }
-      // Determine whether to show legacy OLSR tab
+      // Determine whether to show legacy OLSR tab. If status doesn't explicitly
+      // indicate legacy olsrd, probe the /olsr/links endpoint before hiding the tab
+      // so we don't incorrectly hide it when live data exists elsewhere.
       var show = false;
-      if (st) {
-        if (!st.olsr2_on && (st.olsrd_on || (st.links && Array.isArray(st.links) && st.links.length))) show = true;
-      }
+      try {
+        if (st) {
+          if (!st.olsr2_on && (st.olsrd_on || (st.links && Array.isArray(st.links) && st.links.length))) show = true;
+        }
+      } catch(e) { show = false; }
+
       var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
+      if (!show && linkTab) {
+        // status didn't indicate OLSRd; probe /olsr/links to be sure
+        try {
+          fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(res){
+            try {
+              if (res && Array.isArray(res.links) && res.links.length) {
+                show = true;
+              }
+            } catch(e) {}
+            if (window._uiDebug) console.debug('detectLegacyOlsrd: setting OLSR tab visibility to', show, 'after probing /olsr/links');
+            linkTab.parentElement.style.display = show ? '' : 'none';
+            if (cb) cb(show);
+          }).catch(function(){
+            // probe failed — do not aggressively hide; keep current behavior conservative
+            if (window._uiDebug) console.debug('detectLegacyOlsrd: /olsr/links probe failed; leaving OLSR tab hidden');
+            linkTab.parentElement.style.display = 'none';
+            if (cb) cb(false);
+          });
+          return; // early return since probe will call cb
+        } catch(e) { /* fallthrough to default hide */ }
+      }
       if (linkTab) {
         if (window._uiDebug) console.debug('detectLegacyOlsrd: setting OLSR tab visibility to', show);
         linkTab.parentElement.style.display = show? '' : 'none';
