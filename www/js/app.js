@@ -2529,18 +2529,39 @@ function runTraceroute(){
 
 // Legacy OLSRd presence detection
   function detectLegacyOlsrd(cb){
-    // Reuse existing status endpoint: if olsr2_on true we consider olsrd2; need explicit legacy check
-    fetch('/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
-      // If olsr2_on is true assume olsrd2; hide legacy links tab unless links array exists AND st.olsr2_on is false
-  var show = false;
-  if (!st.olsr2_on && (st.olsrd_on || (st.links && Array.isArray(st.links) && st.links.length))) show = true;
+    // Be tolerant: /status may sometimes include non-JSON wrapper text on some systems.
+    // Fetch as text and try to extract the first JSON object instead of relying on r.json().
+    fetch('/status',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(statusText){
+      var st = null;
+      try {
+        // Fast-path: try direct parse
+        st = JSON.parse(statusText);
+      } catch(e) {
+        // Try to salvage by extracting the first {...} JSON object in the text
+        try {
+          var first = statusText.indexOf('{');
+          var last = statusText.lastIndexOf('}');
+          if (first >= 0 && last > first) {
+            var sub = statusText.substring(first, last+1);
+            st = JSON.parse(sub);
+          }
+        } catch(e2) {
+          if (window._uiDebug) console.debug('detectLegacyOlsrd: status parse failed', e2, statusText && statusText.slice ? statusText.slice(0,200) : statusText);
+          st = null;
+        }
+      }
+      // Determine whether to show legacy OLSR tab
+      var show = false;
+      if (st) {
+        if (!st.olsr2_on && (st.olsrd_on || (st.links && Array.isArray(st.links) && st.links.length))) show = true;
+      }
       var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]');
       if (linkTab) {
-  if (window._uiDebug) console.debug('detectLegacyOlsrd: setting OLSR tab visibility to', show);
+        if (window._uiDebug) console.debug('detectLegacyOlsrd: setting OLSR tab visibility to', show);
         linkTab.parentElement.style.display = show? '' : 'none';
       }
       if (cb) cb(show);
-  }).catch(function(err){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) { if (window._uiDebug) console.debug('detectLegacyOlsrd: fetch failed, leaving OLSR tab visibility unchanged:', err); } if(cb) cb(false); });
+    }).catch(function(err){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) { if (window._uiDebug) console.debug('detectLegacyOlsrd: fetch failed, leaving OLSR tab visibility unchanged:', err); } if(cb) cb(false); });
   }
   detectLegacyOlsrd();
 
