@@ -2532,24 +2532,36 @@ function runTraceroute(){
     // Be tolerant: /status may sometimes include non-JSON wrapper text on some systems.
     // Fetch as text and try to extract the first JSON object instead of relying on r.json().
     fetch('/status',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(statusText){
-      var st = null;
-      try {
-        // Fast-path: try direct parse
-        st = JSON.parse(statusText);
-      } catch(e) {
-        // Try to salvage by extracting the first {...} JSON object in the text
+        var st = null;
         try {
-          var first = statusText.indexOf('{');
-          var last = statusText.lastIndexOf('}');
-          if (first >= 0 && last > first) {
-            var sub = statusText.substring(first, last+1);
-            st = JSON.parse(sub);
+          // Fast-path: try direct parse
+          st = JSON.parse(statusText);
+        } catch(e) {
+          // Salvage attempt: extract the first balanced JSON object (handles
+          // additional non-JSON text or concatenated JSON blobs).
+          try {
+            function extractFirstJsonObject(str) {
+              if (!str) return null;
+              var start = str.indexOf('{');
+              if (start === -1) return null;
+              var depth = 0;
+              for (var i = start; i < str.length; i++) {
+                var ch = str.charAt(i);
+                if (ch === '{') depth++;
+                else if (ch === '}') {
+                  depth--;
+                  if (depth === 0) return str.substring(start, i + 1);
+                }
+              }
+              return null;
+            }
+            var candidate = extractFirstJsonObject(statusText);
+            if (candidate) st = JSON.parse(candidate);
+          } catch (e2) {
+            if (window._uiDebug) console.debug('detectLegacyOlsrd: status parse failed', e2, statusText && statusText.slice ? statusText.slice(0,200) : statusText);
+            st = null;
           }
-        } catch(e2) {
-          if (window._uiDebug) console.debug('detectLegacyOlsrd: status parse failed', e2, statusText && statusText.slice ? statusText.slice(0,200) : statusText);
-          st = null;
         }
-      }
       // Determine whether to show legacy OLSR tab
       var show = false;
       if (st) {
