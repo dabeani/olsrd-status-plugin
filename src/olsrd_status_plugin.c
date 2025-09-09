@@ -1253,7 +1253,16 @@ static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *h
     fclose(f);
   }
   if (host_out && host_len) {
-    struct in_addr ina; if (inet_aton(ip,&ina)) { struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he&&he->h_name) snprintf(host_out,host_len,"%s",he->h_name); }
+    struct in_addr ina;
+    if (inet_aton(ip, &ina)) {
+      char _rhost[NI_MAXHOST]; _rhost[0] = '\0';
+      if (resolve_ip_to_hostname(ip, _rhost, sizeof(_rhost)) == 0) {
+        if (host_len > 0) {
+          snprintf(host_out, host_len, "%.*s", (int)(host_len - 1), _rhost);
+          host_out[host_len - 1] = '\0';
+        }
+      }
+    }
   }
 }
 
@@ -2803,7 +2812,25 @@ static int h_status_lite(http_request_t *r) {
     APP_L("\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d},", _cp_len, _task_count, _pool_enabled, _pool_size);
   }
   /* default route */
-  char def_ip[64]="", def_dev[64]="", def_hostname[256]=""; char *rout=NULL; size_t rn=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout){ char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } } p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } } free(rout);} if(def_ip[0]){ struct in_addr ina; if(inet_aton(def_ip,&ina)){ struct hostent *he=gethostbyaddr(&ina,sizeof(ina),AF_INET); if(he && he->h_name) snprintf(def_hostname,sizeof(def_hostname),"%s",he->h_name); }}
+  char def_ip[64]="", def_dev[64]="", def_hostname[256]=""; char *rout=NULL; size_t rn=0;
+  if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout) {
+    char *p = strstr(rout, "via ");
+    if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def_ip)) { strncpy(def_ip, p, L); def_ip[L] = 0; } } }
+    p = strstr(rout, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def_dev)) { strncpy(def_dev, p, L); def_dev[L] = 0; } } }
+    free(rout);
+  }
+  
+  if (def_ip[0]) {
+    struct in_addr ina;
+    if (inet_aton(def_ip, &ina)) {
+      char _rhost[NI_MAXHOST]; _rhost[0] = '\0';
+      if (resolve_ip_to_hostname(def_ip, _rhost, sizeof(_rhost)) == 0) {
+        snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), _rhost);
+        def_hostname[sizeof(def_hostname) - 1] = '\0';
+      }
+    }
+  }
+
   APP_L("\"default_route\":{");
   APP_L("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip);
   APP_L(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev);
