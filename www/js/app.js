@@ -1744,6 +1744,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (activeLink) {
       activeLink.parentElement.classList.add('active');
     }
+  // notify tab shown hook
+  try { onTabShown && onTabShown(targetId); } catch(e) {}
   }
 
   // Add click handlers to tab links
@@ -1754,6 +1756,18 @@ document.addEventListener('DOMContentLoaded', function() {
       switchTab(targetId);
     });
   });
+
+  // onTabShown: called whenever a tab becomes active
+  function onTabShown(id) {
+    try {
+      if (id === '#tab-log') {
+        // if log not yet loaded, auto-refresh
+        if (!window._logLoaded) refreshLog();
+        // if already loaded and large, ensure virtualization is enabled
+        try { if ((window._log_cache && window._log_cache.lines && window._log_cache.lines.length > 500) && !window._log_virtual_enabled) { enableVirtualLogs(); } } catch(e) {}
+      }
+    } catch(e) {}
+  }
 
   detectPlatformAndLoad();
   try { _startStatsPoll(); } catch(e) {}
@@ -1806,7 +1820,108 @@ function renderLogArray(lines) {
   window._log_cache.lines = Array.isArray(lines) ? lines.slice().reverse() : []; // newest first
   window._log_cache.filtered = [];
   window._log_cache.page = 0;
+  // If logs are large, enable virtualized rendering for CPU/memory efficiency
+  try {
+    var len = window._log_cache.lines.length || 0;
+    var threshold = 500; // when to switch to virtualized view
+    if (len > threshold) {
+      // switch to virtual mode
+      enableVirtualLogs();
+      // ensure virtual render paints
+      virtualRender();
+  // clear pager when using virtual view
+  try { var pager = document.getElementById('log-pager'); if (pager) pager.innerHTML = ''; } catch(e) {}
+      return;
+    }
+  } catch(e) {}
+  // small logs: use paged renderer
+  disableVirtualLogs();
   renderLogPage();
+}
+
+// --- Virtualized log table helpers (lightweight) ---
+function enableVirtualLogs() {
+  if (window._log_virtual_enabled) return;
+  var container = document.getElementById('log-table-wrap');
+  if (!container) return;
+  window._log_virtual_enabled = true;
+  // clear existing content
+  container.innerHTML = '';
+  container.style.overflow = 'auto';
+  container.style.height = container.style.height || '400px';
+
+  // create table skeleton
+  var table = document.createElement('table');
+  table.className = 'table table-condensed';
+  table.id = 'log-table-virtual';
+  var thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr>';
+  table.appendChild(thead);
+  var tbody = document.createElement('tbody');
+  tbody.id = 'log-virtual-tbody';
+  tbody.style.position = 'relative';
+  table.appendChild(tbody);
+
+  // spacer to emulate full height
+  var spacer = document.createElement('div');
+  spacer.id = 'log-virtual-spacer';
+  spacer.style.width = '1px';
+  spacer.style.height = '0px';
+
+  container.appendChild(table);
+  container.appendChild(spacer);
+  container.addEventListener('scroll', virtualScrollHandler);
+}
+
+function disableVirtualLogs() {
+  if (!window._log_virtual_enabled) return;
+  var container = document.getElementById('log-table-wrap');
+  if (!container) return;
+  window._log_virtual_enabled = false;
+  try { container.removeEventListener('scroll', virtualScrollHandler); } catch(e) {}
+  // restore basic table
+  container.innerHTML = '';
+  var table = document.createElement('table');
+  table.className = 'table table-condensed';
+  table.id = 'log-table';
+  table.innerHTML = '<thead><tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr></thead><tbody id="log-tbody"><tr><td colspan="3" class="text-muted" style="padding:12px">(no log lines)</td></tr></tbody>';
+  container.appendChild(table);
+}
+
+function virtualScrollHandler() {
+  if (window._log_virtual_raf) return;
+  window._log_virtual_raf = requestAnimationFrame(function(){ window._log_virtual_raf = null; virtualRender(); });
+}
+
+function virtualRender() {
+  var container = document.getElementById('log-table-wrap');
+  var spacer = document.getElementById('log-virtual-spacer');
+  var tbody = document.getElementById('log-virtual-tbody');
+  if (!container || !spacer || !tbody) return;
+  var lines = (window._log_cache && window._log_cache.lines) ? window._log_cache.lines : [];
+  var total = lines.length;
+  var rowHeight = 26; // estimated row height in px
+  spacer.style.height = (total * rowHeight) + 'px';
+  var scrollTop = container.scrollTop || 0;
+  var viewportHeight = container.clientHeight || 400;
+  var firstIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - 5);
+  var visibleCount = Math.ceil(viewportHeight / rowHeight) + 10;
+  var lastIdx = Math.min(total, firstIdx + visibleCount);
+  // position tbody
+  tbody.style.transform = 'translateY(' + (firstIdx * rowHeight) + 'px)';
+  // render visible rows
+  tbody.innerHTML = '';
+  for (var i = firstIdx; i < lastIdx; i++) {
+    var ln = lines[i] || '';
+    var p = parseLogLine(ln);
+    var tr = document.createElement('tr');
+    var tdTs = document.createElement('td'); tdTs.style.color='#666'; tdTs.style.fontSize='11px'; tdTs.textContent = p.ts || '';
+    var tdLevel = document.createElement('td'); tdLevel.style.fontWeight='600'; tdLevel.textContent = p.level || '';
+    if (p.level==='ERROR' || p.level==='ERR' || p.level==='CRITICAL') tdLevel.style.color='#a94442'; else if (p.level==='WARN' || p.level==='WARNING') tdLevel.style.color='#8a6d3b'; else if (p.level==='INFO') tdLevel.style.color='#31708f'; else if (p.level==='DEBUG') tdLevel.style.color='#3a3a3a';
+    var tdMsg = document.createElement('td'); tdMsg.style.whiteSpace='pre-wrap'; tdMsg.textContent = p.msg || '';
+    tr.appendChild(tdTs); tr.appendChild(tdLevel); tr.appendChild(tdMsg);
+    tbody.appendChild(tr);
+  }
 }
 
 function refreshLog() {
