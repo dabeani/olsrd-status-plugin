@@ -1631,12 +1631,16 @@ window.addEventListener('load', function(){
         } else {
           // Show empty/error state
           if (tbody) {
-            var tr = document.createElement('tr');
-            var td = document.createElement('td');
-            td.colSpan = 4;
-            td.textContent = 'No traceroute data available.';
-            tr.appendChild(td);
-            tbody.appendChild(tr);
+            // Only show fallback 'no data' when we haven't already successfully populated
+            // the traceroute table earlier in this page session.
+            if (!window._traceroutePopulatedAt) {
+              var tr = document.createElement('tr');
+              var td = document.createElement('td');
+              td.colSpan = 4;
+              td.textContent = 'No traceroute data available.';
+              tr.appendChild(td);
+              tbody.appendChild(tr);
+            }
           }
           if (summaryEl) {
             summaryEl.textContent = 'Traceroute data not available.';
@@ -1665,14 +1669,17 @@ window.addEventListener('load', function(){
       .catch(function(e){
         if (window._uiDebug) console.error('Error loading traceroute data:', e);
         var tbody = document.querySelector('#tracerouteTable tbody');
-        if (tbody) {
-          var tr = document.createElement('tr');
-          var td = document.createElement('td');
-          td.colSpan = 4;
-          td.textContent = 'Error loading traceroute data.';
-          tr.appendChild(td);
-          tbody.appendChild(tr);
-        }
+          if (tbody) {
+            // Only show error placeholder if we don't already have traceroute data.
+            if (!window._traceroutePopulatedAt) {
+              var tr = document.createElement('tr');
+              var td = document.createElement('td');
+              td.colSpan = 4;
+              td.textContent = 'Error loading traceroute data.';
+              tr.appendChild(td);
+              tbody.appendChild(tr);
+            }
+          }
         var summaryEl = document.getElementById('traceroute-summary');
         if (summaryEl) {
           summaryEl.textContent = 'Traceroute error.';
@@ -2671,6 +2678,7 @@ function populateTracerouteTable(tracerouteData) {
   });
   // Ensure traceroute tab pane is visible after rendering
   try { var pane = document.getElementById('tab-traceroute'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e){}
+  try { window._traceroutePopulatedAt = Date.now(); } catch(e){}
 }
           // expose nodedb for traceroute hostname enrichment
           try { window._nodedb_cache = nodedb; } catch(e){}
