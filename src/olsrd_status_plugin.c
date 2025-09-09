@@ -2859,13 +2859,9 @@ static int h_status_lite(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
 
-/* Minimal stats endpoint for frequent polling by UI: returns small JSON with
- * olsr route/node counts and fetch queue counters. Kept intentionally tiny
- * to be fast and safe for 5s polling.
- */
+// Minimal stats endpoint for UI polling
 static int h_status_stats(http_request_t *r) {
   char out[512];
-  fprintf(stderr, "[status-plugin] h_status_stats: enter\n");
   unsigned long dropped=0, retries=0, successes=0;
   METRIC_LOAD_ALL(dropped, retries, successes);
   unsigned long unique_routes=0, unique_nodes=0;
@@ -2875,13 +2871,13 @@ static int h_status_stats(http_request_t *r) {
   it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
   pthread_mutex_unlock(&g_fetch_q_lock);
 
-  /* Attempt to approximate olsr routes/nodes from cached metrics if available */
+  // Approximate olsr routes/nodes from cached metrics
   unsigned long olsr_routes = unique_routes; unsigned long olsr_nodes = unique_nodes;
 
   snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
            olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, strlen(out));
-  fprintf(stderr, "[status-plugin] h_status_stats: wrote %zu bytes\n", strlen(out));
+  // ...existing code...
   return 0;
 }
 
