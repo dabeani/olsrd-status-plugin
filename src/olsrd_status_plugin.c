@@ -3280,7 +3280,10 @@ static int h_status_traceroute(http_request_t *r) {
             if (vlen > 0) { size_t copy = vlen < sizeof(traceroute_to)-1 ? vlen : sizeof(traceroute_to)-1; memcpy(traceroute_to, v, copy); traceroute_to[copy]=0; traceroute_to_set = 1; }
           }
         }
-        if (!nl) break; line = nl + 1;
+        if (!nl) {
+          break;
+        }
+        line = nl + 1;
       }
       free(s);
     }
