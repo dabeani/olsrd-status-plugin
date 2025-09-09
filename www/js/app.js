@@ -1856,6 +1856,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
   detectPlatformAndLoad();
   try { _startStatsPoll(); } catch(e) {}
+  // Temporary: ensure all sidebar tabs are visible and trigger lazy-load for each
+  try {
+    function forceShowAllTabs() {
+      try {
+        var lis = document.querySelectorAll('#mainTabs li');
+        lis.forEach(function(li){ li.style.display = ''; });
+        var links = Array.prototype.slice.call(document.querySelectorAll('#mainTabs a'));
+        var activeLink = document.querySelector('#mainTabs li.active a');
+        var origHref = activeLink ? activeLink.getAttribute('href') : null;
+        // Click each link sequentially to trigger lazy-load hooks without leaving UI in a wrong state
+        links.forEach(function(a, idx){
+          setTimeout(function(){ try { a.click(); } catch(e){} }, idx * 250);
+        });
+        // restore original active tab after all loads
+        setTimeout(function(){ try { if (origHref) { var el = document.querySelector('#mainTabs a[href="'+origHref+'"]'); if (el) el.click(); } } catch(e){} }, (links.length * 250) + 150);
+      } catch(e) {}
+    }
+    // run shortly after load to allow initial handlers to attach
+    setTimeout(forceShowAllTabs, 300);
+  } catch(e) {}
 });
 
 // --- Log tab helpers ---
