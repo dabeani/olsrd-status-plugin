@@ -181,7 +181,8 @@ window.refreshTab = function(id, url) {
 };
 
 // UI debug flag (set true in console to enable debug logs)
-window._uiDebug = false;
+// UI debug flag: can be set from console to enable verbose diagnostics
+if (typeof window._uiDebug === 'undefined') window._uiDebug = true;
 
 function setText(id, text) {
   var el = document.getElementById(id);
@@ -312,12 +313,18 @@ var _olsrSort = { key: null, asc: true };
 function showTab(tabId, show) {
   var el = document.getElementById(tabId);
   if (!el) return;
+  // diagnostics: log current state for debugging empty-tab issue
+  try {
+    if (window._uiDebug) console.debug('showTab called for', tabId, 'show=', !!show, 'el.matches=', el.matches?el.matches(':visible') : 'n/a');
+    if (window._uiDebug) console.debug('  classes=', el.className, 'computedDisplay=', window.getComputedStyle(el).display);
+  } catch(e){}
   if (show) el.classList.remove('hidden'); else el.classList.add('hidden');
 }
 
 function populateDevicesTable(devices, airos) {
   var tbody = document.querySelector('#devicesTable tbody');
-  console.debug('populateDevicesTable called, devices=', (devices && devices.length) || 0);
+  // diagnostics: lightweight logging to help trace empty tabs issue
+  try { if (window._uiDebug) console.debug('populateDevicesTable called, devices=', (devices && devices.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   tbody.innerHTML = '';
   if (!devices || !Array.isArray(devices) || devices.length === 0) {
     var tbody = document.querySelector('#devicesTable tbody');
@@ -410,7 +417,8 @@ function populateDevicesTable(devices, airos) {
 function populateOlsrLinksTable(links) {
   var tbody = document.querySelector('#olsrLinksTable tbody');
   if (!tbody) return; tbody.innerHTML = '';
-  console.debug('populateOlsrLinksTable called, links=', (links && links.length) || 0);
+  // diagnostics: lightweight logging to help trace empty tabs issue
+  try { if (window._uiDebug) console.debug('populateOlsrLinksTable called, links=', (links && links.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   if (!links || !Array.isArray(links) || links.length === 0) {
     var tbody = document.querySelector('#olsrLinksTable tbody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-muted">No links found</td></tr>';
