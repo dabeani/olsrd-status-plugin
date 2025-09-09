@@ -1912,6 +1912,15 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 
+  // Ensure traceroute Run button is wired
+  try {
+    var runBtn = document.getElementById('tr-run');
+    if (runBtn && !runBtn._wired) {
+      runBtn.addEventListener('click', function(){ runTraceroute(); });
+      runBtn._wired = true;
+    }
+  } catch(e) {}
+
   // Show initial active tab (only if not already visible)
   const initialActive = document.querySelector('#mainTabs li.active a');
   if (initialActive) {
@@ -2662,6 +2671,7 @@ function populateTracerouteTable(tracerouteData) {
   var tbody = document.querySelector('#tracerouteTable tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
+  try { if (window._uiDebug) console.debug('populateTracerouteTable called, rows=', (tracerouteData && tracerouteData.length) || 0); } catch(e){}
   if (!tracerouteData || !Array.isArray(tracerouteData)) return;
   tracerouteData.forEach(function(hop) {
     var tr = document.createElement('tr');
@@ -2706,7 +2716,10 @@ function populateTracerouteTable(tracerouteData) {
           try { window._nodedb_cache = nodedb; } catch(e){}
 
 function runTraceroute(){
-  var target = document.getElementById('tr-host').value.trim();
+  try { if (window._uiDebug) console.debug('runTraceroute invoked'); } catch(e){}
+  var targetEl = document.getElementById('tr-host');
+  if (!targetEl) { console.error('Traceroute input element #tr-host not found'); return; }
+  var target = (targetEl.value || '').trim();
   if(!target) return alert('Enter target for traceroute');
   var pre = document.getElementById('p-traceroute');
   // add a small visible summary near the hostname so users get immediate feedback
@@ -2725,7 +2738,8 @@ function runTraceroute(){
   if (pre) pre.style.display='block';
   if (pre) pre.textContent='Running traceroute...';
   fetch('/traceroute?target='+encodeURIComponent(target),{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){
-    if (pre) pre.textContent = t;
+  if (pre) pre.textContent = t;
+  try { if (window._uiDebug) console.debug('traceroute raw output length=', t.length); } catch(e){}
     // Try to parse and populate table (supports numeric -n output and hostname (ip) formats)
     try {
       var lines = t.split('\n');
@@ -2764,6 +2778,7 @@ function runTraceroute(){
         populateTracerouteTable(hops);
         if (pre) { pre.style.display='none'; }
         if (summaryEl) summaryEl.textContent = 'Traceroute: ' + hops.length + ' hop(s)';
+  try { if (window._uiDebug) console.debug('Traceroute parsed', hops.length, 'hops'); } catch(e){}
       } else {
         // fallback: try simpler token parsing per-line
         try {
