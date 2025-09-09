@@ -2146,16 +2146,14 @@ function refreshLog() {
   var classBtns = document.querySelectorAll('.refresh-log-btn');
   var spinner = document.getElementById('refresh-log-spinner-2') || document.getElementById('refresh-log-spinner');
   var status = document.getElementById('log-status');
-  var pageSizeSel = document.getElementById('log-page-size');
   try {
     if (btn) btn.disabled = true;
     if (classBtns && classBtns.length) classBtns.forEach(function(b){ b.disabled = true; });
     if (spinner) spinner.classList.add('rotate');
     if (status) status.textContent = 'Refreshing...';
   } catch(e){}
-  var lines = 200; // default
-  try { if (pageSizeSel && pageSizeSel.value) { lines = Math.max(50, parseInt(pageSizeSel.value,10)*10); } } catch(e) {}
-  fetch('/log?lines='+encodeURIComponent(lines), {cache:'no-store'})
+  // Request all available log lines; backend will limit automatically
+  fetch('/log', {cache:'no-store'})
     .then(function(r){ return r.json(); })
     .then(function(obj){
       try {
