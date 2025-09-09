@@ -1617,7 +1617,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       const char *obj = q; int od = 0; const char *r = q;
       while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
       if (!r || r<=obj) break;
-      char *v; size_t vlen; char intf[64]=""; char local[64]=""; char remote[64]=""; char remote_host[256]=""; char lq[32]=""; char nlq[32]=""; char cost[32]="";
+  char *v; size_t vlen; char intf[128]=""; char local[128]=""; char remote[128]=""; char remote_host[512]=""; char lq[64]=""; char nlq[64]=""; char cost[64]="";
       if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen)) snprintf(intf,sizeof(intf),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "localIP", &v, &vlen) || find_json_string_value(obj, "localIp", &v, &vlen) || find_json_string_value(obj, "local", &v, &vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "remoteIP", &v, &vlen) || find_json_string_value(obj, "remoteIp", &v, &vlen) || find_json_string_value(obj, "remote", &v, &vlen) || find_json_string_value(obj, "neighborIP", &v, &vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
@@ -1626,9 +1626,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq,sizeof(lq),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq,sizeof(nlq),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
-      int routes_cnt = routes_section ? count_routes_for_ip(routes_section, remote) : 0;
+  int routes_cnt = routes_section ? count_routes_for_ip(routes_section, remote) : 0;
       int nodes_cnt = 0;
-      char node_names_concat[1024]; node_names_concat[0]='\0';
+  char node_names_concat[4096]; node_names_concat[0]='\0';
       /* Prefer Python-style route table fan-out first (exact parity) */
       if (gw_stats_count > 0) {
         for (int gi=0; gi<gw_stats_count; ++gi) {
@@ -1703,7 +1703,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if(!r) break;
   size_t ol=(size_t)(r-obj);
       if(!memmem(obj,ol,"remote",6) || !memmem(obj,ol,"local",5)) { scan=scan+1; continue; }
-      char *v; size_t vlen; char local[64]=""; char remote[64]=""; char remote_host[128]="";
+  char *v; size_t vlen; char local[128]=""; char remote[128]=""; char remote_host[512]="";
       if(find_json_string_value(obj,"localIP",&v,&vlen) || find_json_string_value(obj,"local",&v,&vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"remoteIP",&v,&vlen) || find_json_string_value(obj,"remote",&v,&vlen) || find_json_string_value(obj,"neighborIP",&v,&vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if(!remote[0]) { scan=r; continue; }
