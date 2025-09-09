@@ -923,12 +923,12 @@ static int count_routes_for_ip(const char *section, const char *ip) {
      This catches cases where JSON structure variations prevented earlier logic from matching (e.g. nested objects,
      slight field name changes, or concatenated JSON documents without separators). */
   if (cnt == 0) {
-    char pattern[96]; snprintf(pattern,sizeof(pattern),"\"gateway\":\"%s", ip);
+  char pattern[256]; snprintf(pattern,sizeof(pattern),"\"gateway\":\"%s", ip);
     const char *scan = section; int safety = 0;
     while ((scan = strstr(scan, pattern)) && safety < 100000) { cnt++; scan += strlen(pattern); safety++; }
     if (cnt == 0) {
       /* also try common alt key nextHop */
-      snprintf(pattern,sizeof(pattern),"\"nextHop\":\"%s", ip);
+  snprintf(pattern,sizeof(pattern),"\"nextHop\":\"%s", ip);
       scan = section; safety = 0;
       while ((scan = strstr(scan, pattern)) && safety < 100000) { cnt++; scan += strlen(pattern); safety++; }
     }
@@ -984,7 +984,7 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
        may differ; we count occurrences of any matching key directly referencing ip. */
     const char *keys[] = { "\"lastHopIP\":\"", "\"lastHopIp\":\"", "\"lastHop\":\"", "\"gateway\":\"", "\"via\":\"", NULL };
     for (int ki=0; keys[ki]; ++ki) {
-      char pattern[96]; snprintf(pattern,sizeof(pattern),"%s%s", keys[ki], ip);
+      char pattern[256]; snprintf(pattern,sizeof(pattern),"%s%s", keys[ki], ip);
       const char *scan = section; int safety=0; while ((scan = strstr(scan, pattern)) && safety < 100000) { cnt++; scan += strlen(pattern); safety++; }
       if (cnt) break; /* stop on first key that yields hits */
     }
