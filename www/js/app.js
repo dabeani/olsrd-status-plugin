@@ -2034,24 +2034,29 @@ function renderLogPage() {
 }
 
 function renderLogArray(lines) {
-  window._log_cache.lines = Array.isArray(lines) ? lines.slice().reverse() : []; // newest first
+  window._log_cache.lines = Array.isArray(lines) ? lines.slice().reverse() : [];
   window._log_cache.filtered = [];
   window._log_cache.page = 0;
+  var container = document.getElementById('log-table-wrap');
+  if (!container) {
+    // fallback: show log lines in log-pre if table container is missing
+    var pre = document.getElementById('log-pre');
+    if (pre) {
+      pre.textContent = lines.length ? lines.join('\n') : '(no log lines)';
+    }
+    return;
+  }
   // If logs are large, enable virtualized rendering for CPU/memory efficiency
   try {
     var len = window._log_cache.lines.length || 0;
-    var threshold = 500; // when to switch to virtualized view
+    var threshold = 500;
     if (len > threshold) {
-      // switch to virtual mode
       enableVirtualLogs();
-      // ensure virtual render paints
       virtualRender();
-  // clear pager when using virtual view
-  try { var pager = document.getElementById('log-pager'); if (pager) pager.innerHTML = ''; } catch(e) {}
+      try { var pager = document.getElementById('log-pager'); if (pager) pager.innerHTML = ''; } catch(e) {}
       return;
     }
   } catch(e) {}
-  // small logs: use paged renderer
   disableVirtualLogs();
   renderLogPage();
 }
