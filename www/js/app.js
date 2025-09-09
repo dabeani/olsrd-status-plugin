@@ -1741,6 +1741,7 @@ document.addEventListener('DOMContentLoaded', function() {
     tabPanes.forEach(pane => {
       pane.style.display = 'none';
       pane.classList.remove('active');
+      // Don't add hidden class here to avoid conflicts
     });
 
     // Remove active class from all links
@@ -1753,6 +1754,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (targetPane) {
       targetPane.style.display = 'block';
       targetPane.classList.add('active');
+      targetPane.classList.remove('hidden'); // Ensure hidden class is removed
 
       // Add active class to target link
       const targetLink = document.querySelector(`#mainTabs a[href="${targetId}"]`);

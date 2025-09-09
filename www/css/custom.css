@@ -37,8 +37,8 @@
 .sidebar .nav { background: #fafafa; border:1px solid #eee; padding:8px; border-radius:6px; }
 .content { min-height:400px; }
 
-/* utility hidden class for conditional tab visibility */
-.hidden { display: none; }
+/* utility hidden class for conditional tab visibility - don't hide active tabs */
+.hidden:not(.active) { display: none; }
 
 /* Tab status indicators */
 .tab-status {
