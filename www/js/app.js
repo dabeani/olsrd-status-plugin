@@ -1689,58 +1689,15 @@ window.addEventListener('load', function(){
       // Always clear table before populating
       while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
     }
-    // Try the dedicated traceroute endpoint first (clean JSON). Fall back to /status if not available.
-    fetch('/status/traceroute', {cache:'no-store'}).then(function(r){
-      if (r && r.ok) return r.json();
-      // non-200 -> fallback to full /status text salvage
-      return fetch('/status', {cache:'no-store'}).then(function(r2){ return r2.text(); });
-    }).then(function(txtOrObj){
-      // txtOrObj may be already-parsed object (from r.json()) or raw text from /status
-      var txt = null; var st = null;
-      if (typeof txtOrObj === 'object') {
-        st = txtOrObj;
-      } else {
-        txt = txtOrObj;
-      }
-      // Log raw response to help diagnose non-JSON or wrapped responses
-      try { console.log('ensureTraceroutePreloaded: /status raw length=', txt && txt.length); } catch(e){}
-      if (!st) {
-        try {
-          st = JSON.parse(txt);
-        } catch(e) {
-          try { console.error('ensureTraceroutePreloaded: failed to parse /status JSON', e); } catch(_){}
-          try {
-            // If /status returns wrapped text or multiple JSON blobs concatenated,
-            // prefer the best candidate extracted from top-level JSON objects.
-            function findTopLevelJsonCandidates(str) {
-              var res = [];
-              if (!str) return res;
-              var depth = 0, start = -1;
-              for (var i = 0; i < str.length; i++) {
-                var ch = str.charAt(i);
-                if (ch === '{') { if (depth === 0) start = i; depth++; }
-                else if (ch === '}') { depth--; if (depth === 0 && start !== -1) { res.push(str.substring(start, i+1)); start = -1; } }
-              }
-              return res;
-            }
-            var candidates = findTopLevelJsonCandidates(txt || '');
-            var best = null, bestScore = -Infinity;
-            for (var j = 0; j < candidates.length; j++) {
-              var s = candidates[j];
-              try { var o = JSON.parse(s); if (!o || typeof o !== 'object') continue; var score = 0; if (o.hasOwnProperty('trace_target')) score += 200; if (o.hasOwnProperty('trace_to_uplink')) score += 150; try { score += Object.keys(o).length; } catch(e){} var known = ['queue_length','dropped','processed','unique_routes','unique_nodes','thresholds']; for (var k = 0; k < known.length; k++) if (o.hasOwnProperty(known[k])) score += 5; if (score > bestScore || (score === bestScore && j >= 0)) { best = o; bestScore = score; } } catch(e2){}
-            }
-            if (best) st = best;
-            try { console.log('ensureTraceroutePreloaded: salvaged JSON candidate keys=', st?Object.keys(st):null); } catch(e){}
-          } catch(e2) { st = null; }
-        }
-      }
-      return st;
+    // Always use dedicated traceroute endpoint which returns a clean JSON payload.
+    fetch('/status/traceroute', {cache:'no-store'})
+      .then(function(r){
+        if (!r || !r.ok) throw new Error('traceroute endpoint unavailable');
+        return r.json();
       })
       .then(function(st){
         var summaryEl = document.getElementById('traceroute-summary');
-        try { console.log('ensureTraceroutePreloaded: /status returned, trace_to_uplink present=', !!(st && st.trace_to_uplink && st.trace_to_uplink.length)); } catch(e){}
         if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
-          console.log('ensureTraceroutePreloaded: using precomputed hops count=', st.trace_to_uplink.length);
           var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
           if (trTab) trTab.parentElement.style.display = '';
           var hops = st.trace_to_uplink.map(function(h){
@@ -1757,65 +1714,45 @@ window.addEventListener('load', function(){
             summaryEl.setAttribute('aria-label', 'Traceroute summary: destination ' + (st.trace_target || '') + ', ' + hops.length + ' hops');
           }
         } else {
-          try { console.log('ensureTraceroutePreloaded: no precomputed hops; trace_target=', st && st.trace_target); } catch(e){}
-          // Show empty/error state
-          if (tbody) {
-            // Only show fallback 'no data' when we haven't already successfully populated
-            // the traceroute table earlier in this page session.
-            if (!window._traceroutePopulatedAt) {
-              var tr = document.createElement('tr');
-              var td = document.createElement('td');
-              td.colSpan = 4;
-              td.textContent = 'No traceroute data available.';
-              tr.appendChild(td);
-              tbody.appendChild(tr);
-            }
+          // No precomputed hops available
+          if (tbody && !window._traceroutePopulatedAt) {
+            var tr = document.createElement('tr');
+            var td = document.createElement('td');
+            td.colSpan = 4;
+            td.textContent = 'No traceroute data available.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
           }
           if (summaryEl) {
             summaryEl.textContent = 'Traceroute data not available.';
             summaryEl.setAttribute('aria-label', 'Traceroute summary: no data');
           }
-          if (window._uiDebug) console.debug('No traceroute data found in /status response');
-
-          // If backend provided a traceroute target but did not include a precomputed
-          // trace_to_uplink, populate the traceroute input and trigger a live
-          // traceroute once on initial page load. Guard with a global flag to
-          // avoid repeated runs during subsequent events.
           try {
             if (!window._tracerouteAutoRunDone && st && st.trace_target) {
-              try { console.log('ensureTraceroutePreloaded: attempting auto-run traceroute for', st.trace_target); } catch(e){}
               var trInput = document.getElementById('tr-host');
               if (trInput) {
                 trInput.value = st.trace_target;
-                // mark as done before starting to avoid re-entrancy
                 window._tracerouteAutoRunDone = true;
-                // give the DOM a tick before running to ensure UI elements are ready
                 setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
-              } else {
-                try { console.error('ensureTraceroutePreloaded: tr-host input not found when attempting auto-run'); } catch(e){}
               }
             }
           } catch(e) {}
         }
       })
-      .catch(function(e){
-        if (window._uiDebug) console.error('Error loading traceroute data:', e);
-        var tbody = document.querySelector('#tracerouteTable tbody');
-          if (tbody) {
-            // Only show error placeholder if we don't already have traceroute data.
-            if (!window._traceroutePopulatedAt) {
-              var tr = document.createElement('tr');
-              var td = document.createElement('td');
-              td.colSpan = 4;
-              td.textContent = 'Error loading traceroute data.';
-              tr.appendChild(td);
-              tbody.appendChild(tr);
-            }
-          }
+      .catch(function(){
+        // Treat any failure as 'no traceroute data' and keep UI quiet (no debug logs).
         var summaryEl = document.getElementById('traceroute-summary');
+        if (tbody && !window._traceroutePopulatedAt) {
+          var tr = document.createElement('tr');
+          var td = document.createElement('td');
+          td.colSpan = 4;
+          td.textContent = 'No traceroute data available.';
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+        }
         if (summaryEl) {
-          summaryEl.textContent = 'Traceroute error.';
-          summaryEl.setAttribute('aria-label', 'Traceroute summary: error');
+          summaryEl.textContent = 'Traceroute data not available.';
+          summaryEl.setAttribute('aria-label', 'Traceroute summary: no data');
         }
       });
   }
