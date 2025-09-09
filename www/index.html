@@ -125,11 +125,19 @@
             <div id="stats-graphs" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start;">
               <div id="stats-graph-olsr" style="flex:1; min-width:220px;">
                 <div style="font-weight:600; margin-bottom:6px">OLSR: routes / nodes</div>
-                <div id="olsr-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px;"></div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div id="olsr-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                  <div id="olsr-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
+                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="olsr-cur" style="font-weight:600">-</div><div style="font-size:10px">routes</div></div>
+                </div>
               </div>
               <div id="stats-graph-fetch" style="flex:1; min-width:220px;">
                 <div style="font-weight:600; margin-bottom:6px">Fetch Queue</div>
-                <div id="fetch-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px;"></div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div id="fetch-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                  <div id="fetch-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
+                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="fetch-cur" style="font-weight:600">-</div><div style="font-size:10px">queued</div></div>
+                </div>
               </div>
             </div>
             <div id="fetch-stats" style="margin-top:12px"></div>

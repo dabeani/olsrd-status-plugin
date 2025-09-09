@@ -1012,8 +1012,20 @@ updateUI = function(data) {
       pushStat('fetch_processing', fp);
     } catch(e) {}
     // render graphs
-    try { renderSparkline('olsr-graph', window._stats_series.olsr_routes || [], '#5a9bd8'); } catch(e){}
-    try { renderSparkline('fetch-graph', window._stats_series.fetch_queued || [], '#f39c12'); } catch(e){}
+      try { renderSparkline('olsr-graph', window._stats_series.olsr_routes || [], '#5a9bd8'); } catch(e){}
+      try { renderSparkline('fetch-graph', window._stats_series.fetch_queued || [], '#f39c12'); } catch(e){}
+      // update numeric indicators (last values)
+      try {
+        var olsArr = window._stats_series.olsr_routes || [];
+        var fetchArr = window._stats_series.fetch_queued || [];
+        var olsCur = olsArr.length? olsArr[olsArr.length-1]: 0;
+        var fetchCur = fetchArr.length? fetchArr[fetchArr.length-1]: 0;
+        var oel = document.getElementById('olsr-cur'); if (oel) oel.textContent = String(olsCur);
+        var fel = document.getElementById('fetch-cur'); if (fel) fel.textContent = String(fetchCur);
+        // set live-dot to updating briefly
+        var od = document.getElementById('olsr-live'); if (od) { od.classList.remove('live-dot-stale'); od.classList.add('live-dot-updating'); clearTimeout(od._staleTO); od._staleTO = setTimeout(function(){ try{ od.classList.remove('live-dot-updating'); od.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+        var fd = document.getElementById('fetch-live'); if (fd) { fd.classList.remove('live-dot-stale'); fd.classList.add('live-dot-updating'); clearTimeout(fd._staleTO); fd._staleTO = setTimeout(function(){ try{ fd.classList.remove('live-dot-updating'); fd.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+      } catch(e) {}
   } catch(e) {}
   try { _original_updateUI(data); } catch(e) {}
 };
@@ -1974,8 +1986,9 @@ function renderVersionsPanel(v) {
   }
   tbl1.appendChild(rowKV('glyphicon-tag','System', v.system || '-'));
   tbl1.appendChild(rowKV('glyphicon-info-sign','Model', v.model || v.product || '-'));
-  tbl1.appendChild(rowKV('glyphicon-tasks','Kernel', v.kernel || '-'));
-  tbl1.appendChild(rowKV('glyphicon-time','Uptime', v.uptime || v.uptime_str || '-'));
+  // Kernel: prefer common fields, fall back to nested/system hints
+  var kernelVal = v.kernel || v.kernel_version || v.os_kernel || (v.system && v.system.kernel) || (v.system_info && v.system_info.kernel) || '-';
+  tbl1.appendChild(rowKV('glyphicon-tasks','Kernel', kernelVal));
   if (v.local_ips) tbl1.appendChild(rowKV('glyphicon-globe','Local IPs', Array.isArray(v.local_ips)?v.local_ips.join(', '):String(v.local_ips)));
   panel1b.appendChild(tbl1); panel1.appendChild(panel1b); col1.appendChild(panel1);
 
@@ -2003,6 +2016,16 @@ function renderVersionsPanel(v) {
     tbl2.appendChild(rowKV('glyphicon-flag','OLSRd Release', d.release || '-'));
     tbl2.appendChild(rowKV('glyphicon-file','OLSRd Source', d.source || '-'));
   }
+  else {
+    // Fallbacks when detailed olsrd info isn't present: try common top-level keys
+    if (v.olsrd !== undefined) tbl2.appendChild(rowKV('glyphicon-screenshot','OLSRd Version', v.olsrd));
+    if (v.olsrd_release !== undefined) tbl2.appendChild(rowKV('glyphicon-flag','OLSRd Release', v.olsrd_release));
+    if (v.olsrd_build_date !== undefined) tbl2.appendChild(rowKV('glyphicon-calendar','OLSRd Build Date', v.olsrd_build_date));
+    if (v.olsrd_source !== undefined) tbl2.appendChild(rowKV('glyphicon-file','OLSRd Source', v.olsrd_source));
+  }
+  // Show where version info originated (edge/router/container/local) when available
+  var srcHint = v.source || (v.is_edgerouter? 'EdgeRouter' : (v.is_linux_container? 'Linux/container' : (v.host_platform || 'local')));
+  if (srcHint) tbl1.appendChild(rowKV('glyphicon-map-marker','Info source', srcHint));
   // wizards may be an object/array
   if (v.wizards) tbl2.appendChild(rowKV('glyphicon-education','Wizards', (typeof v.wizards==='object')?JSON.stringify(v.wizards):v.wizards));
   if (v.bootimage && v.bootimage.md5) tbl2.appendChild(rowKV('glyphicon-lock','Boot image MD5', v.bootimage.md5));

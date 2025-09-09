@@ -73,3 +73,8 @@
 .etx-bad { background:#e74c3c; }
 .spark { display:inline-block; width:64px; height:18px; vertical-align:middle; background:linear-gradient(90deg,#e6f2ff,#fff); border-radius:4px; }
 .action-btn { margin-left:6px; }
+
+/* live indicator for statistics graphs */
+.live-dot-updating { background: #2ecc71 !important; box-shadow: 0 0 6px rgba(46,204,113,0.6); }
+.live-dot-stale { background: #ccc !important; box-shadow: none; }
+.spark-info { display:flex; flex-direction:column; justify-content:center; align-items:flex-end; }
