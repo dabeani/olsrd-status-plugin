@@ -3478,7 +3478,13 @@ static int h_traceroute(http_request_t *r) {
       char *saveptr=NULL; char *line=strtok_r(dup, "\n", &saveptr);
       size_t cap=2048,len2=0; char *json=malloc(cap); if(!json){ free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0; } json[0]=0;
   #define APP_TR(fmt,...) do { if (json_appendf(&json, &len2, &cap, fmt, ##__VA_ARGS__) != 0) { free(json); free(dup); free(out); free(cmd); send_json(r,"{\"error\":\"oom\"}\n"); return 0; } } while(0)
-      APP_TR("{\"target\":"); json_append_escaped(&json,&len2,&cap,target); APP_TR(",\"hops\":["); int first=1;
+      /* Collect hops into a temporary array so we can resolve missing hostnames
+       * via the system resolver (resolve_ip_to_hostname) before emitting JSON.
+       */
+      typedef struct { char hop[16]; char ip[64]; char host[128]; char ping[128]; } tr_hop_t;
+      size_t hop_cap = 32; size_t hop_count = 0;
+      tr_hop_t *hops = (tr_hop_t*)malloc(sizeof(tr_hop_t) * hop_cap);
+      if (!hops) { free(dup); free(out); free(cmd); free(json); send_json(r, "{\"error\":\"oom\"}\n"); return 0; }
       while(line){
         /* skip header */
         if (strstr(line, "traceroute to") == line) { line=strtok_r(NULL,"\n",&saveptr); continue; }
@@ -3487,6 +3493,13 @@ static int h_traceroute(http_request_t *r) {
         /* capture hop number */
         char *sp = trim; while(*sp && *sp!=' ' && *sp!='\t') sp++; char hopbuf[16]=""; size_t hlen=(size_t)(sp-trim); if(hlen && hlen<sizeof(hopbuf)){ memcpy(hopbuf,trim,hlen); hopbuf[hlen]=0; }
         if(!hopbuf[0] || !isdigit((unsigned char)hopbuf[0])) { line=strtok_r(NULL,"\n",&saveptr); continue; }
+        /* ensure capacity */
+        if (hop_count + 1 > hop_cap) {
+          size_t newcap = hop_cap * 2;
+          tr_hop_t *tmp = (tr_hop_t*)realloc(hops, sizeof(tr_hop_t) * newcap);
+          if (!tmp) break; hop_cap = newcap; hops = tmp;
+        }
+        tr_hop_t *hh = &hops[hop_count]; memset(hh, 0, sizeof(*hh)); strncpy(hh->hop, hopbuf, sizeof(hh->hop)-1);
         /* extract IP/host and latency numbers */
         char ip[64]=""; char host[128]=""; char *p2=sp; /* rest of line */
         /* attempt parentheses ip */
@@ -3499,27 +3512,39 @@ static int h_traceroute(http_request_t *r) {
           /* if host looks like ip and ip empty -> ip=host */
           if(!ip[0] && host[0]){
             int is_ip=1; for(char *c=host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } }
-            if(is_ip){
-              /* safe bounded copy host(<=128) -> ip(64) */
-              size_t host_len_copy = strnlen(host, sizeof(ip)-1);
-              memcpy(ip, host, host_len_copy); ip[host_len_copy]=0;
-              host[0]=0;
-            }
+            if(is_ip){ size_t host_len_copy = strnlen(host, sizeof(ip)-1); memcpy(ip, host, host_len_copy); ip[host_len_copy]=0; host[0]=0; }
           }
         }
         /* collect all latency samples (numbers followed by ms) */
         double samples[8]; int sc=0; char *scan=p2; while(*scan && sc<8){ while(*scan && !isdigit((unsigned char)*scan) && *scan!='*') scan++; if(*scan=='*'){ scan++; continue; } char *endp=NULL; double val=strtod(scan,&endp); if(endp && val>=0){ while(*endp==' ') endp++; if(strncasecmp(endp,"ms",2)==0){ samples[sc++]=val; scan=endp+2; continue; } } if(endp==scan){ scan++; } else scan=endp; }
-        /* build latency string: if multiple, join with '/' */
         char latency[128]=""; if(sc==1) snprintf(latency,sizeof(latency),"%.3gms",samples[0]); else if(sc>1){ size_t off=0; for(int i=0;i<sc;i++){ int w=snprintf(latency+off,sizeof(latency)-off,"%s%.3gms", i?"/":"", samples[i]); if(w<0|| (size_t)w>=sizeof(latency)-off) break; off+=(size_t)w; } }
-        if(!first) APP_TR(","); first=0;
-        APP_TR("{\"hop\":"); json_append_escaped(&json,&len2,&cap,hopbuf);
-        APP_TR(",\"ip\":"); json_append_escaped(&json,&len2,&cap,ip);
-        APP_TR(",\"host\":"); json_append_escaped(&json,&len2,&cap,host);
-        APP_TR(",\"ping\":"); json_append_escaped(&json,&len2,&cap,latency);
-        APP_TR("}");
+        strncpy(hh->ip, ip, sizeof(hh->ip)-1);
+        strncpy(hh->host, host, sizeof(hh->host)-1);
+        strncpy(hh->ping, latency, sizeof(hh->ping)-1);
+        hop_count++;
         line=strtok_r(NULL,"\n",&saveptr);
       }
+      /* Resolve missing hostnames via system resolver (resolve_ip_to_hostname) */
+      for (size_t i = 0; i < hop_count; i++) {
+        if ((!hops[i].host || hops[i].host[0]==0) && hops[i].ip && hops[i].ip[0]) {
+          char resolved[256] = "";
+          if (resolve_ip_to_hostname(hops[i].ip, resolved, sizeof(resolved)) == 0) {
+            strncpy(hops[i].host, resolved, sizeof(hops[i].host)-1);
+          }
+        }
+      }
+      /* Emit JSON from resolved hops */
+      APP_TR("{\"target\":"); json_append_escaped(&json,&len2,&cap,target); APP_TR(",\"hops\":["); int first=1;
+      for (size_t i = 0; i < hop_count; i++) {
+        if (!first) APP_TR(","); first = 0;
+        APP_TR("{\"hop\":"); json_append_escaped(&json,&len2,&cap,hops[i].hop);
+        APP_TR(",\"ip\":"); json_append_escaped(&json,&len2,&cap,hops[i].ip);
+        APP_TR(",\"host\":"); json_append_escaped(&json,&len2,&cap,hops[i].host);
+        APP_TR(",\"ping\":"); json_append_escaped(&json,&len2,&cap,hops[i].ping);
+        APP_TR("}");
+      }
       APP_TR("]}\n");
+      free(hops);
       http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,json,len2);
       free(json); free(dup); free(out); free(cmd); return 0;
     } else {
