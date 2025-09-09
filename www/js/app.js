@@ -1775,6 +1775,42 @@ document.addEventListener('DOMContentLoaded', function() {
         // if already loaded and large, ensure virtualization is enabled
         try { if ((window._log_cache && window._log_cache.lines && window._log_cache.lines.length > 500) && !window._log_virtual_enabled) { enableVirtualLogs(); } } catch(e) {}
       }
+      // Ensure other tabs lazy-load reliably even if some listeners didn't attach
+      if (id === '#tab-status') {
+        // fetch full status and populate UI if not already loaded recently
+        try {
+          if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
+            fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st) { updateUI(st); if (st.links && Array.isArray(st.links) && st.links.length) { try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){} } } window._statusLoaded = true; window._statusLoadedAt = Date.now(); } catch(e){} }).catch(function(){});
+          }
+        } catch(e) {}
+      }
+      if (id === '#tab-olsr') {
+        try {
+          if (!window._olsrLoaded) {
+            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); } window._olsrLoaded = true; } catch(e){} }).catch(function(){});
+          }
+        } catch(e) {}
+      }
+      if (id === '#tab-connections') {
+        try {
+          if (!window._connectionsLoadedGlobal) {
+            Promise.all([ fetch('/nodedb.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }), fetch('/connections.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }) ]).then(function(results){ try { var ndb = results[0] || {}; var con = results[1] || {}; renderConnectionsTable(con, ndb); window._connectionsLoadedGlobal = true; } catch(e){} }).catch(function(){});
+          }
+        } catch(e) {}
+      }
+      if (id === '#tab-versions') {
+        try {
+          if (!window._versionsLoadedGlobal) {
+            fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e){} }).catch(function(){});
+          }
+        } catch(e) {}
+      }
+      if (id === '#tab-traceroute') {
+        try {
+          // ensure any precomputed traceroute in /status is rendered
+          fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) { var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; }); populateTracerouteTable(hops); } } catch(e){} }).catch(function(){});
+        } catch(e) {}
+      }
     } catch(e) {}
   }
 
