@@ -1936,7 +1936,16 @@ function refreshLog() {
 function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // wire refresh button on load
-window.addEventListener('load', function(){ var r = document.getElementById('refresh-log'); if (r) r.addEventListener('click', function(){ refreshLog(); }); var f = document.getElementById('log-filter'); if (f) { f.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); refreshLog(); } }); } });
+window.addEventListener('load', function(){
+  // support both legacy ID and new class for refresh buttons
+  try {
+    var r = document.getElementById('refresh-log'); if (r) r.addEventListener('click', function(){ refreshLog(); });
+  } catch(e){}
+  try {
+    var r2 = document.querySelectorAll('.refresh-log-btn'); if (r2 && r2.length) { r2.forEach(function(b){ b.addEventListener('click', function(){ refreshLog(); }); }); }
+  } catch(e){}
+  var f = document.getElementById('log-filter'); if (f) { f.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); refreshLog(); } }); }
+});
 // filter wiring
 document.addEventListener('DOMContentLoaded', function(){ var f = document.getElementById('log-filter'); if (!f) return; f.addEventListener('input', function(){ var q = (f.value||'').trim().toLowerCase(); if (!q) { window._log_cache.filtered = []; window._log_cache.page = 0; renderLogPage(); return; } var lines = window._log_cache.lines || []; window._log_cache.filtered = lines.filter(function(l){ return l.toLowerCase().indexOf(q) !== -1; }); window._log_cache.page = 0; renderLogPage(); }); });
 
