@@ -1610,7 +1610,39 @@ window.addEventListener('load', function(){
       while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
     }
     fetch('/status', {cache:'no-store'})
-      .then(function(r){ return r.json(); })
+      .then(function(r){ return r.text(); })
+      .then(function(txt){
+        // Log raw response to help diagnose non-JSON or wrapped responses
+        try { console.log('ensureTraceroutePreloaded: /status raw length=', txt && txt.length); } catch(e){}
+        var st = null;
+        try {
+          st = JSON.parse(txt);
+        } catch(e) {
+          try { console.error('ensureTraceroutePreloaded: failed to parse /status JSON', e); } catch(_){}
+          // Attempt to salvage first JSON object from possibly wrapped text
+          try {
+            function extractFirstJsonObject(str) {
+              if (!str) return null;
+              var start = str.indexOf('{');
+              if (start === -1) return null;
+              var depth = 0;
+              for (var i = start; i < str.length; i++) {
+                var ch = str.charAt(i);
+                if (ch === '{') depth++;
+                else if (ch === '}') {
+                  depth--;
+                  if (depth === 0) return str.substring(start, i + 1);
+                }
+              }
+              return null;
+            }
+            var candidate = extractFirstJsonObject(txt);
+            if (candidate) st = JSON.parse(candidate);
+            try { console.log('ensureTraceroutePreloaded: salvaged JSON length=', candidate?candidate.length:0); } catch(e){}
+          } catch(e2) { st = null; }
+        }
+        return st;
+      })
       .then(function(st){
         var summaryEl = document.getElementById('traceroute-summary');
         try { console.log('ensureTraceroutePreloaded: /status returned, trace_to_uplink present=', !!(st && st.trace_to_uplink && st.trace_to_uplink.length)); } catch(e){}
