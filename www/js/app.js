@@ -1767,26 +1767,34 @@ function parseLogLine(line) {
 // Render log lines (paginated). Expects an array of lines (strings) in data.lines
 window._log_cache = window._log_cache || { lines: [], filtered: [], page: 0, pageSize: 20 };
 function renderLogPage() {
-  var pre = document.getElementById('log-pre'); if (!pre) return;
+  var tbody = document.getElementById('log-tbody'); if (!tbody) return;
+  var pagerWrap = document.getElementById('log-pager');
   var cache = window._log_cache; var lines = cache.filtered.length ? cache.filtered : cache.lines;
   var total = lines.length || 0;
   var pages = Math.max(1, Math.ceil(total / cache.pageSize));
   if (cache.page >= pages) cache.page = pages - 1;
   var start = cache.page * cache.pageSize; var end = Math.min(total, start + cache.pageSize);
   var slice = lines.slice(start, end);
-  var out = slice.map(function(ln){ var p = parseLogLine(ln); var cls=''; if (p.level==='ERROR' || p.level==='ERR' || p.level==='CRITICAL') cls='color:#a94442;'; else if (p.level==='WARN' || p.level==='WARNING') cls='color:#8a6d3b;'; else if (p.level==='INFO') cls='color:#31708f;'; else if (p.level==='DEBUG') cls='color:#3a3a3a;'; var ts = p.ts?('<span style="color:#666; font-size:11px; margin-right:6px">'+p.ts+'</span> '):''; var level = p.level?('<span style="font-weight:600; margin-right:6px;">['+p.level+']</span> '):''; return '<div style="padding:6px 4px; border-bottom:1px solid #f1f1f1; '+cls+'">'+ts+level+('<span style="white-space:pre-wrap">'+escapeHtml(p.msg)+'</span>')+'</div>'; }).join('');
-  if (!out) out = '<div class="text-muted" style="padding:8px">(no log lines)</div>';
-  // pagination controls
-  var pager = '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">';
-  pager += '<div>Showing '+(start+1)+'-'+(end)+' of '+total+' entries</div>';
-  pager += '<div>';
-  pager += '<button id="log-prev" class="btn btn-xs btn-default" '+(cache.page===0?'disabled':'')+'>Prev</button> ';
-  pager += '<span style="margin:0 6px">Page '+(cache.page+1)+'/'+pages+'</span>';
-  pager += '<button id="log-next" class="btn btn-xs btn-default" '+(cache.page+1>=pages?'disabled':'')+'>Next</button>';
-  pager += '</div></div>';
-  pre.innerHTML = out + pager;
-  // wire pager buttons
-  try { var prev = document.getElementById('log-prev'); if (prev) prev.addEventListener('click', function(){ if (window._log_cache.page>0) { window._log_cache.page--; renderLogPage(); } }); var next = document.getElementById('log-next'); if (next) next.addEventListener('click', function(){ if ((window._log_cache.page+1)*window._log_cache.pageSize < (window._log_cache.filtered.length || window._log_cache.lines.length)) { window._log_cache.page++; renderLogPage(); } }); } catch(e){}
+  // render rows into tbody
+  tbody.innerHTML = '';
+  if (!slice.length) {
+    var tr = document.createElement('tr'); var td = document.createElement('td'); td.colSpan = 3; td.className = 'text-muted'; td.style.padding = '12px'; td.textContent = '(no log lines)'; tr.appendChild(td); tbody.appendChild(tr);
+  } else {
+    slice.forEach(function(ln){ var p = parseLogLine(ln); var tr = document.createElement('tr'); var tdTs = document.createElement('td'); tdTs.style.color='#666'; tdTs.style.fontSize='11px'; tdTs.textContent = p.ts || ''; var tdLevel = document.createElement('td'); tdLevel.style.fontWeight='600'; tdLevel.textContent = p.level || ''; if (p.level==='ERROR' || p.level==='ERR' || p.level==='CRITICAL') tdLevel.style.color='#a94442'; else if (p.level==='WARN' || p.level==='WARNING') tdLevel.style.color='#8a6d3b'; else if (p.level==='INFO') tdLevel.style.color='#31708f'; else if (p.level==='DEBUG') tdLevel.style.color='#3a3a3a'; var tdMsg = document.createElement('td'); tdMsg.style.whiteSpace='pre-wrap'; tdMsg.textContent = p.msg || ''; tr.appendChild(tdTs); tr.appendChild(tdLevel); tr.appendChild(tdMsg); tbody.appendChild(tr); });
+  }
+  // pager html
+  if (pagerWrap) {
+    pagerWrap.innerHTML = '';
+    var info = document.createElement('div'); info.textContent = 'Showing '+(start+1)+'-'+(end)+' of '+total+' entries';
+    var controls = document.createElement('div'); controls.style.display='inline-block'; controls.style.marginLeft='12px';
+    var prev = document.createElement('button'); prev.id='log-prev'; prev.className='btn btn-xs btn-default'; prev.textContent='Prev'; if (cache.page===0) prev.disabled=true;
+    var span = document.createElement('span'); span.style.margin='0 6px'; span.textContent = 'Page '+(cache.page+1)+'/'+pages;
+    var next = document.createElement('button'); next.id='log-next'; next.className='btn btn-xs btn-default'; next.textContent='Next'; if (cache.page+1>=pages) next.disabled=true;
+    controls.appendChild(prev); controls.appendChild(span); controls.appendChild(next);
+    pagerWrap.appendChild(info); pagerWrap.appendChild(controls);
+    // wire buttons
+    try { prev.addEventListener('click', function(){ if (window._log_cache.page>0) { window._log_cache.page--; renderLogPage(); } }); next.addEventListener('click', function(){ if ((window._log_cache.page+1)*window._log_cache.pageSize < (window._log_cache.filtered.length || window._log_cache.lines.length)) { window._log_cache.page++; renderLogPage(); } }); } catch(e){}
+  }
 }
 
 function renderLogArray(lines) {
@@ -1797,9 +1805,11 @@ function renderLogArray(lines) {
 }
 
 function refreshLog() {
-  var btn = document.getElementById('refresh-log'); var spinner = document.getElementById('refresh-log-spinner'); var status = document.getElementById('log-status'); var pre = document.getElementById('log-pre');
-  try { if (btn) btn.disabled = true; if (spinner) spinner.classList.add('rotate'); if (status) status.textContent = 'Refreshing...'; if (pre) pre.textContent = 'Loading...'; } catch(e){}
-  fetch('/log?lines=100', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(obj){ try { var lines = obj && Array.isArray(obj.lines) ? obj.lines : []; renderLogArray(lines); window._logLoaded = true; if (status) status.textContent = ''; } catch(e){ if (pre) pre.textContent = 'Error rendering log'; } }).catch(function(e){ if (pre) pre.textContent = 'Error loading /log: '+e; if (status) status.textContent = 'Error'; }).finally(function(){ try { if (btn) btn.disabled = false; if (spinner) spinner.classList.remove('rotate'); } catch(e){} });
+  var btn = document.getElementById('refresh-log'); var spinner = document.getElementById('refresh-log-spinner'); var status = document.getElementById('log-status'); var pageSizeSel = document.getElementById('log-page-size');
+  try { if (btn) btn.disabled = true; if (spinner) spinner.classList.add('rotate'); if (status) status.textContent = 'Refreshing...'; } catch(e){}
+  var lines = 200; // default
+  try { if (pageSizeSel && pageSizeSel.value) { lines = Math.max(50, parseInt(pageSizeSel.value,10)*10); } } catch(e) {}
+  fetch('/log?lines='+encodeURIComponent(lines), {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(obj){ try { var arr = obj && Array.isArray(obj.lines) ? obj.lines : []; renderLogArray(arr); window._logLoaded = true; if (status) status.textContent = ''; } catch(e){ var tbody = document.getElementById('log-tbody'); if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error rendering log</td></tr>'; if (status) status.textContent = 'Error'; } }).catch(function(e){ var tbody = document.getElementById('log-tbody'); if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error loading /log: '+escapeHtml(String(e))+'</td></tr>'; if (status) status.textContent = 'Error'; }).finally(function(){ try { if (btn) btn.disabled = false; if (spinner) spinner.classList.remove('rotate'); } catch(e){} });
 }
 
 // escape HTML simple helper

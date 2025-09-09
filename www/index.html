@@ -47,7 +47,11 @@
           <h3 style="margin:0">Web Status <small id="main-host">&nbsp;</small></h3>
         </div>
         <div class="header-actions">
-          <div id="nav-host"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></div>
+          <div id="nav-host">
+            <span id="hostname">hostname.nodename.wien.funkfeuer.at</span>
+            <!-- small debug button to open fetch debug modal (avoids making entire header clickable) -->
+            <button id="fetch-debug-btn" class="btn btn-xs btn-default" title="Fetch Debug" style="margin-left:8px;">DBG</button>
+          </div>
         </div>
       </header>
 
@@ -360,7 +364,30 @@
             <span id="log-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input id="log-filter" class="table-search-input form-control input-sm" placeholder="Filter log lines..."></div>
           <div style="margin-top:8px">
-            <pre id="log-pre" style="max-height:520px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px; font-size:12px; white-space:pre-wrap; word-break:break-word;">Loading...</pre>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+              <div>
+                <label for="log-page-size" class="small-muted">Page size:</label>
+                <select id="log-page-size" class="input-sm form-control" style="width:80px; display:inline-block; margin-left:6px;">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                </select>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="refresh-log" class="btn btn-xs btn-default"><span class="spin" id="refresh-log-spinner"></span>Refresh</button>
+                <span id="log-status" class="small-muted"></span>
+              </div>
+            </div>
+            <div id="log-table-wrap" style="max-height:520px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:0;">
+              <!-- Table will be rendered here by JS -->
+              <table id="log-table" class="table table-condensed" style="margin:0; font-size:12px;">
+                <thead>
+                  <tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr>
+                </thead>
+                <tbody id="log-tbody"><tr><td colspan="3" class="text-muted" style="padding:12px">Loading...</td></tr></tbody>
+              </table>
+            </div>
+            <div id="log-pager" style="margin-top:8px"></div>
           </div>
         </div>
 
