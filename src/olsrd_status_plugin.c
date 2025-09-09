@@ -673,7 +673,7 @@ static void sigsegv_handler(int sig) {
 char g_traceroute_path[PATHLEN] = "";
 char g_olsrd_path[PATHLEN] = "";
 
-static void detect_traceroute_binary() {
+static void detect_traceroute_binary(void) {
   FILE *fp = popen("which traceroute", "r");
   if (fp) {
     char path[256] = "";
