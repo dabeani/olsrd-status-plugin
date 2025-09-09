@@ -40,6 +40,14 @@
 /* utility hidden class for conditional tab visibility */
 .hidden { display: none; }
 
+/* Override Bootstrap's default tab-pane hiding to ensure tabs are visible */
+.tab-content > .tab-pane {
+  display: none;
+}
+.tab-content > .tab-pane.active {
+  display: block;
+}
+
 /* Tab content visibility is now handled by inline styles */
 
 /* smaller adjustments for mobile */
