@@ -1764,7 +1764,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   } else {
     // Fallback: show first tab
-    showTab('#tab-status');
+    showTab('#tab-main');
   }
 
   // onTabShown: called whenever a tab becomes active
@@ -1778,6 +1778,23 @@ document.addEventListener('DOMContentLoaded', function() {
         try { if ((window._log_cache && window._log_cache.lines && window._log_cache.lines.length > 500) && !window._log_virtual_enabled) { enableVirtualLogs(); } } catch(e) {}
       }
       // Ensure other tabs lazy-load reliably even if some listeners didn't attach
+      if (id === '#tab-main') {
+        // Load status data to populate main-host if not already loaded
+        try {
+          if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
+            fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st) { updateUI(st); } window._statusLoaded = true; window._statusLoadedAt = Date.now(); } catch(e){} }).catch(function(){});
+          }
+        } catch(e) {}
+      }
+      if (id === '#tab-contact') {
+        // Contact tab has static content, ensure it's visible
+        try {
+          var contactPane = document.getElementById('tab-contact');
+          if (contactPane) {
+            contactPane.style.display = 'block';
+          }
+        } catch(e) {}
+      }
       if (id === '#tab-status') {
         // fetch full status and populate UI if not already loaded recently
         try {
@@ -1793,28 +1810,60 @@ document.addEventListener('DOMContentLoaded', function() {
           var needFetch = !window._olsrLoaded || !olsrtbody || (olsrtbody && olsrtbody.querySelectorAll('tr').length === 0);
           if (needFetch) {
             try { if (olsrtbody) { olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">Loading…</td></tr>'; } } catch(e){}
-            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); } window._olsrLoaded = true; } catch(e){} }).catch(function(){ /* ignore fetch errors */ });
+            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); } window._olsrLoaded = true; } catch(e){} }).catch(function(){
+              // Show fallback content when API fails
+              if (olsrtbody) {
+                olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">No OLSR data available. This tab requires a running OLSR daemon.</td></tr>';
+              }
+            });
           }
         } catch(e) {}
       }
       if (id === '#tab-connections') {
         try {
           if (!window._connectionsLoadedGlobal) {
-            Promise.all([ fetch('/nodedb.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }), fetch('/connections.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }) ]).then(function(results){ try { var ndb = results[0] || {}; var con = results[1] || {}; renderConnectionsTable(con, ndb); window._connectionsLoadedGlobal = true; } catch(e){} }).catch(function(){});
+            Promise.all([ fetch('/nodedb.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }), fetch('/connections.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }) ]).then(function(results){ try { var ndb = results[0] || {}; var con = results[1] || {}; renderConnectionsTable(con, ndb); window._connectionsLoadedGlobal = true; } catch(e){} }).catch(function(){
+              // Show fallback content when API fails
+              var tbody = document.querySelector('#connectionsTable tbody');
+              if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No connection data available. This tab requires backend API access.</td></tr>';
+              }
+            });
           }
         } catch(e) {}
       }
       if (id === '#tab-versions') {
         try {
           if (!window._versionsLoadedGlobal) {
-            fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e){} }).catch(function(){});
+            fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e){} }).catch(function(){
+              // Show fallback content when API fails
+              var wrap = document.getElementById('versions-wrap');
+              if (wrap) {
+                wrap.innerHTML = '<div class="alert alert-info">Version information not available. This tab requires backend API access.</div>';
+              }
+            });
           }
         } catch(e) {}
       }
       if (id === '#tab-traceroute') {
         try {
           // ensure any precomputed traceroute in /status is rendered
-          fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) { var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; }); populateTracerouteTable(hops); } } catch(e){} }).catch(function(){});
+          fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) { var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; }); populateTracerouteTable(hops); } } catch(e){} }).catch(function(){
+            // Show fallback content when API fails
+            var tbody = document.querySelector('#tracerouteTable tbody');
+            if (tbody) {
+              tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Traceroute data not available. This tab requires backend API access.</td></tr>';
+            }
+          });
+        } catch(e) {}
+      }
+      if (id === '#tab-neighbors') {
+        try {
+          // Show fallback content for neighbors tab
+          var tbody = document.querySelector('#neighborsTable tbody');
+          if (tbody && tbody.querySelectorAll('tr').length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Neighbor data not available. This tab requires a running OLSR daemon.</td></tr>';
+          }
         } catch(e) {}
       }
     } catch(e) {}
