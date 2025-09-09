@@ -500,24 +500,9 @@ function populateOlsrLinksTable(links) {
       // make nodes clickable when there are nodes
       if (parseInt(nodeCount,10) > 0) { nodesCell.style.cursor = 'pointer'; nodesCell.title = l.node_names; nodesCell.addEventListener('click', function(){ showNodesFor(l.remote, l.node_names); }); }
     }
-  // metric badges and small spark (routes only - avoid duplicating nodes count which is shown in its own column)
+  // metric badges (sparklines removed for stability)
   var metricsHtml = '';
   metricsHtml += '<span class="metric-badge routes small">R:'+ (l.routes || '0') +'</span>';
-  // small inline sparkline: draw a minimal SVG based on routes vs nodes (normalized)
-  try {
-    var rnum = parseFloat(String(l.routes||'0').replace(/[^0-9\-\.]/g,'')) || 0;
-    var nnum = parseFloat(String(l.nodes||'0').replace(/[^0-9\-\.]/g,'')) || 0;
-    // create a tiny 40x12 spark where value = routes up to 20
-    var maxv = Math.max(1, rnum, nnum, 8);
-    var w = 40, h = 12, pad = 1;
-    var rx = Math.max(0, Math.min(w-2*pad, Math.round((rnum/maxv) * (w-2*pad))));
-    var nx = Math.max(0, Math.min(w-2*pad, Math.round((nnum/maxv) * (w-2*pad))));
-    var spark = '<svg class="spark" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">';
-    spark += '<rect x="'+pad+'" y="'+(h-3)+'" width="'+(rx||1)+'" height="3" fill="#5a9bd8"></rect>';
-    spark += '<rect x="'+pad+'" y="'+(h-6)+'" width="'+(nx||1)+'" height="3" fill="#8cc152"></rect>';
-    spark += '</svg>';
-    metricsHtml += spark;
-  } catch(e) { metricsHtml += '<span class="spark" aria-hidden="true"></span>'; }
   var metricsTd = td(metricsHtml);
   metricsTd.title = 'Routes: ' + (l.routes||'0') + (l.is_default? ' • Default route':'');
   tr.appendChild(metricsTd);
@@ -989,45 +974,9 @@ function pushStat(seriesName, value) {
   } catch(e) {}
 }
 
+// renderSparkline removed: replaced with a no-op to keep callers safe
 function renderSparkline(containerId, series, color) {
-  var el = document.getElementById(containerId); if (!el) return;
-  var w = el.clientWidth || 300; var h = el.clientHeight || 80; var pad = 6;
-  var maxv = Math.max(1, Math.max.apply(null, series)); var minv = Math.min.apply(null, series);
-  // build points with coordinates and keep numeric values
-  var coords = series.map(function(v,i){ var x = Math.round((i/(series.length-1||1))*(w-2*pad))+pad; var y = Math.round(h- pad - ((v - minv)/(maxv - minv || 1))*(h-2*pad)); return {x:x, y:y, v: Number(v)||0, i:i}; });
-  var pts = coords.map(function(p){ return p.x+','+p.y; });
-  var svg = '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">';
-  if (pts.length) {
-    svg += '<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>';
-    // circles for each datapoint (small) with data-index/value for tooltip
-    coords.forEach(function(p){ svg += '<circle class="spark-dot" data-idx="'+p.i+'" data-val="'+p.v+'" cx="'+p.x+'" cy="'+p.y+'" r="3" fill="'+color+'"/>'; });
-    // emphasize last point
-    var last = coords[coords.length-1]; svg += '<circle cx="'+last.x+'" cy="'+last.y+'" r="4" fill="'+color+'" stroke="#fff" stroke-width="1"></circle>';
-  }
-  svg += '</svg>';
-  el.innerHTML = svg;
-  // wire tooltip behavior for dots
-  try {
-    var tooltip = document.getElementById('spark-tooltip');
-    if (!tooltip) return;
-    var dots = el.querySelectorAll('.spark-dot');
-    dots.forEach(function(d){
-      d.addEventListener('mouseenter', function(ev){
-        var val = this.getAttribute('data-val');
-        tooltip.style.display = 'block';
-        tooltip.textContent = String(val);
-      });
-      d.addEventListener('mousemove', function(ev){
-        // position tooltip near mouse, but keep inside window
-        var mx = ev.clientX + 12; var my = ev.clientY + 8;
-        var tw = tooltip.offsetWidth || 80; var th = tooltip.offsetHeight || 20;
-        var winW = window.innerWidth || document.documentElement.clientWidth;
-        if (mx + tw + 8 > winW) mx = winW - tw - 12;
-        tooltip.style.left = mx + 'px'; tooltip.style.top = my + 'px';
-      });
-      d.addEventListener('mouseleave', function(){ tooltip.style.display = 'none'; });
-    });
-  } catch(e) {}
+  var el = document.getElementById(containerId); if (!el) return; el.innerHTML = ''; // clear any previous content
 }
 
 // Hook into updateUI to sample stats when status payload contains them
@@ -1055,8 +1004,7 @@ updateUI = function(data) {
       pushStat('fetch_processing', fp);
     } catch(e) {}
     // render graphs
-  try { renderSparkline('routes-graph', window._stats_series.olsr_routes || [], '#5a9bd8'); } catch(e){}
-  try { renderSparkline('nodes-graph', window._stats_series.olsr_nodes || [], '#6cc070'); } catch(e){}
+  // sparklines disabled: keep numeric indicators updated but do not render SVG graphs
       // update numeric indicators (last values)
       try {
         var olsArr = window._stats_series.olsr_routes || [];

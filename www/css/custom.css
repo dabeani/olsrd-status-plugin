@@ -61,7 +61,7 @@
 /* Modal close button alignment helper */
 .modal-panel .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-bottom:8px; }
 
-/* Small metric badges and sparklines in OLSR links */
+/* Small metric badges in OLSR links */
 .metric-badge { display:inline-block; padding:4px 8px; border-radius:12px; font-size:11px; color:#fff; margin-right:6px; }
 .metric-badge.small { padding:2px 6px; font-size:10px; border-radius:10px; }
 .metric-badge.routes { background:#2b9af3; }
@@ -75,17 +75,12 @@
 .etx-good { background:#2ecc71; }
 .etx-med { background:#f6c85f; color:#5a3b00; }
 .etx-bad { background:#e74c3c; }
-.spark { display:inline-block; width:64px; height:18px; vertical-align:middle; background:linear-gradient(90deg,#e6f2ff,#fff); border-radius:4px; }
 .action-btn { margin-left:6px; }
 
 /* live indicator for statistics graphs */
 .live-dot-updating { background: #2ecc71 !important; box-shadow: 0 0 6px rgba(46,204,113,0.6); }
 .live-dot-stale { background: #ccc !important; box-shadow: none; }
 .spark-info { display:flex; flex-direction:column; justify-content:center; align-items:flex-end; }
-
-/* Graph tooltip for sparkline datapoints */
-#spark-tooltip { position: absolute; pointer-events: none; background: rgba(0,0,0,0.8); color: #fff; padding:6px 8px; border-radius:4px; font-size:12px; z-index:3000; display:none; }
-.spark-dot { cursor:default; }
 
 /* tiny timestamp next to live dot showing last sample time */
 .spark-ts { font-size:11px; color:#666; margin-left:8px; vertical-align:middle; }
