@@ -2877,7 +2877,6 @@ static int h_status_stats(http_request_t *r) {
   snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
            olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, strlen(out));
-  // ...existing code...
   return 0;
 }
 

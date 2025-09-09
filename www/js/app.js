@@ -1588,6 +1588,8 @@ var _olsrLoaded = false;
 window.addEventListener('load', function(){
   var mt = document.getElementById('mainTabs');
   if (!mt) return;
+  // Automatically start traceroute with predefined traceroute_to destination at initial load
+  ensureTraceroutePreloaded();
   function ensureTraceroutePreloaded(){
     var tbody = document.querySelector('#tracerouteTable tbody');
     if (tbody && tbody.children.length) return; // already populated
