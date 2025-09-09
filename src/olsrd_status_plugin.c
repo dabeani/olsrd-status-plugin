@@ -2826,6 +2826,7 @@ static int h_status_lite(http_request_t *r) {
  */
 static int h_status_stats(http_request_t *r) {
   char out[512];
+  fprintf(stderr, "[status-plugin] h_status_stats: enter\n");
   unsigned long dropped=0, retries=0, successes=0;
   METRIC_LOAD_ALL(dropped, retries, successes);
   unsigned long unique_routes=0, unique_nodes=0;
@@ -2841,6 +2842,7 @@ static int h_status_stats(http_request_t *r) {
   snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
            olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, strlen(out));
+  fprintf(stderr, "[status-plugin] h_status_stats: wrote %zu bytes\n", strlen(out));
   return 0;
 }
 
@@ -2899,8 +2901,10 @@ static int h_olsr_links(http_request_t *r) {
     size_t l1 = links_raw?strlen(links_raw):0;
     size_t l2 = routes_raw?strlen(routes_raw):0;
     size_t l3 = topology_raw?strlen(topology_raw):0;
-    if (l1||l2||l3) {
-      char *combined_raw = malloc(l1+l2+l3+16);
+    size_t total = l1 + l2 + l3;
+    /* Safety guard: avoid attempting to allocate absurdly large combined buffer */
+    if (total && total < (512 * 1024)) {
+      char *combined_raw = malloc(total + 16);
       if (combined_raw) {
         size_t off=0;
         if (l1){ memcpy(combined_raw+off,links_raw,l1); off+=l1; combined_raw[off++]='\n'; }
@@ -2910,6 +2914,8 @@ static int h_olsr_links(http_request_t *r) {
         if(normalize_olsrd_links(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
         free(combined_raw);
       }
+    } else if (total) {
+      fprintf(stderr, "[status-plugin] combined OLSR input too large (%zu bytes), skipping normalization\n", total);
     }
   }
   char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
