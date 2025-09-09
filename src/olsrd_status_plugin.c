@@ -3257,6 +3257,118 @@ static int h_prometheus_metrics(http_request_t *r) {
   return 0;
 }
 
+/* Dedicated traceroute-only endpoint: returns a small, clean JSON payload with trace_target and trace_to_uplink
+ * This avoids client-side parsing issues when /status may be wrapped or concatenated for some collectors.
+ */
+static int h_status_traceroute(http_request_t *r) {
+  char traceroute_to[256] = "";
+  int traceroute_to_set = 0;
+  /* attempt to read /config/custom/www/settings.inc for traceroute_to */
+  {
+    char *s=NULL; size_t sn=0;
+    if (util_read_file("/config/custom/www/settings.inc", &s, &sn) == 0 && s && sn>0) {
+      char *line = s; char *end = s + sn;
+      while (line && line < end) {
+        char *nl = memchr(line, '\n', (size_t)(end - line));
+        size_t linelen = nl ? (size_t)(nl - line) : (size_t)(end - line);
+        if (linelen > 0 && memmem(line, linelen, "traceroute_to", 12)) {
+          char *eq = memchr(line, '=', linelen);
+          if (eq) {
+            char *v = eq + 1; size_t vlen = (size_t)(end - v);
+            while (vlen && (v[vlen-1]=='\n' || v[vlen-1]=='\r' || v[vlen-1]==' ' || v[vlen-1]=='\'' || v[vlen-1]=='"' || v[vlen-1]==';')) vlen--;
+            while (vlen && (*v==' ' || *v=='\'' || *v=='"')) { v++; vlen--; }
+            if (vlen > 0) { size_t copy = vlen < sizeof(traceroute_to)-1 ? vlen : sizeof(traceroute_to)-1; memcpy(traceroute_to, v, copy); traceroute_to[copy]=0; traceroute_to_set = 1; }
+          }
+        }
+        if (!nl) break; line = nl + 1;
+      }
+      free(s);
+    }
+  }
+
+  /* fallback to default route or hardcoded if not set */
+  if (!traceroute_to_set || !traceroute_to[0]) {
+    char def_ip[64] = ""; char *rout = NULL; size_t rn = 0;
+    if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout) {
+      char *p = strstr(rout, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def_ip)) { strncpy(def_ip, p, L); def_ip[L] = 0; } } }
+      free(rout);
+    }
+    if (def_ip[0]) snprintf(traceroute_to, sizeof(traceroute_to), "%s", def_ip);
+    else snprintf(traceroute_to, sizeof(traceroute_to), "%s", "78.41.115.36");
+  }
+
+  /* Build minimal JSON response */
+  char outbuf[8192]; size_t outlen = 0;
+  outbuf[0] = 0;
+  #define TAPP(fmt,...) do { int _n = snprintf(outbuf + outlen, sizeof(outbuf) > outlen ? (sizeof(outbuf)-outlen) : 0, fmt, ##__VA_ARGS__); if(_n>0) outlen += (size_t)_n; } while(0)
+  TAPP("{");
+  TAPP("\"trace_target\":");
+  /* quote traceroute_to */
+  {
+    char esc[512]; size_t p=0; esc[0]=0;
+    for(size_t i=0; traceroute_to[i] && p+2 < sizeof(esc); ++i) {
+      char c = traceroute_to[i]; if (c == '"' || c == '\\') { esc[p++]='\\'; esc[p++]=c; }
+      else if ((unsigned char)c < 32) { esc[p++]='?'; }
+      else esc[p++]=c;
+    }
+    esc[p]=0; TAPP("\"%s\",", esc);
+  }
+
+  /* If traceroute binary not available, return empty array */
+  if (!g_has_traceroute) {
+    TAPP("\"trace_to_uplink\":[] }");
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen);
+    return 0;
+  }
+
+  /* Run traceroute and parse lines into simple objects (reuse same parsing as h_status) */
+  {
+    const char *trpath = (g_traceroute_path[0]) ? g_traceroute_path : "traceroute";
+    size_t cmdlen = strlen(trpath) + strlen(traceroute_to) + 64;
+    char *cmd = (char*)malloc(cmdlen);
+    if (!cmd) { TAPP("\"trace_to_uplink\":[] }"); http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen); return 0; }
+    snprintf(cmd, cmdlen, "%s -4 -w 1 -q 1 %s", trpath, traceroute_to);
+    char *tout = NULL; size_t t_n = 0;
+    if (util_exec(cmd, &tout, &t_n) != 0 || !tout || t_n==0) {
+      free(cmd);
+      TAPP("\"trace_to_uplink\":[] }"); http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen);
+      if (tout) free(tout);
+      return 0;
+    }
+    free(cmd);
+    /* append array start */
+    TAPP("\"trace_to_uplink\":[");
+    char *p = tout; char *line; int first = 1;
+    while ((line = strsep(&p, "\n")) != NULL) {
+      if (!line || !*line) continue;
+      if (strstr(line, "traceroute to") == line) continue;
+      /* normalize spaces */
+      char *norm = strdup(line); if(!norm) continue;
+      for(char *q=norm; *q; ++q) if(*q=='\t') *q=' ';
+      /* collapse spaces */
+      char *w=norm, *rdr=norm; int sp=0; while(*rdr){ if(*rdr==' '){ if(!sp){ *w++=' '; sp=1; } } else { *w++=*rdr; sp=0; } rdr++; } *w=0;
+      char hop[16] = ""; char ip[64] = ""; char host[256] = ""; char ping[64] = "";
+      char *save=NULL; char *tok=strtok_r(norm," ",&save); int idx=0; char prev_tok[64] = ""; char raw_host[256] = ""; char raw_ip_paren[64] = ""; int seen_paren_ip=0;
+      while(tok){ if(idx==0) snprintf(hop,sizeof(hop),"%s",tok); else if(idx==1){ if(strcmp(tok,"*")==0) snprintf(ip,sizeof(ip),"*"); else snprintf(raw_host,sizeof(raw_host),"%s",tok); } else { if(tok[0]=='('){ char *endp=strchr(tok,')'); if(endp){ *endp=0; snprintf(raw_ip_paren,sizeof(raw_ip_paren),"%s",tok+1); seen_paren_ip=1; } } if(!ping[0]){ size_t L=strlen(tok); if(L>2 && tok[L-2]=='m' && tok[L-1]=='s'){ char num[32]; size_t cpy=(L-2)<sizeof(num)-1?(L-2):sizeof(num)-1; memcpy(num,tok,cpy); num[cpy]=0; int ok=1; for(size_t xi=0; xi<cpy; ++xi){ if(!(isdigit((unsigned char)num[xi])||num[xi]=='.')){ok=0;break;} } if(ok) snprintf(ping,sizeof(ping),"%s",num); } else if(strcmp(tok,"ms")==0 && prev_tok[0]){ int ok=1; for(size_t xi=0; prev_tok[xi]; ++xi){ if(!(isdigit((unsigned char)prev_tok[xi])||prev_tok[xi]=='.')){ok=0;break;} } if(ok) snprintf(ping,sizeof(ping),"%s",prev_tok); } } }
+        snprintf(prev_tok,sizeof(prev_tok),"%s",tok); tok=strtok_r(NULL," ",&save); idx++; }
+      if(seen_paren_ip){ snprintf(ip,sizeof(ip),"%s",raw_ip_paren); snprintf(host,sizeof(host),"%s",raw_host); } else { if(raw_host[0]){ int is_ip=1; for(char *c=raw_host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } } if(is_ip) snprintf(ip,sizeof(ip),"%.*s", (int)sizeof(ip)-1, raw_host); else snprintf(host,sizeof(host),"%.*s", (int)sizeof(host)-1, raw_host); } }
+      free(norm);
+      if (!first) TAPP(","); first = 0;
+      /* escape values simply */
+      char esc_ip[128]="", esc_host[512]="", esc_ping[128]="";
+      { size_t pp=0; for(size_t i=0; ip[i] && pp+2<sizeof(esc_ip); ++i){ char c=ip[i]; if(c=='"'||c=='\\'){ esc_ip[pp++]='\\'; esc_ip[pp++]=c; } else esc_ip[pp++]=c; } esc_ip[pp]=0; }
+      { size_t pp=0; for(size_t i=0; host[i] && pp+2<sizeof(esc_host); ++i){ char c=host[i]; if(c=='"'||c=='\\'){ esc_host[pp++]='\\'; esc_host[pp++]=c; } else esc_host[pp++]=host[i]; } esc_host[pp]=0; }
+      { size_t pp=0; for(size_t i=0; ping[i] && pp+2<sizeof(esc_ping); ++i){ char c=ping[i]; if(c=='"'||c=='\\'){ esc_ping[pp++]='\\'; esc_ping[pp++]=c; } else esc_ping[pp++]=ping[i]; } esc_ping[pp]=0; }
+      TAPP("{\"hop\":%s,\"ip\":\"%s\",\"host\":\"%s\",\"ping\":\"%s\"}", hop, esc_ip, esc_host, esc_ping);
+    }
+    TAPP("] }");
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen);
+    if (tout) free(tout);
+    return 0;
+  }
+}
+
+
 /* Debug endpoint: current queue and queued request metadata */
 static int h_fetch_debug(http_request_t *r) {
   pthread_mutex_lock(&g_fetch_q_lock);
@@ -3963,6 +4075,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/lite", &h_status_lite);
   http_server_register_handler("/status/stats", &h_status_stats);
   http_server_register_handler("/status.py", &h_status_py);
+  http_server_register_handler("/status/traceroute", &h_status_traceroute);
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
