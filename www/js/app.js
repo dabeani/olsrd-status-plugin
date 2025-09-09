@@ -1815,8 +1815,12 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       if (id === '#tab-olsr') {
         try {
-          if (!window._olsrLoaded) {
-            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); } window._olsrLoaded = true; } catch(e){} }).catch(function(){});
+          // If we haven't loaded yet, or the table is present but empty, fetch and populate.
+          var olsrtbody = document.querySelector('#olsrLinksTable tbody');
+          var needFetch = !window._olsrLoaded || !olsrtbody || (olsrtbody && olsrtbody.querySelectorAll('tr').length === 0);
+          if (needFetch) {
+            try { if (olsrtbody) { olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">Loading…</td></tr>'; } } catch(e){}
+            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); } window._olsrLoaded = true; } catch(e){} }).catch(function(){ /* ignore fetch errors */ });
           }
         } catch(e) {}
       }
