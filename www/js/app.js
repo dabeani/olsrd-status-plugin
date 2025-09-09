@@ -2157,7 +2157,16 @@ function refreshLog() {
     .then(function(r){ return r.json(); })
     .then(function(obj){
       try {
-        var arr = obj && Array.isArray(obj.lines) ? obj.lines : [];
+        // Accept both array and object responses from backend
+        var arr = [];
+        if (Array.isArray(obj)) {
+          arr = obj;
+        } else if (obj && Array.isArray(obj.lines)) {
+          arr = obj.lines;
+        } else if (obj && typeof obj === 'object' && Object.keys(obj).length > 0) {
+          // If backend returns an object with numbered keys (log lines)
+          arr = Object.values(obj);
+        }
         renderLogArray(arr);
         window._logLoaded = true;
         if (status) status.textContent = '';
