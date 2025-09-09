@@ -2699,8 +2699,12 @@ function populateTracerouteTable(tracerouteData) {
     // attempt lightweight reverse lookup via existing connections/nodedb if available globally
     if (!hostname && ip && window._nodedb_cache) {
       try {
-        var hn = window._nodedb_cache[ip];
-        if (hn) hostnameCell.innerHTML = '<a href="https://' + hn + '" target="_blank">' + hn + '</a>';
+        var hnObj = window._nodedb_cache[ip];
+        if (hnObj) {
+          // prefer the human name field (.n), then hostname/h, then fallback to string
+          var resolvedName = (typeof hnObj === 'string') ? hnObj : (hnObj.n || hnObj.hostname || hnObj.h || null);
+          if (resolvedName) hostnameCell.innerHTML = '<a href="https://' + resolvedName + '" target="_blank">' + resolvedName + '</a>';
+        }
       } catch(e){}
     }
     tr.appendChild(hostnameCell);
@@ -2724,6 +2728,43 @@ function populateTracerouteTable(tracerouteData) {
   // Ensure traceroute tab pane is visible after rendering
   try { var pane = document.getElementById('tab-traceroute'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e){}
   try { window._traceroutePopulatedAt = Date.now(); } catch(e){}
+  // If nodedb wasn't available at render time, attempt a short re-enrichment
+  try {
+    if ((!window._nodedb_cache || Object.keys(window._nodedb_cache).length === 0) && typeof window._traceroute_enrich_retry === 'undefined') {
+      window._traceroute_enrich_retry = 0;
+      var enrichInterval = setInterval(function(){
+        try {
+          if (window._nodedb_cache && Object.keys(window._nodedb_cache).length > 0) {
+            // re-run lightweight enrichment on table rows
+            var tbody = document.querySelector('#tracerouteTable tbody');
+            if (!tbody) { clearInterval(enrichInterval); return; }
+            var rows = tbody.querySelectorAll('tr');
+            for (var ri = 0; ri < rows.length; ri++) {
+              try {
+                var cells = rows[ri].children;
+                if (!cells || cells.length < 3) continue;
+                var ipLink = cells[1].querySelector('a');
+                var hostCell = cells[2];
+                if (ipLink && ipLink.textContent && (!hostCell || !hostCell.textContent || hostCell.textContent.trim() === '')) {
+                  var ip = ipLink.textContent.trim();
+                  var obj = window._nodedb_cache[ip];
+                  if (obj) {
+                    var name = (typeof obj === 'string') ? obj : (obj.n || obj.hostname || obj.h || null);
+                    if (name) {
+                      hostCell.innerHTML = '<a href="https://' + name + '" target="_blank">' + name + '</a>';
+                    }
+                  }
+                }
+              } catch(e) {}
+            }
+            clearInterval(enrichInterval);
+          }
+          window._traceroute_enrich_retry++;
+          if (window._traceroute_enrich_retry > 6) { clearInterval(enrichInterval); }
+        } catch(e) { clearInterval(enrichInterval); }
+      }, 1000);
+    }
+  } catch(e) {}
 }
           // expose nodedb for traceroute hostname enrichment
           try { window._nodedb_cache = nodedb; } catch(e){}
