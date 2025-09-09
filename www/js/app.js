@@ -1012,8 +1012,52 @@ function pushStat(seriesName, value) {
 }
 
 // renderSparkline removed: replaced with a no-op to keep callers safe
-function renderSparkline(containerId, series, color) {
-  var el = document.getElementById(containerId); if (!el) return; el.innerHTML = ''; // clear any previous content
+// Render a simple line graph in a canvas for the last 10 datapoints
+function renderLineGraph(canvasId, series, color, yLabel) {
+  var canvas = document.getElementById(canvasId);
+  if (!canvas || !canvas.getContext) return;
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  var w = canvas.width, h = canvas.height;
+  var data = series.slice(-10); // last 10 points
+  if (!data.length) return;
+  var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
+  if (minY === maxY) { minY = 0; maxY = maxY + 1; }
+  var pad = 18;
+  // Draw axes
+  ctx.strokeStyle = '#bbb';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad);
+  ctx.stroke();
+  // Y axis label
+  ctx.fillStyle = '#666';
+  ctx.font = '11px sans-serif';
+  ctx.fillText(yLabel, 2, pad-4);
+  // X axis label
+  ctx.fillText('Samples', w-pad-40, h-pad+14);
+  // Draw line
+  ctx.strokeStyle = color || '#0074d9';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i=0; i<data.length; i++) {
+    var x = pad + ((w-2*pad) * i/(data.length-1));
+    var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  // Draw points
+  ctx.fillStyle = color || '#0074d9';
+  for (var i=0; i<data.length; i++) {
+    var x = pad + ((w-2*pad) * i/(data.length-1));
+    var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, 2*Math.PI); ctx.fill();
+  }
+  // Y axis ticks
+  ctx.fillStyle = '#666';
+  ctx.font = '10px sans-serif';
+  ctx.fillText(minY, 2, h-pad);
+  ctx.fillText(maxY, 2, pad+4);
 }
 
 // Hook into updateUI to sample stats when status payload contains them
@@ -1040,26 +1084,27 @@ updateUI = function(data) {
       pushStat('fetch_queued', fq);
       pushStat('fetch_processing', fp);
     } catch(e) {}
-    // render graphs
-  // sparklines disabled: keep numeric indicators updated but do not render SVG graphs
-      // update numeric indicators (last values)
+    // render graphs for nodes and routes (last 10 datapoints)
       try {
-        var olsArr = window._stats_series.olsr_routes || [];
+        var routesArr = window._stats_series.olsr_routes || [];
         var nodesArr = window._stats_series.olsr_nodes || [];
-        var olsCur = olsArr.length? olsArr[olsArr.length-1]: 0;
-        var nodesCur = nodesArr.length? nodesArr[nodesArr.length-1]: 0;
-        var oel = document.getElementById('routes-cur'); if (oel) oel.textContent = String(olsCur);
-        var nel = document.getElementById('nodes-cur'); if (nel) nel.textContent = String(nodesCur);
+        var routesCur = routesArr.length ? routesArr[routesArr.length-1] : 0;
+        var nodesCur = nodesArr.length ? nodesArr[nodesArr.length-1] : 0;
+        var routesEl = document.getElementById('routes-cur'); if (routesEl) routesEl.textContent = String(routesCur);
+        var nodesEl = document.getElementById('nodes-cur'); if (nodesEl) nodesEl.textContent = String(nodesCur);
+        // Draw graphs
+        renderLineGraph('routes-graph', routesArr, '#0074d9', 'Routes');
+        renderLineGraph('nodes-graph', nodesArr, '#2ecc40', 'Nodes');
         // set live-dot to updating briefly
-          var od = document.getElementById('routes-live'); if (od) { od.classList.remove('live-dot-stale'); od.classList.add('live-dot-updating'); clearTimeout(od._staleTO); od._staleTO = setTimeout(function(){ try{ od.classList.remove('live-dot-updating'); od.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
-          var fd = document.getElementById('nodes-live'); if (fd) { fd.classList.remove('live-dot-stale'); fd.classList.add('live-dot-updating'); clearTimeout(fd._staleTO); fd._staleTO = setTimeout(function(){ try{ fd.classList.remove('live-dot-updating'); fd.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
-          // update small timestamp next to live dots (human and title tooltip)
-          try {
-            var now = new Date();
-            var iso = now.toLocaleTimeString();
-            var ots = document.getElementById('routes-ts'); if (ots) { ots.textContent = iso; ots.title = now.toString(); }
-            var fts = document.getElementById('nodes-ts'); if (fts) { fts.textContent = iso; fts.title = now.toString(); }
-          } catch(e) {}
+        var routesDot = document.getElementById('routes-live'); if (routesDot) { routesDot.classList.remove('live-dot-stale'); routesDot.classList.add('live-dot-updating'); clearTimeout(routesDot._staleTO); routesDot._staleTO = setTimeout(function(){ try{ routesDot.classList.remove('live-dot-updating'); routesDot.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+        var nodesDot = document.getElementById('nodes-live'); if (nodesDot) { nodesDot.classList.remove('live-dot-stale'); nodesDot.classList.add('live-dot-updating'); clearTimeout(nodesDot._staleTO); nodesDot._staleTO = setTimeout(function(){ try{ nodesDot.classList.remove('live-dot-updating'); nodesDot.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+        // update small timestamp next to live dots (human and title tooltip)
+        try {
+          var now = new Date();
+          var iso = now.toLocaleTimeString();
+          var routesTs = document.getElementById('routes-ts'); if (routesTs) { routesTs.textContent = iso; routesTs.title = now.toString(); }
+          var nodesTs = document.getElementById('nodes-ts'); if (nodesTs) { nodesTs.textContent = iso; nodesTs.title = now.toString(); }
+        } catch(e) {}
       } catch(e) {}
   } catch(e) {}
   // Only call the original full updateUI when the payload looks like a full status
