@@ -182,6 +182,18 @@ Logging and debugging
 * For verbose allow-list tracing set `OLSR_DEBUG_ALLOWLIST=1` to see per-entry add/match traces.
 * When `OLSRD_STATUS_PLUGIN_NET` is used the plugin prints a friendly list of the final allow-list entries at startup.
 
+### Versions / Info source behavior
+
+The `/versions.json` payload and the UI `Versions` tab synthesize information from multiple sources (local system, container metadata, and data reported by upstream devices such as EdgeRouter firmware). The UI will try to present the most specific and useful fields available:
+
+- `kernel` / `kernel_version` / `os_kernel` — used to display the kernel version in the Versions panel. The renderer will try a few common keys so the UI works across EdgeRouter, Linux container, and standard host reports.
+- `olsrd_details` (preferred) — when present this object supplies detailed OLSRd build metadata: `version`, `description`, `device`, `date`, `release`, and `source`.
+- Top-level olsr fields — when `olsrd_details` is missing the UI falls back to top-level fields such as `olsrd`, `olsrd_release`, `olsrd_build_date`, or `olsrd_source` when available.
+
+To help operators understand where a given versions snapshot originated, the UI displays an "Info source" entry which indicates whether the values were gathered locally, reported by an EdgeRouter, or derived from container metadata.
+
+This behavior is best-effort and non-fatal: missing fields will be shown as `-` in the UI rather than causing errors. If you rely on a specific field name in automation, prefer the documented top-level keys listed above or query `/status` which embeds the same information.
+
 ## Security Notes
 * Endpoint intentionally unauthenticated for embedded deployment simplicity; place behind firewall or restrict `bind` to management network if needed.
 * All parsing is defensive with bounds checks; malformed upstream JSON will degrade gracefully (empty arrays / zero counts) rather than crash.
