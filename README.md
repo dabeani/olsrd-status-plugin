@@ -91,6 +91,36 @@ make status_plugin_clean && make status_plugin
 sudo make status_plugin_install DESTDIR=/
 sudo /usr/share/olsrd-status-plugin/fetch-assets.sh
 ```
+
+## Smoke test: traceroute endpoint
+
+We provide a small smoke test script that verifies the clean traceroute endpoint returns a single JSON object with `trace_target` and `trace_to_uplink` keys.
+
+Run the script (requires curl and jq or python3):
+
+```bash
+./scripts/smoke_traceroute.sh <host> <port>
+# example (local plugin):
+./scripts/smoke_traceroute.sh 127.0.0.1 11080
+```
+
+Or run a one-liner using curl + jq:
+
+```bash
+curl -sS http://<host>:<port>/status/traceroute | jq .
+```
+
+Expected output shape:
+
+```json
+{
+    "trace_target": "1.2.3.4",
+    "trace_to_uplink": [ { "hop": 1, "ip": "1.2.3.4", "host": "example", "ping": "12.345" }, ... ]
+}
+```
+
+If the endpoint is missing or traceroute is unavailable on the host, the script will print a minimal JSON response or an error; deploy the updated plugin binary and ensure `traceroute` is installed on the host for full results.
+
 Add to olsrd.conf:
 ```
 LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
