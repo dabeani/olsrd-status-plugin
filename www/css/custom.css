@@ -40,12 +40,23 @@
 /* utility hidden class for conditional tab visibility */
 .hidden { display: none; }
 
-/* Override Bootstrap's default tab-pane hiding to ensure tabs are visible */
-.tab-content > .tab-pane {
-  display: none;
+/* Tab status indicators */
+.tab-status {
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 4px;
+  display: inline-block;
+  width: 12px;
+  text-align: center;
 }
-.tab-content > .tab-pane.active {
-  display: block;
+.tab-status.loaded {
+  color: #5cb85c;
+}
+.tab-status.loading {
+  color: #f0ad4e;
+}
+.tab-status.error {
+  color: #d9534f;
 }
 
 /* Tab content visibility is now handled by inline styles */

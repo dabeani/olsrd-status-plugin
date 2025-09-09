@@ -307,9 +307,32 @@ function _setupModalKeyboard(modalEl) {
   } catch(e) {}
 }
 
-// Global sorting state for tables
-var _devicesSort = { key: null, asc: true };
-var _olsrSort = { key: null, asc: true };
+// Tab status indicator functions
+function updateTabStatus(tabId, status) {
+  var statusEl = document.getElementById(tabId + '-status');
+  if (statusEl) {
+    statusEl.className = 'tab-status ' + status;
+    if (status === 'loaded') {
+      statusEl.textContent = '✓';
+    } else if (status === 'loading') {
+      statusEl.textContent = '⟳';
+    } else if (status === 'error') {
+      statusEl.textContent = '✗';
+    }
+  }
+}
+
+function setTabLoading(tabId) {
+  updateTabStatus(tabId, 'loading');
+}
+
+function setTabLoaded(tabId) {
+  updateTabStatus(tabId, 'loaded');
+}
+
+function setTabError(tabId) {
+  updateTabStatus(tabId, 'error');
+}
 
 function showTab(tabId, show) {
   var el = document.getElementById(tabId);
@@ -1737,8 +1760,14 @@ document.addEventListener('DOMContentLoaded', function() {
         targetLink.parentElement.classList.add('active');
       }
 
+      // Debug logging
+      console.log('Tab switched to:', targetId);
+      console.log('Active pane:', targetPane.id, 'display:', targetPane.style.display, 'classes:', targetPane.className);
+
       // Load content for this tab
       onTabShown(targetId);
+    } else {
+      console.error('Target pane not found:', targetId);
     }
   }
 
@@ -1767,9 +1796,55 @@ document.addEventListener('DOMContentLoaded', function() {
     showTab('#tab-main');
   }
 
+  // Test function to verify all tabs work
+  window.testAllTabs = function() {
+    console.log('Testing all tabs...');
+    const allLinks = Array.from(document.querySelectorAll('#mainTabs a'));
+    let index = 0;
+
+    function testNextTab() {
+      if (index < allLinks.length) {
+        const link = allLinks[index];
+        const href = link.getAttribute('href');
+        console.log('Testing tab:', index + 1, '/', allLinks.length, href);
+
+        // Click the tab
+        link.click();
+
+        // Check if the corresponding pane is visible after a short delay
+        setTimeout(function() {
+          const pane = document.querySelector(href);
+          if (pane) {
+            const isVisible = pane.style.display === 'block' || pane.classList.contains('active');
+            console.log('Tab', href, 'visible:', isVisible);
+            if (!isVisible) {
+              console.error('Tab', href, 'is not visible!');
+            }
+          } else {
+            console.error('Pane not found for', href);
+          }
+
+          index++;
+          setTimeout(testNextTab, 500); // Wait 500ms between tests
+        }, 200);
+      } else {
+        console.log('Tab testing complete');
+      }
+    }
+
+    testNextTab();
+  };
+
+  // Auto-run tab test after 2 seconds for debugging
+  setTimeout(function() {
+    console.log('Auto-testing tabs in 2 seconds...');
+    setTimeout(window.testAllTabs, 2000);
+  }, 2000);
+
   // onTabShown: called whenever a tab becomes active
   function onTabShown(id) {
   try { if (window._uiDebug) { var pane = document.querySelector(id); if (pane) { var cs = window.getComputedStyle(pane); console.debug('onTabShown: id=', id, 'classes=', pane.className, 'computedDisplay=', cs.display, 'visible=', cs.display!=='none'); } } } catch(e){}
+    console.log('Loading content for tab:', id);
     try {
       if (id === '#tab-log') {
         // if log not yet loaded, auto-refresh
@@ -1779,6 +1854,8 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       // Ensure other tabs lazy-load reliably even if some listeners didn't attach
       if (id === '#tab-main') {
+        console.log('Main tab has static content');
+        setTabLoaded('tab-main');
         // Load status data to populate main-host if not already loaded
         try {
           if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
@@ -1788,6 +1865,8 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       if (id === '#tab-contact') {
         // Contact tab has static content, ensure it's visible
+        console.log('Contact tab has static content');
+        setTabLoaded('tab-contact');
         try {
           var contactPane = document.getElementById('tab-contact');
           if (contactPane) {
@@ -1797,53 +1876,84 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       if (id === '#tab-status') {
         // fetch full status and populate UI if not already loaded recently
+        console.log('Loading status tab content...');
+        setTabLoading('tab-status');
         try {
           if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
-            fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st) { updateUI(st); if (st.links && Array.isArray(st.links) && st.links.length) { try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){} } } window._statusLoaded = true; window._statusLoadedAt = Date.now(); } catch(e){} }).catch(function(){});
+            console.log('Fetching /status API...');
+            fetch('/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(st){ try { if (st) { console.log('Status data received:', Object.keys(st)); updateUI(st); if (st.links && Array.isArray(st.links) && st.links.length) { try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){} } } window._statusLoaded = true; window._statusLoadedAt = Date.now(); setTabLoaded('tab-status'); } catch(e){ setTabError('tab-status'); } }).catch(function(){ setTabError('tab-status'); });
+          } else {
+            console.log('Status already loaded recently');
+            setTabLoaded('tab-status');
           }
-        } catch(e) {}
+        } catch(e) { setTabError('tab-status'); }
       }
       if (id === '#tab-olsr') {
+        console.log('Loading OLSR links tab content...');
+        setTabLoading('tab-olsr');
         try {
           // If we haven't loaded yet, or the table is present but empty, fetch and populate.
           var olsrtbody = document.querySelector('#olsrLinksTable tbody');
           var needFetch = !window._olsrLoaded || !olsrtbody || (olsrtbody && olsrtbody.querySelectorAll('tr').length === 0);
+          console.log('OLSR tab - needFetch:', needFetch, 'tbody exists:', !!olsrtbody, 'current rows:', olsrtbody ? olsrtbody.querySelectorAll('tr').length : 0);
           if (needFetch) {
             try { if (olsrtbody) { olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">Loading…</td></tr>'; } } catch(e){}
-            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); } window._olsrLoaded = true; } catch(e){} }).catch(function(){
+            console.log('Fetching /olsr/links API...');
+            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { console.log('OLSR links received:', o.links.length, 'links'); window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); setTabLoaded('tab-olsr'); } window._olsrLoaded = true; } catch(e){ setTabError('tab-olsr'); } }).catch(function(){
               // Show fallback content when API fails
+              console.error('Failed to fetch OLSR links');
               if (olsrtbody) {
                 olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">No OLSR data available. This tab requires a running OLSR daemon.</td></tr>';
               }
+              setTabError('tab-olsr');
             });
+          } else {
+            console.log('OLSR links already loaded');
+            setTabLoaded('tab-olsr');
           }
-        } catch(e) {}
+        } catch(e) { setTabError('tab-olsr'); }
       }
       if (id === '#tab-connections') {
+        console.log('Loading connections tab content...');
+        setTabLoading('tab-connections');
         try {
           if (!window._connectionsLoadedGlobal) {
-            Promise.all([ fetch('/nodedb.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }), fetch('/connections.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }) ]).then(function(results){ try { var ndb = results[0] || {}; var con = results[1] || {}; renderConnectionsTable(con, ndb); window._connectionsLoadedGlobal = true; } catch(e){} }).catch(function(){
+            console.log('Fetching connections APIs...');
+            Promise.all([ fetch('/nodedb.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }), fetch('/connections.json', {cache:'no-store'}).then(function(r){return r.json();}).catch(function(){return {}; }) ]).then(function(results){ try { var ndb = results[0] || {}; var con = results[1] || {}; console.log('Connections data received - nodedb keys:', Object.keys(ndb).length, 'connections:', Array.isArray(con) ? con.length : 'not array'); renderConnectionsTable(con, ndb); window._connectionsLoadedGlobal = true; setTabLoaded('tab-connections'); } catch(e){ setTabError('tab-connections'); } }).catch(function(){
               // Show fallback content when API fails
+              console.error('Failed to fetch connections data');
               var tbody = document.querySelector('#connectionsTable tbody');
               if (tbody) {
                 tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No connection data available. This tab requires backend API access.</td></tr>';
               }
+              setTabError('tab-connections');
             });
+          } else {
+            console.log('Connections already loaded');
+            setTabLoaded('tab-connections');
           }
-        } catch(e) {}
+        } catch(e) { setTabError('tab-connections'); }
       }
       if (id === '#tab-versions') {
+        console.log('Loading versions tab content...');
+        setTabLoading('tab-versions');
         try {
           if (!window._versionsLoadedGlobal) {
-            fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e){} }).catch(function(){
+            console.log('Fetching /versions.json API...');
+            fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { console.log('Versions data received:', Object.keys(v)); renderVersionsPanel(v); window._versionsLoadedGlobal = true; setTabLoaded('tab-versions'); } catch(e){ setTabError('tab-versions'); } }).catch(function(){
               // Show fallback content when API fails
+              console.error('Failed to fetch versions data');
               var wrap = document.getElementById('versions-wrap');
               if (wrap) {
                 wrap.innerHTML = '<div class="alert alert-info">Version information not available. This tab requires backend API access.</div>';
               }
+              setTabError('tab-versions');
             });
+          } else {
+            console.log('Versions already loaded');
+            setTabLoaded('tab-versions');
           }
-        } catch(e) {}
+        } catch(e) { setTabError('tab-versions'); }
       }
       if (id === '#tab-traceroute') {
         try {
@@ -1875,6 +1985,7 @@ document.addEventListener('DOMContentLoaded', function() {
   try {
     function forceShowAllTabs() {
       try {
+        console.log('Force showing all tabs...');
         var lis = document.querySelectorAll('#mainTabs li');
         lis.forEach(function(li){ li.style.display = ''; });
         var links = Array.prototype.slice.call(document.querySelectorAll('#mainTabs a'));
@@ -1882,7 +1993,10 @@ document.addEventListener('DOMContentLoaded', function() {
         var origHref = activeLink ? activeLink.getAttribute('href') : null;
         // Click each link sequentially to trigger lazy-load hooks without leaving UI in a wrong state
         links.forEach(function(a, idx){
-          setTimeout(function(){ try { a.click(); } catch(e){} }, idx * 250);
+          setTimeout(function(){ try {
+            console.log('Force clicking tab:', idx + 1, a.getAttribute('href'));
+            a.click();
+          } catch(e){ console.error('Error clicking tab:', e); } }, idx * 250);
         });
         // restore original active tab after all loads
         setTimeout(function(){ try { if (origHref) { var el = document.querySelector('#mainTabs a[href="'+origHref+'"]'); if (el) el.click(); } } catch(e){} }, (links.length * 250) + 150);
