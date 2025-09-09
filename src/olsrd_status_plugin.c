@@ -56,6 +56,7 @@ int g_is_edgerouter = 0;
 int g_has_traceroute = 0;
 int g_is_linux_container = 0;
 
+
 static char   g_bind[64] = "0.0.0.0";
 static int    g_port = 11080;
 static int    g_enable_ipv6 = 0;
@@ -666,10 +667,28 @@ static void sigsegv_handler(int sig) {
 
 /* Paths to optional external tools (detected at init) */
 #ifndef PATHLEN
+
 #define PATHLEN 512
 #endif
 char g_traceroute_path[PATHLEN] = "";
 char g_olsrd_path[PATHLEN] = "";
+
+static void detect_traceroute_binary() {
+  FILE *fp = popen("which traceroute", "r");
+  if (fp) {
+    char path[256] = "";
+    if (fgets(path, sizeof(path), fp)) {
+      size_t len = strlen(path);
+      while (len && (path[len-1] == '\n' || path[len-1] == '\r')) path[--len] = 0;
+      if (len > 0) {
+        strncpy(g_traceroute_path, path, sizeof(g_traceroute_path)-1);
+        g_traceroute_path[sizeof(g_traceroute_path)-1] = 0;
+        g_has_traceroute = 1;
+      }
+    }
+    pclose(fp);
+  }
+}
 
 /* Forward declarations for HTTP handlers */
 static int h_root(http_request_t *r);
@@ -2147,6 +2166,7 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
     free(ols_out); ols_out = NULL; ols_n = 0;
   }
 
+  detect_traceroute_binary();
   /* Build JSON */
   size_t buf_sz = 4096 + (homes_n>0?homes_n:0) + (md5_n>0?md5_n:0);
   char *obuf = malloc(buf_sz);
@@ -2355,7 +2375,8 @@ static int h_status(http_request_t *r) {
     /* attempt to read traceroute_to from settings.inc (same path as python reference)
      * Default to the Python script's traceroute target if not configured.
      */
-    char traceroute_to[256] = "78.41.115.36";
+  char traceroute_to[256] = "";
+  int traceroute_to_set = 0;
   /* human readable uptime string, prefer python-like format */
   char uptime_str[64] = ""; format_duration(uptime_seconds, uptime_str, sizeof(uptime_str));
   char uptime_linux[160] = ""; format_uptime_linux(uptime_seconds, uptime_linux, sizeof(uptime_linux));
@@ -2369,7 +2390,7 @@ static int h_status(http_request_t *r) {
       while (line && line < end) {
         char *nl = memchr(line, '\n', (size_t)(end - line));
         size_t linelen = nl ? (size_t)(nl - line) : (size_t)(end - line);
-        if (linelen > 0 && memmem(line, linelen, "traceroute_to", 12)) {
+  if (linelen > 0 && memmem(line, linelen, "traceroute_to", 12)) {
           /* find '=' */
           char *eq = memchr(line, '=', linelen);
           if (eq) {
@@ -2380,6 +2401,7 @@ static int h_status(http_request_t *r) {
             if (vlen > 0) {
               size_t copy = vlen < sizeof(traceroute_to)-1 ? vlen : sizeof(traceroute_to)-1;
               memcpy(traceroute_to, v, copy); traceroute_to[copy]=0;
+              traceroute_to_set = 1;
             }
           }
         }
@@ -2392,6 +2414,15 @@ static int h_status(http_request_t *r) {
     }
   }
   /* fallback: if traceroute_to not set, use default route IP (filled later) - placeholder handled below */
+  if (!traceroute_to_set || !traceroute_to[0]) {
+    if (def_ip[0]) {
+      snprintf(traceroute_to, sizeof(traceroute_to), "%s", def_ip);
+      traceroute_to_set = 1;
+    } else {
+      snprintf(traceroute_to, sizeof(traceroute_to), "%s", "78.41.115.36");
+      traceroute_to_set = 1;
+    }
+  }
   /* Devices: prefer cached devices populated by background worker to avoid blocking */
   {
     int used_cache = 0;
