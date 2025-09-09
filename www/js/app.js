@@ -1085,8 +1085,13 @@ updateUI = function(data) {
         // count unique routes approximated by sum of link.routes
         routes = data.links.reduce(function(acc,l){ return acc + (parseInt(l.routes,10)||0); }, 0);
         nodes = data.links.reduce(function(acc,l){ return acc + (parseInt(l.nodes,10)||0); }, 0);
-      } else if (typeof data.olsr_routes_count === 'number') {
-        routes = data.olsr_routes_count;
+      } else {
+        if (typeof data.olsr_routes_count === 'number') {
+          routes = data.olsr_routes_count;
+        }
+        if (typeof data.olsr_nodes_count === 'number') {
+          nodes = data.olsr_nodes_count;
+        }
       }
       pushStat('olsr_routes', routes);
       pushStat('olsr_nodes', nodes);

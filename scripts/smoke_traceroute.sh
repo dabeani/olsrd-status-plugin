@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for /status/traceroute endpoint
 set -euo pipefail
-HOST=${1:-localhost}
+HOST=${1:-193.238.158.74}
 PORT=${2:-80}
 URL="http://${HOST}:${PORT}/status/traceroute"
 
