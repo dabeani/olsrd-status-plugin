@@ -2054,10 +2054,28 @@ function populateNavHost(host, ip) {
       }
     } catch(e) { /* ignore lookup errors */ }
 
-    var newInner = '';
-    newInner = (ipPart ? (ipPart + ' ') : '') + (iconHtml || '') + '<span id="hostname">' + (displayHost || '') + '</span>';
-    // Replace contents atomically
-    el.innerHTML = newInner;
+    // Update or create hostname span without touching other children (preserve debug button etc.)
+    var hostnameSpan = el.querySelector('#hostname');
+    if (!hostnameSpan) {
+      hostnameSpan = document.createElement('span');
+      hostnameSpan.id = 'hostname';
+      // append at the end by default
+      el.appendChild(hostnameSpan);
+    }
+    try { hostnameSpan.textContent = displayHost || ''; } catch(e) { hostnameSpan.innerText = displayHost || ''; }
+    // ensure an icon wrapper exists if needed
+    if (iconHtml) {
+      var iconWrap = el.querySelector('.fetch-icon');
+      if (!iconWrap) {
+        iconWrap = document.createElement('span');
+        iconWrap.className = 'fetch-icon';
+        // insert before hostnameSpan if possible
+        el.insertBefore(iconWrap, hostnameSpan);
+      }
+      iconWrap.innerHTML = iconHtml;
+    } else {
+      var iconWrapRem = el.querySelector('.fetch-icon'); if (iconWrapRem) iconWrapRem.parentNode.removeChild(iconWrapRem);
+    }
     // Also update compact header host element if present
     var mainHostEl = document.getElementById('main-host');
     if (mainHostEl) {
@@ -2070,13 +2088,17 @@ function populateNavHost(host, ip) {
   // make nav-host clickable to open fetch-debug modal (non-destructive)
   try {
     el.style.cursor = 'pointer';
-    el.addEventListener('click', function(){
-      var body = document.getElementById('fetch-debug-body');
-      if (!body) return;
-      body.textContent = 'Loading...';
-      fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
-      showModal('fetch-debug-modal');
-    });
+    // attach click handler only once
+    if (!el._fetchDebugHandlerAttached) {
+      el.addEventListener('click', function(){
+        var body = document.getElementById('fetch-debug-body');
+        if (!body) return;
+        body.textContent = 'Loading...';
+        fetch('/fetch_debug', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; });
+        showModal('fetch-debug-modal');
+      });
+      el._fetchDebugHandlerAttached = true;
+    }
   } catch(e) {}
 }
 
