@@ -311,7 +311,8 @@ var _olsrSort = { key: null, asc: true };
 
 function showTab(tabId, show) {
   var el = document.getElementById(tabId);
-  if (el) el.style.display = show ? '' : 'none';
+  if (!el) return;
+  if (show) el.classList.remove('hidden'); else el.classList.add('hidden');
 }
 
 function populateDevicesTable(devices, airos) {
@@ -1749,7 +1750,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Show target tab pane
     var targetPane = document.querySelector(targetId);
     if (targetPane) {
-      targetPane.classList.add('active');
+  // ensure the pane isn't hidden by capability toggles
+  targetPane.classList.remove('hidden');
+  targetPane.classList.add('active');
     }
 
     // Add active class to clicked tab link
