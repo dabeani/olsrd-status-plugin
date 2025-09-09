@@ -181,8 +181,9 @@ window.refreshTab = function(id, url) {
 };
 
 // UI debug flag (set true in console to enable debug logs)
-// UI debug flag: can be set from console to enable verbose diagnostics
-if (typeof window._uiDebug === 'undefined') window._uiDebug = true;
+// Default to false during normal operation to avoid verbose console output.
+// You can enable diagnostics by setting `window._uiDebug = true` in the browser console.
+if (typeof window._uiDebug === 'undefined') window._uiDebug = false;
 
 function setText(id, text) {
   var el = document.getElementById(id);
