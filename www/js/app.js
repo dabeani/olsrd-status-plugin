@@ -1057,7 +1057,16 @@ updateUI = function(data) {
           } catch(e) {}
       } catch(e) {}
   } catch(e) {}
-  try { _original_updateUI(data); } catch(e) {}
+  // Only call the original full updateUI when the payload looks like a full status
+  try {
+    var looksFull = (data && (data.hostname || data.devices || data.links || data.ip || data.uptime || data.olsr2_on || data.olsrd_on));
+    if (looksFull) {
+      try { _original_updateUI(data); } catch(e) {}
+    } else {
+      // minimal stats-only payload -> do not overwrite the full UI
+      if (window._uiDebug) console.debug('Skipping full updateUI for stats-only payload');
+    }
+  } catch(e) {}
 };
 
   // Lightweight polling to keep statistics live: fetch /status/lite periodically and feed updateUI
