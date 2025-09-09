@@ -1925,11 +1925,45 @@ function virtualRender() {
 }
 
 function refreshLog() {
-  var btn = document.getElementById('refresh-log'); var spinner = document.getElementById('refresh-log-spinner'); var status = document.getElementById('log-status'); var pageSizeSel = document.getElementById('log-page-size');
-  try { if (btn) btn.disabled = true; if (spinner) spinner.classList.add('rotate'); if (status) status.textContent = 'Refreshing...'; } catch(e){}
+  var btn = document.getElementById('refresh-log');
+  var classBtns = document.querySelectorAll('.refresh-log-btn');
+  var spinner = document.getElementById('refresh-log-spinner-2') || document.getElementById('refresh-log-spinner');
+  var status = document.getElementById('log-status');
+  var pageSizeSel = document.getElementById('log-page-size');
+  try {
+    if (btn) btn.disabled = true;
+    if (classBtns && classBtns.length) classBtns.forEach(function(b){ b.disabled = true; });
+    if (spinner) spinner.classList.add('rotate');
+    if (status) status.textContent = 'Refreshing...';
+  } catch(e){}
   var lines = 200; // default
   try { if (pageSizeSel && pageSizeSel.value) { lines = Math.max(50, parseInt(pageSizeSel.value,10)*10); } } catch(e) {}
-  fetch('/log?lines='+encodeURIComponent(lines), {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(obj){ try { var arr = obj && Array.isArray(obj.lines) ? obj.lines : []; renderLogArray(arr); window._logLoaded = true; if (status) status.textContent = ''; } catch(e){ var tbody = document.getElementById('log-tbody'); if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error rendering log</td></tr>'; if (status) status.textContent = 'Error'; } }).catch(function(e){ var tbody = document.getElementById('log-tbody'); if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error loading /log: '+escapeHtml(String(e))+'</td></tr>'; if (status) status.textContent = 'Error'; }).finally(function(){ try { if (btn) btn.disabled = false; if (spinner) spinner.classList.remove('rotate'); } catch(e){} });
+  fetch('/log?lines='+encodeURIComponent(lines), {cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(obj){
+      try {
+        var arr = obj && Array.isArray(obj.lines) ? obj.lines : [];
+        renderLogArray(arr);
+        window._logLoaded = true;
+        if (status) status.textContent = '';
+      } catch(e) {
+        var tbody = document.getElementById('log-tbody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error rendering log</td></tr>';
+        if (status) status.textContent = 'Error';
+      }
+    })
+    .catch(function(e){
+      var tbody = document.getElementById('log-tbody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error loading /log: '+escapeHtml(String(e))+'</td></tr>';
+      if (status) status.textContent = 'Error';
+    })
+    .finally(function(){
+      try {
+        if (btn) btn.disabled = false;
+        if (classBtns && classBtns.length) classBtns.forEach(function(b){ b.disabled = false; });
+        if (spinner) spinner.classList.remove('rotate');
+      } catch(e){}
+    });
 }
 
 // escape HTML simple helper
