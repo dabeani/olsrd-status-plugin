@@ -314,12 +314,26 @@ var _olsrSort = { key: null, asc: true };
 function showTab(tabId, show) {
   var el = document.getElementById(tabId);
   if (!el) return;
+
+  // Find the corresponding nav link
+  var navLink = document.querySelector('#mainTabs a[href="#' + tabId + '"]');
+  if (navLink) {
+    var navItem = navLink.parentElement;
+    if (show) {
+      navItem.style.display = '';
+      el.style.display = 'block';
+      el.classList.remove('hidden');
+    } else {
+      navItem.style.display = 'none';
+      el.style.display = 'none';
+      el.classList.add('hidden');
+    }
+  }
+
   // diagnostics: log current state for debugging empty-tab issue
   try {
-    if (window._uiDebug) console.debug('showTab called for', tabId, 'show=', !!show, 'el.matches=', el.matches?el.matches(':visible') : 'n/a');
-    if (window._uiDebug) console.debug('  classes=', el.className, 'computedDisplay=', window.getComputedStyle(el).display);
+    if (window._uiDebug) console.debug('showTab called for', tabId, 'show=', !!show, 'el.style.display=', el.style.display);
   } catch(e){}
-  if (show) el.classList.remove('hidden'); else el.classList.add('hidden');
 }
 
 function populateDevicesTable(devices, airos) {
@@ -1695,59 +1709,63 @@ if (!document.addEventListener) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  // Initialize tab functionality
-  var tabLinks = document.querySelectorAll('#mainTabs a');
-  var tabPanes = document.querySelectorAll('.tab-pane');
+  // Simple, reliable tab system
+  const tabLinks = document.querySelectorAll('#mainTabs a');
+  const tabPanes = document.querySelectorAll('.tab-pane');
 
-  function switchTab(targetId) {
-    // Hide all tab panes (mark hidden + remove active)
-    tabPanes.forEach(function(pane) {
+  function showTab(targetId) {
+    // Hide all panes
+    tabPanes.forEach(pane => {
+      pane.style.display = 'none';
       pane.classList.remove('active');
-      pane.classList.add('hidden');
     });
 
-    // Remove active class from all tab links
-    tabLinks.forEach(function(link) {
+    // Remove active class from all links
+    tabLinks.forEach(link => {
       link.parentElement.classList.remove('active');
     });
 
-    // Show target tab pane
-    var targetPane = document.querySelector(targetId);
+    // Show target pane
+    const targetPane = document.querySelector(targetId);
     if (targetPane) {
-      // ensure the pane isn't hidden by capability toggles
-      targetPane.classList.remove('hidden');
+      targetPane.style.display = 'block';
       targetPane.classList.add('active');
-      // diagnostic: log pane state & key child counts to help debug empty-tab issues
-      try {
-        if (window._uiDebug) {
-          var paneStyle = window.getComputedStyle(targetPane);
-          console.debug('switchTab: activated', targetId, 'classes=', targetPane.className, 'computedDisplay=', paneStyle.display, 'visible=', paneStyle.display !== 'none');
-          // count visible rows in any table inside the pane
-          var tables = targetPane.querySelectorAll('table');
-          tables.forEach(function(t){ try { var trs = t.querySelectorAll('tbody tr'); console.debug(' switchTab: table', t.id || t.className || t.tagName, 'tbodyRows=', trs.length); } catch(e){} });
-          // count direct child nodes
-          console.debug(' switchTab: childNodes=', targetPane.childNodes ? targetPane.childNodes.length : 0);
-        }
-      } catch(e){}
-    }
 
-    // Add active class to clicked tab link
-    var activeLink = document.querySelector('#mainTabs a[href="' + targetId + '"]');
-    if (activeLink) {
-      activeLink.parentElement.classList.add('active');
+      // Add active class to target link
+      const targetLink = document.querySelector(`#mainTabs a[href="${targetId}"]`);
+      if (targetLink) {
+        targetLink.parentElement.classList.add('active');
+      }
+
+      // Load content for this tab
+      onTabShown(targetId);
     }
-  // notify tab shown hook
-  try { onTabShown && onTabShown(targetId); } catch(e) {}
   }
 
-  // Add click handlers to tab links
-  tabLinks.forEach(function(link) {
+  // Add click handlers
+  tabLinks.forEach(link => {
     link.addEventListener('click', function(e) {
       e.preventDefault();
-      var targetId = this.getAttribute('href');
-      switchTab(targetId);
+      const targetId = this.getAttribute('href');
+      showTab(targetId);
     });
   });
+
+  // Show initial active tab (only if not already visible)
+  const initialActive = document.querySelector('#mainTabs li.active a');
+  if (initialActive) {
+    const initialTabId = initialActive.getAttribute('href');
+    const initialPane = document.querySelector(initialTabId);
+    if (initialPane && initialPane.style.display !== 'block') {
+      showTab(initialTabId);
+    } else {
+      // Initial tab is already visible, just load its content
+      onTabShown(initialTabId);
+    }
+  } else {
+    // Fallback: show first tab
+    showTab('#tab-status');
+  }
 
   // onTabShown: called whenever a tab becomes active
   function onTabShown(id) {

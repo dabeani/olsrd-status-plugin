@@ -37,9 +37,10 @@
 .sidebar .nav { background: #fafafa; border:1px solid #eee; padding:8px; border-radius:6px; }
 .content { min-height:400px; }
 
-/* utility hidden class and strong active pane rule to avoid races */
-.hidden { display: none !important; }
-.tab-pane.active { display: block !important; }
+/* utility hidden class for conditional tab visibility */
+.hidden { display: none; }
+
+/* Tab content visibility is now handled by inline styles */
 
 /* smaller adjustments for mobile */
 @media (max-width: 768px) {
