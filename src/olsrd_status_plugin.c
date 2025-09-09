@@ -663,6 +663,7 @@ char g_olsrd_path[PATHLEN] = "";
 static int h_root(http_request_t *r);
 static int h_ipv4(http_request_t *r); static int h_ipv6(http_request_t *r);
 static int h_status(http_request_t *r); static int h_status_summary(http_request_t *r); static int h_status_olsr(http_request_t *r); static int h_status_lite(http_request_t *r);
+static int h_status_stats(http_request_t *r);
 static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
@@ -2819,6 +2820,30 @@ static int h_status_lite(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
 
+/* Minimal stats endpoint for frequent polling by UI: returns small JSON with
+ * olsr route/node counts and fetch queue counters. Kept intentionally tiny
+ * to be fast and safe for 5s polling.
+ */
+static int h_status_stats(http_request_t *r) {
+  char out[512];
+  unsigned long dropped=0, retries=0, successes=0;
+  METRIC_LOAD_ALL(dropped, retries, successes);
+  unsigned long unique_routes=0, unique_nodes=0;
+  METRIC_LOAD_UNIQUE(unique_routes, unique_nodes);
+  int qlen = 0; struct fetch_req *it = NULL;
+  pthread_mutex_lock(&g_fetch_q_lock);
+  it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+
+  /* Attempt to approximate olsr routes/nodes from cached metrics if available */
+  unsigned long olsr_routes = unique_routes; unsigned long olsr_nodes = unique_nodes;
+
+  snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
+           olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, strlen(out));
+  return 0;
+}
+
 /* --- Per-neighbor routes endpoint: /olsr/routes?via=1.2.3.4 --- */
 static int h_olsr_routes(http_request_t *r) {
   char via_ip[64]=""; get_query_param(r,"via", via_ip, sizeof(via_ip));
@@ -3869,6 +3894,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/summary", &h_status_summary);
   http_server_register_handler("/status/olsr", &h_status_olsr);
   http_server_register_handler("/status/lite", &h_status_lite);
+  http_server_register_handler("/status/stats", &h_status_stats);
   http_server_register_handler("/status.py", &h_status_py);
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);

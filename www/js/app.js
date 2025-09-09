@@ -1038,9 +1038,16 @@ updateUI = function(data) {
 };
 
   // Lightweight polling to keep statistics live: fetch /status/lite periodically and feed updateUI
-  window._stats_poll_interval_ms = window._stats_poll_interval_ms || 5000; // 5s default
+  window._stats_poll_interval_ms = 5000; // enforce 5s polling as requested
   function _statsPollOnce() {
-    fetch('/status/lite', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s) updateUI(s); } catch(e) {} }).catch(function(){});
+    fetch('/status/stats', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s) {
+      // Map minimal stats payload into shape expected by updateUI
+      var mapped = {};
+      if (typeof s.olsr_routes_count !== 'undefined') mapped.olsr_routes_count = s.olsr_routes_count;
+      if (typeof s.olsr_nodes_count !== 'undefined') mapped.olsr_nodes_count = s.olsr_nodes_count;
+      if (s.fetch_stats) mapped.fetch_stats = s.fetch_stats;
+      updateUI(mapped);
+    } } catch(e) {} }).catch(function(){});
   }
   function _startStatsPoll() {
     if (window._stats_poll_handle) return;
