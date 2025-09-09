@@ -1618,11 +1618,7 @@ window.addEventListener('load', function(){
   ensureTraceroutePreloaded();
   function ensureTraceroutePreloaded(){
     try { console.log('ensureTraceroutePreloaded: start'); } catch(e){}
-    var tbody = document.querySelector('#tracerouteTable tbody');
-    if (tbody) {
-      // Always clear table before populating
-      while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
-    }
+  var tbody = document.querySelector('#tracerouteTable tbody');
     // Always use dedicated traceroute endpoint which returns a clean JSON payload.
     fetch('/status/traceroute', {cache:'no-store'})
       .then(function(r){
@@ -1630,48 +1626,55 @@ window.addEventListener('load', function(){
         return r.json();
       })
       .then(function(st){
-        var summaryEl = document.getElementById('traceroute-summary');
-        if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
-          var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
-          if (trTab) trTab.parentElement.style.display = '';
-          var hops = st.trace_to_uplink.map(function(h){
-            return {
-              hop: h.hop || '',
-              ip: h.ip || h.host || '',
-              hostname: h.host || h.hostname || h.ip || '',
-              ping: h.ping || ''
-            };
-          });
-          populateTracerouteTable(hops);
-          if (summaryEl) {
-            summaryEl.textContent = 'Traceroute to ' + (st.trace_target || '') + ': ' + hops.length + ' hop(s)';
-            summaryEl.setAttribute('aria-label', 'Traceroute summary: destination ' + (st.trace_target || '') + ', ' + hops.length + ' hops');
-          }
-        } else {
-          // No precomputed hops available
-          if (tbody && !window._traceroutePopulatedAt) {
-            var tr = document.createElement('tr');
-            var td = document.createElement('td');
-            td.colSpan = 4;
-            td.textContent = 'No traceroute data available.';
-            tr.appendChild(td);
-            tbody.appendChild(tr);
-          }
-          if (summaryEl) {
-            summaryEl.textContent = 'Traceroute data not available.';
-            summaryEl.setAttribute('aria-label', 'Traceroute summary: no data');
-          }
-          try {
-            if (!window._tracerouteAutoRunDone && st && st.trace_target) {
-              var trInput = document.getElementById('tr-host');
-              if (trInput) {
-                trInput.value = st.trace_target;
-                window._tracerouteAutoRunDone = true;
-                setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+          var summaryEl = document.getElementById('traceroute-summary');
+          // Only replace content when we actually have hops to show. This avoids
+          // clearing a manually-run traceroute or recent results when /status
+          // does not include traceroute data.
+          if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
+            var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
+            if (trTab) trTab.parentElement.style.display = '';
+            var hops = st.trace_to_uplink.map(function(h){
+              return {
+                hop: h.hop || '',
+                ip: h.ip || h.host || '',
+                hostname: h.host || h.hostname || h.ip || '',
+                ping: h.ping || ''
+              };
+            });
+            populateTracerouteTable(hops);
+            if (summaryEl) {
+              summaryEl.textContent = 'Traceroute to ' + (st.trace_target || '') + ': ' + hops.length + ' hop(s)';
+              summaryEl.setAttribute('aria-label', 'Traceroute summary: destination ' + (st.trace_target || '') + ', ' + hops.length + ' hops');
+            }
+          } else {
+            // No precomputed hops available: only show a placeholder if the table
+            // is currently empty (no manual run or previous data present).
+            var hasRows = tbody && tbody.querySelectorAll && tbody.querySelectorAll('tr').length > 0;
+            if (!hasRows) {
+              if (tbody) {
+                var tr = document.createElement('tr');
+                var td = document.createElement('td');
+                td.colSpan = 4;
+                td.textContent = 'No traceroute data available.';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+              }
+              if (summaryEl) {
+                summaryEl.textContent = 'Traceroute data not available.';
+                summaryEl.setAttribute('aria-label', 'Traceroute summary: no data');
               }
             }
-          } catch(e) {}
-        }
+            try {
+              if (!window._tracerouteAutoRunDone && st && st.trace_target) {
+                var trInput = document.getElementById('tr-host');
+                if (trInput) {
+                  trInput.value = st.trace_target;
+                  window._tracerouteAutoRunDone = true;
+                  setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+                }
+              }
+            } catch(e) {}
+          }
       })
       .catch(function(){
         // Treat any failure as 'no traceroute data' and keep UI quiet (no debug logs).
@@ -2058,36 +2061,43 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       if (id === '#tab-traceroute') {
         try {
-          // ensure any precomputed traceroute in /status is rendered
-          safeFetchStatus({cache:'no-store'}).then(function(st){ try {
-              if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
-                var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
-                populateTracerouteTable(hops);
-                return;
-              }
-              // If server provided only a trace_target (no precomputed hops), trigger a live traceroute
-              // when the user opens the Traceroute tab. Guard with flags so we don't run repeatedly.
-              if (st && st.trace_target && !(st.trace_to_uplink && st.trace_to_uplink.length)) {
-                try {
-                  var trInput = document.getElementById('tr-host');
-                  if (trInput) {
-                    trInput.value = st.trace_target;
-                    // Only auto-run once per session unless the table is empty and not populated earlier
-                    if (!window._traceroutePopulatedAt && !window._tracerouteAutoRunDone) {
-                      window._tracerouteAutoRunDone = true;
-                      setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+          // Use the dedicated traceroute endpoint which returns a clean JSON payload
+          // and avoid fetching /status here because /status may omit trace_to_uplink
+          // and would otherwise overwrite a valid traceroute table.
+          fetch('/status/traceroute', {cache:'no-store'})
+            .then(function(r){ if (!r || !r.ok) throw new Error('traceroute endpoint unavailable'); return r.json(); })
+            .then(function(st){
+              try {
+                if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
+                  var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
+                  populateTracerouteTable(hops);
+                  return;
+                }
+                // If server provided only a trace_target (no precomputed hops), populate input and maybe auto-run
+                if (st && st.trace_target && !(st.trace_to_uplink && st.trace_to_uplink.length)) {
+                  try {
+                    var trInput = document.getElementById('tr-host');
+                    if (trInput) {
+                      trInput.value = st.trace_target;
+                      if (!window._traceroutePopulatedAt && !window._tracerouteAutoRunDone) {
+                        window._tracerouteAutoRunDone = true;
+                        setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+                      }
                     }
-                  }
-                } catch(e) {}
+                  } catch(e) {}
+                }
+              } catch(e) { /* ignore per-tab errors */ }
+            }).catch(function(){
+              // Only show fallback content if traceroute table is empty to avoid
+              // clobbering results populated by a recent /status/traceroute or manual run.
+              var tbody = document.querySelector('#tracerouteTable tbody');
+              var hasRows = tbody && tbody.querySelectorAll && tbody.querySelectorAll('tr').length > 0;
+              if (!hasRows) {
+                if (tbody) {
+                  tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Traceroute data not available. This tab requires backend API access.</td></tr>';
+                }
               }
-            } catch(e){}
-          }).catch(function(){
-            // Show fallback content when API fails
-            var tbody = document.querySelector('#tracerouteTable tbody');
-            if (tbody) {
-              tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Traceroute data not available. This tab requires backend API access.</td></tr>';
-            }
-          });
+            });
         } catch(e) {}
       }
       if (id === '#tab-neighbors') {
