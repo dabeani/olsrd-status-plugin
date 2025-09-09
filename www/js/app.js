@@ -1592,17 +1592,64 @@ window.addEventListener('load', function(){
   ensureTraceroutePreloaded();
   function ensureTraceroutePreloaded(){
     var tbody = document.querySelector('#tracerouteTable tbody');
-    if (tbody && tbody.children.length) return; // already populated
-    fetch('/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
-      if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length){
-        var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
-        if (trTab) trTab.parentElement.style.display='';
-        var hops = st.trace_to_uplink.map(function(h){ return { hop: h.hop || '', ip: h.ip || h.host || '', hostname: h.host || h.hostname || h.ip || '', ping: h.ping || '' }; });
-        populateTracerouteTable(hops);
+    if (tbody) {
+      // Always clear table before populating
+      while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    }
+    fetch('/status', {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(st){
         var summaryEl = document.getElementById('traceroute-summary');
-        if (summaryEl) summaryEl.textContent = 'Traceroute to ' + (st.trace_target || '') + ': ' + hops.length + ' hop(s)';
-      }
-    }).catch(function(){});
+        if (st && st.trace_to_uplink && Array.isArray(st.trace_to_uplink) && st.trace_to_uplink.length) {
+          var trTab = document.querySelector('#mainTabs a[href="#tab-traceroute"]');
+          if (trTab) trTab.parentElement.style.display = '';
+          var hops = st.trace_to_uplink.map(function(h){
+            return {
+              hop: h.hop || '',
+              ip: h.ip || h.host || '',
+              hostname: h.host || h.hostname || h.ip || '',
+              ping: h.ping || ''
+            };
+          });
+          populateTracerouteTable(hops);
+          if (summaryEl) {
+            summaryEl.textContent = 'Traceroute to ' + (st.trace_target || '') + ': ' + hops.length + ' hop(s)';
+            summaryEl.setAttribute('aria-label', 'Traceroute summary: destination ' + (st.trace_target || '') + ', ' + hops.length + ' hops');
+          }
+        } else {
+          // Show empty/error state
+          if (tbody) {
+            var tr = document.createElement('tr');
+            var td = document.createElement('td');
+            td.colSpan = 4;
+            td.textContent = 'No traceroute data available.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+          }
+          if (summaryEl) {
+            summaryEl.textContent = 'Traceroute data not available.';
+            summaryEl.setAttribute('aria-label', 'Traceroute summary: no data');
+          }
+          if (window._uiDebug) console.debug('No traceroute data found in /status response');
+        }
+      })
+      .catch(function(e){
+        if (window._uiDebug) console.error('Error loading traceroute data:', e);
+        var tbody = document.querySelector('#tracerouteTable tbody');
+        if (tbody) {
+          var tr = document.createElement('tr');
+          var td = document.createElement('td');
+          td.colSpan = 4;
+          td.textContent = 'Error loading traceroute data.';
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+        }
+        var summaryEl = document.getElementById('traceroute-summary');
+        if (summaryEl) {
+          summaryEl.textContent = 'Traceroute error.';
+          summaryEl.setAttribute('aria-label', 'Traceroute summary: error');
+        }
+      });
   }
   mt.addEventListener('click', function(e){
     var a = e.target.closest('a'); if(!a) return;
