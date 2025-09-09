@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="/css/custom.css">
     <style>
   body { padding: 20px; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
   pre { background:#f8f8f8; padding:10px; border:1px solid #ddd; }
   .small-muted { font-size:90%; color:#666; }
   .dl-horizontal dt { width:200px; }
@@ -45,36 +47,32 @@
           <h3 style="margin:0">Web Status <small id="main-host">&nbsp;</small></h3>
         </div>
         <div class="header-actions">
-          <div id="nav-host">
-            <span id="hostname">hostname.nodename.wien.funkfeuer.at</span>
-            <!-- small debug button to open fetch debug modal (avoids making entire header clickable) -->
-            <button id="fetch-debug-btn" class="btn btn-xs btn-default" title="Fetch Debug" style="margin-left:8px;">DBG</button>
-          </div>
+          <div id="nav-host"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></div>
         </div>
       </header>
 
       <div class="row">
         <aside class="col-sm-3 sidebar">
           <ul id="mainTabs" class="nav nav-pills nav-stacked">
-            <li role="presentation" class="active"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht <span id="tab-main-status" class="tab-status">✓</span></a></li>
-            <li role="presentation"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status <span id="tab-status-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-olsr"><span class="glyphicon glyphicon-random" aria-hidden="true"></span> OLSR Links <span id="tab-olsr-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-stats"><span class="glyphicon glyphicon-signal" aria-hidden="true"></span> Statistics <span id="tab-stats-status" class="tab-status">○</span></a></li>
-            <li role="presentation" id="tab-olsrd2-links" style="display:none"><a href="#tab-neighbors"><span class="glyphicon glyphicon-link" aria-hidden="true"></span> OLSRd2-Links <span id="tab-neighbors-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections <span id="tab-connections-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions <span id="tab-versions-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute <span id="tab-traceroute-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-log"><span class="glyphicon glyphicon-list" aria-hidden="true"></span> Log <span id="tab-log-status" class="tab-status">○</span></a></li>
-            <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2 <span id="tab-olsr2-status" class="tab-status">○</span></a></li>
-            <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt <span id="tab-contact-status" class="tab-status">✓</span></a></li>
-            <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin <span id="tab-admin-status" class="tab-status">○</span></a></li>
+            <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
+            <li role="presentation" class="active"><a href="#tab-status"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> Status</a></li>
+            <li role="presentation"><a href="#tab-olsr"><span class="glyphicon glyphicon-random" aria-hidden="true"></span> OLSR Links</a></li>
+            <li role="presentation"><a href="#tab-stats"><span class="glyphicon glyphicon-signal" aria-hidden="true"></span> Statistics</a></li>
+            <li role="presentation" id="tab-olsrd2-links" style="display:none"><a href="#tab-neighbors"><span class="glyphicon glyphicon-link" aria-hidden="true"></span> OLSRd2-Links</a></li>
+            <li role="presentation"><a href="#tab-connections"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Connections</a></li>
+            <li role="presentation"><a href="#tab-versions"><span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions</a></li>
+            <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
+            <li role="presentation"><a href="#tab-log"><span class="glyphicon glyphicon-list" aria-hidden="true"></span> Log</a></li>
+            <li role="presentation" id="tab-olsr2-link" style="display:none"><a href="#tab-olsr2"><span class="glyphicon glyphicon-dashboard" aria-hidden="true"></span> OLSRv2</a></li>
+            <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
+            <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
           </ul>
         </aside>
 
         <main class="col-sm-9 content" style="margin-top:8px;">
           <div class="tab-content" style="margin-top:0">
         <!-- Status -->
-        <div id="tab-status" class="tab-pane">
+        <div id="tab-status" class="tab-pane active">
           <div id="status-card" class="panel panel-default" style="padding:10px; margin-bottom:10px;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
               <div>
@@ -98,6 +96,7 @@
             <dd>&nbsp;</dd>
           </dl>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#devicesTable" placeholder="Search..."></div>
+          <div class="table-responsive">
             <table id="devicesTable" class="table table-hover table-bordered table-condensed">
               <thead>
                 <tr>
@@ -116,6 +115,7 @@
               </thead>
               <tbody></tbody>
             </table>
+          </div>
         </div>
 
         <!-- Statistics -->
@@ -124,22 +124,21 @@
           <div id="fetch-tab-wrap">
             <div id="stats-graphs" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start;">
               <div id="stats-graph-olsr" style="flex:1; min-width:220px;">
-              <div id="stats-graph-routes" style="flex:1; min-width:220px;">
-                <div style="font-weight:600; margin-bottom:6px">Routes</div>
+                <div style="font-weight:600; margin-bottom:6px">OLSR: routes / nodes</div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <div id="routes-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
-                  <span class="spark-ts" id="routes-ts" title="">-</span>
-                  <div id="routes-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
-                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="routes-cur" style="font-weight:600">-</div><div style="font-size:10px">routes</div></div>
+                  <div id="olsr-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                  <span class="spark-ts" id="olsr-ts" title="">-</span>
+                  <div id="olsr-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
+                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="olsr-cur" style="font-weight:600">-</div><div style="font-size:10px">routes</div></div>
                 </div>
               </div>
-              <div id="stats-graph-nodes" style="flex:1; min-width:220px;">
-                <div style="font-weight:600; margin-bottom:6px">Nodes</div>
+              <div id="stats-graph-fetch" style="flex:1; min-width:220px;">
+                <div style="font-weight:600; margin-bottom:6px">Fetch Queue</div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <div id="nodes-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
-                  <span class="spark-ts" id="nodes-ts" title="">-</span>
-                  <div id="nodes-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
-                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="nodes-cur" style="font-weight:600">-</div><div style="font-size:10px">nodes</div></div>
+                  <div id="fetch-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                  <span class="spark-ts" id="fetch-ts" title="">-</span>
+                  <div id="fetch-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
+                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="fetch-cur" style="font-weight:600">-</div><div style="font-size:10px">queued</div></div>
                 </div>
               </div>
             </div>
@@ -148,9 +147,9 @@
         </div>
 
         <!-- Main / Willkommen -->
-        <div id="tab-main" class="tab-pane active" style="display: block;">
+        <div id="tab-main" class="tab-pane">
           <div class="page-header">
-            <h1>Willkommen auf <span id="main-host">FunkFeuer</span></h1>
+            <h1>Willkommen auf <span id="main-host"> </span></h1>
           </div>
           <div class="panel panel-default">
             <div class="panel-body"><b>WAS?</b></div>
@@ -165,9 +164,7 @@
         <!-- Contact -->
         <div id="tab-contact" class="tab-pane">
           <h3>Kontakt</h3>
-          <p>Kontaktinformationen für FunkFeuer Wien.</p>
-          <p>Website: <a href="https://funkfeuer.at" target="_blank">funkfeuer.at</a></p>
-          <p>Email: <a href="mailto:info@funkfeuer.at">info@funkfeuer.at</a></p>
+          <p>Kontaktinformationen...</p>
         </div>
 
         <!-- OLSR Links -->
@@ -175,6 +172,7 @@
       <h3>OLSR Links <button id="refresh-links" class="btn btn-xs btn-default"><span class="spin" id="refresh-links-spinner"></span>Refresh</button>
             <span id="links-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#olsrLinksTable" placeholder="Search..."></div>
+          <div class="table-responsive">
             <table id="olsrLinksTable" class="table table-bordered table-condensed">
               <thead>
                 <tr>
@@ -194,12 +192,14 @@
               </thead>
               <tbody></tbody>
             </table>
+          </div>
         </div>
 
         <!-- Neighbors -->
         <div id="tab-neighbors" class="tab-pane">
           <h3>Neighbors</h3>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#neighborsTable" placeholder="Search..."></div>
+          <div class="table-responsive">
             <table id="neighborsTable" class="table table-bordered table-condensed">
               <thead>
                 <tr>
@@ -214,6 +214,7 @@
               </thead>
               <tbody></tbody>
             </table>
+          </div>
         </div>
 
         <!-- Connections -->
@@ -221,6 +222,7 @@
           <h3>Connections <button id="refresh-connections" class="btn btn-xs btn-default"><span class="spin" id="refresh-connections-spinner"></span>Refresh</button>
             <span id="connections-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#connectionsTable" placeholder="Search..."></div>
+          <div class="table-responsive">
             <table id="connectionsTable" class="table table-condensed table-striped">
               <thead>
                 <tr>
@@ -234,6 +236,7 @@
               </thead>
               <tbody></tbody>
             </table>
+          </div>
         </div>
 
         <!-- Simple Modal for Route Details -->
@@ -339,50 +342,30 @@
           </div>
           <pre id="p-traceroute" style="display:none;">Traceroute output will appear here</pre>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#tracerouteTable" placeholder="Search..."></div>
+          <div class="table-responsive" style="margin-top:8px">
             <table id="tracerouteTable" class="table table-condensed table-striped">
               <thead>
                 <tr><th>#</th><th>IP</th><th>Hostname</th><th>Ping</th></tr>
               </thead>
               <tbody></tbody>
             </table>
+          </div>
         </div>
 
         <!-- Log -->
         <div id="tab-log" class="tab-pane">
-          <h3>Log <span id="log-status" class="small-muted"></span></h3>
+          <h3>Log <button id="refresh-log" class="btn btn-xs btn-default"><span class="spin" id="refresh-log-spinner"></span>Refresh</button>
+            <span id="log-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input id="log-filter" class="table-search-input form-control input-sm" placeholder="Filter log lines..."></div>
           <div style="margin-top:8px">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
-              <div>
-                <label for="log-page-size" class="small-muted">Page size:</label>
-                <select id="log-page-size" class="input-sm form-control" style="width:80px; display:inline-block; margin-left:6px;">
-                  <option value="10">10</option>
-                  <option value="20" selected>20</option>
-                  <option value="50">50</option>
-                </select>
-              </div>
-              <div style="display:flex; gap:8px; align-items:center;">
-                <button class="btn btn-xs btn-default refresh-log-btn"><span class="spin" id="refresh-log-spinner-2"></span>Refresh</button>
-                <span class="small-muted">&nbsp;</span>
-              </div>
-            </div>
-            <div id="log-table-wrap" style="max-height:520px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:0;">
-              <!-- Table will be rendered here by JS -->
-              <table id="log-table" class="table table-condensed" style="margin:0; font-size:12px;">
-                <thead>
-                  <tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr>
-                </thead>
-                <tbody id="log-tbody"><tr><td colspan="3" class="text-muted" style="padding:12px">Loading...</td></tr></tbody>
-              </table>
-            </div>
-            <div id="log-pager" style="margin-top:8px"></div>
+            <pre id="log-pre" style="max-height:520px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px; font-size:12px; white-space:pre-wrap; word-break:break-word;">Loading...</pre>
           </div>
         </div>
 
         <!-- OLSR2 (populated when available) -->
         <div id="tab-olsr2" class="tab-pane">
           <h3>OLSR2</h3>
-          <pre id="olsr2info">OLSR2 information will appear here when available.</pre>
+          <pre id="olsr2info"></pre>
         </div>
 
         <!-- Admin (link only) -->
