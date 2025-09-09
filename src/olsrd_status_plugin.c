@@ -110,11 +110,17 @@ static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
 /* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
+
+
 /* Helper macros to update counters using atomics if available, else mutex */
 #if HAVE_C11_ATOMICS
 static _Atomic unsigned long atom_fetch_dropped = 0;
 static _Atomic unsigned long atom_fetch_retries = 0;
 static _Atomic unsigned long atom_fetch_successes = 0;
+#if 1
+static _Atomic unsigned long atom_unique_routes = 0;
+static _Atomic unsigned long atom_unique_nodes = 0;
+#endif
 #define METRIC_INC_DROPPED() atomic_fetch_add_explicit(&atom_fetch_dropped, 1UL, memory_order_relaxed)
 #define METRIC_INC_RETRIES() atomic_fetch_add_explicit(&atom_fetch_retries, 1UL, memory_order_relaxed)
 #define METRIC_INC_SUCCESS() atomic_fetch_add_explicit(&atom_fetch_successes, 1UL, memory_order_relaxed)
@@ -129,6 +135,8 @@ static _Atomic unsigned long atom_fetch_successes = 0;
 static unsigned long g_metric_fetch_dropped = 0; /* requests dropped due to full queue */
 static unsigned long g_metric_fetch_retries = 0; /* total retry attempts performed */
 static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
+static unsigned long g_metric_unique_routes = 0;
+static unsigned long g_metric_unique_nodes = 0;
 #define METRIC_INC_DROPPED() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_dropped++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
 #define METRIC_INC_RETRIES() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_retries++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
 #define METRIC_INC_SUCCESS() do { pthread_mutex_lock(&g_metrics_lock); g_metric_fetch_successes++; pthread_mutex_unlock(&g_metrics_lock); } while(0)
@@ -139,6 +147,13 @@ static unsigned long g_metric_fetch_successes = 0; /* successful fetches */
     (void)(r); (void)(s); \
     pthread_mutex_unlock(&g_metrics_lock); \
   } while(0)
+#define METRIC_SET_UNIQUE(u_routes, u_nodes) do { pthread_mutex_lock(&g_metrics_lock); g_metric_unique_routes = (unsigned long)(u_routes); g_metric_unique_nodes = (unsigned long)(u_nodes); pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#define METRIC_LOAD_UNIQUE(out_routes, out_nodes) do { pthread_mutex_lock(&g_metrics_lock); out_routes = g_metric_unique_routes; out_nodes = g_metric_unique_nodes; pthread_mutex_unlock(&g_metrics_lock); } while(0)
+#endif
+
+#if HAVE_C11_ATOMICS
+#define METRIC_SET_UNIQUE(u_routes, u_nodes) do { atomic_store_explicit(&atom_unique_routes, (unsigned long)(u_routes), memory_order_relaxed); atomic_store_explicit(&atom_unique_nodes, (unsigned long)(u_nodes), memory_order_relaxed); } while(0)
+#define METRIC_LOAD_UNIQUE(out_routes, out_nodes) do { out_routes = atomic_load_explicit(&atom_unique_routes, memory_order_relaxed); out_nodes = atomic_load_explicit(&atom_unique_nodes, memory_order_relaxed); } while(0)
 #endif
 
 /* Simple fetch queue structures */
@@ -1541,10 +1556,16 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if (!arr) {
     /* fallback: first array in document */
     arr = strchr(raw, '[');
-    if (!arr) return -1;
+    if (!arr) {
+      METRIC_SET_UNIQUE(0, 0);
+      return -1;
+    }
   }
   const char *q = arr; int depth = 0;
-  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) return -1; buf[0]=0;
+  /* accumulate totals for metrics */
+  int total_unique_routes = 0;
+  int total_unique_nodes = 0;
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) { METRIC_SET_UNIQUE(0,0); return -1; } buf[0]=0;
   json_buf_append(&buf, &len, &cap, "["); int first = 1; int parsed = 0;
   /* Detect legacy (olsrd) or v2 (olsr2 json embedded) route/topology sections. We first look for plain
    * "routes" / "topology" keys; if not found, fall back to the wrapper keys we emit in /status (olsr_routes_raw / olsr_topology_raw).
@@ -1644,6 +1665,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       json_buf_append(&buf,&len,&cap,",\"is_default\":%s", is_default?"true":"false");
       json_buf_append(&buf,&len,&cap,"}");
       parsed++;
+  /* update totals for metrics */
+  if (routes_cnt > 0) total_unique_routes += routes_cnt;
+  if (nodes_cnt > 0) total_unique_nodes += nodes_cnt;
       q = r; continue;
     }
     q++;
@@ -1674,7 +1698,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
   return 0;
   }
-  json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len; return 0;
+    json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len; if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; } METRIC_SET_UNIQUE(total_unique_routes, total_unique_nodes); return 0;
   if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
 }
 
@@ -2243,7 +2267,8 @@ static int h_status(http_request_t *r) {
   {
     unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
     DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
-    APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, _de, _den, _ded, _dp, _dpn, _dpd, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+  unsigned long _ur = 0, _un = 0; METRIC_LOAD_UNIQUE(_ur, _un);
+  APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"unique_routes\":%lu,\"unique_nodes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, _de, _den, _ded, _dp, _dpn, _dpd, _ur, _un, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
   }
   /* include suggested UI autos-refresh ms */
   APPEND("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
@@ -3516,6 +3541,24 @@ nothing_found:
   out[0]=0;
 }
 
+/* In-process stderr capture: pipe stderr into a reader thread and store recent lines
+ * in a circular buffer so the /log HTTP endpoint can return recent plugin logs.
+ * Buffer size is configurable via PlParam 'log_buf_lines' or environment
+ * variable OLSRD_STATUS_LOG_BUF_LINES. Client requests to /log?lines=N will
+ * be capped to the configured buffer size.
+ */
+#define LOG_LINE_MAX 512
+static int g_log_buf_lines = 100; /* default entries */
+static int g_cfg_log_buf_lines_set = 0; /* set if PlParam provided */
+static char *g_log_buf_data = NULL; /* malloc'd contiguous buffer: lines * LOG_LINE_MAX bytes */
+static int g_log_head = 0; /* next write index */
+static int g_log_count = 0; /* number of stored lines */
+static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_stderr_pipe_rd = -1;
+static int g_orig_stderr_fd = -1;
+static pthread_t g_stderr_thread = 0;
+static int g_stderr_thread_running = 0;
+
 static int set_str_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
   if (!value || !data) return 1;
   snprintf((char*)data, 511, "%s", value);
@@ -3539,6 +3582,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_queue_warn) g_cfg_fetch_queue_warn_set = 1;
   if (data == &g_fetch_queue_crit) g_cfg_fetch_queue_crit_set = 1;
   if (data == &g_fetch_dropped_warn) g_cfg_fetch_dropped_warn_set = 1;
+  if (data == &g_log_buf_lines) g_cfg_log_buf_lines_set = 1;
   return 0;
 }
 
@@ -3573,6 +3617,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
   { .name = "fetch_auto_refresh_ms", .set_plugin_parameter = &set_int_param, .data = &g_fetch_auto_refresh_ms, .addon = {0} },
   { .name = "fetch_log_queue", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_queue, .addon = {0} },
+  { .name = "log_buf_lines", .set_plugin_parameter = &set_int_param, .data = &g_log_buf_lines, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
   { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
@@ -3757,6 +3802,18 @@ int olsrd_plugin_init(void) {
     }
   }
 
+  /* Log buffer size: override via env if PlParam not set. OLSRD_STATUS_LOG_BUF_LINES */
+  if (!g_cfg_log_buf_lines_set) {
+    const char *env_lb = getenv("OLSRD_STATUS_LOG_BUF_LINES");
+    if (env_lb && env_lb[0]) {
+      char *endptr = NULL; long v = strtol(env_lb, &endptr, 10);
+      if (endptr && *endptr == '\0' && v > 0 && v <= 10000) {
+        g_log_buf_lines = (int)v;
+        fprintf(stderr, "[status-plugin] setting log buffer lines from env: %d\n", g_log_buf_lines);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_LOG_BUF_LINES value: %s (ignored)\n", env_lb);
+    }
+  }
+
   /* Start periodic reporter if requested */
   if (g_fetch_report_interval > 0) {
     pthread_create(&g_fetch_report_thread, NULL, fetch_reporter, NULL);
@@ -3885,25 +3942,20 @@ static int get_query_param(http_request_t *r, const char *key, char *out, size_t
   return 0;
 }
 
-/* In-process stderr capture: pipe stderr into a reader thread and store recent lines
- * in a circular buffer so the /log HTTP endpoint can return recent plugin logs.
- */
-#define LOG_BUF_LINES 100
-#define LOG_LINE_MAX 512
-static char g_log_buf[LOG_BUF_LINES][LOG_LINE_MAX];
-static int g_log_head = 0; /* next write index */
-static int g_log_count = 0; /* number of stored lines */
-static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
-static int g_stderr_pipe_rd = -1;
-static int g_orig_stderr_fd = -1;
-static pthread_t g_stderr_thread = 0;
-static int g_stderr_thread_running = 0;
+/* helper to compute pointer to a line slot */
+static inline char *log_line_ptr(int idx) {
+  if (!g_log_buf_data || g_log_buf_lines <= 0) return NULL;
+  return g_log_buf_data + ((size_t)idx * (size_t)LOG_LINE_MAX);
+}
 
 static void ringbuf_push(const char *s) {
   pthread_mutex_lock(&g_log_lock);
-  snprintf(g_log_buf[g_log_head], LOG_LINE_MAX, "%s", s);
-  g_log_head = (g_log_head + 1) % LOG_BUF_LINES;
-  if (g_log_count < LOG_BUF_LINES) g_log_count++;
+  char *slot = log_line_ptr(g_log_head);
+  if (slot) {
+    snprintf(slot, LOG_LINE_MAX, "%s", s);
+    g_log_head = (g_log_head + 1) % g_log_buf_lines;
+    if (g_log_count < g_log_buf_lines) g_log_count++;
+  }
   pthread_mutex_unlock(&g_log_lock);
 }
 
@@ -3941,6 +3993,12 @@ static void *stderr_reader_thread(void *arg) {
 static int start_stderr_capture(void) {
   int pipefd[2];
   if (pipe(pipefd) != 0) return -1;
+  /* allocate ring buffer storage based on configured size */
+  if (!g_log_buf_data) {
+    size_t tot = (size_t)g_log_buf_lines * (size_t)LOG_LINE_MAX;
+    g_log_buf_data = malloc(tot);
+    if (g_log_buf_data) memset(g_log_buf_data, 0, tot);
+  }
   /* duplicate current stderr so we can forward writes to it */
   g_orig_stderr_fd = dup(STDERR_FILENO);
   if (g_orig_stderr_fd < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
@@ -3964,28 +4022,35 @@ static void stop_stderr_capture(void) {
     dup2(g_orig_stderr_fd, STDERR_FILENO);
     close(g_orig_stderr_fd); g_orig_stderr_fd = -1;
   }
+  if (g_log_buf_data) { free(g_log_buf_data); g_log_buf_data = NULL; }
 }
 
 /* HTTP handler for /log - supports ?lines=N or ?minutes=M (approximate) */
 static int h_log(http_request_t *r) {
-  char qv[64]; int lines = 100;
-  if (get_query_param(r, "lines", qv, sizeof(qv))) { lines = atoi(qv); if (lines <= 0) lines = 2000; if (lines > LOG_BUF_LINES) lines = LOG_BUF_LINES; }
+  char qv[64]; int lines = g_log_buf_lines; /* default to configured buffer size */
+  if (get_query_param(r, "lines", qv, sizeof(qv))) {
+    lines = atoi(qv);
+    if (lines <= 0) lines = g_log_buf_lines;
+  }
+  /* Enforce server-side maximum: do not allow client to request more than buffer capacity */
+  if (lines > g_log_buf_lines) lines = g_log_buf_lines;
   if (get_query_param(r, "minutes", qv, sizeof(qv))) {
     int mins = atoi(qv); if (mins > 0) {
-      int approx = mins * 30; if (approx < lines) lines = approx; if (lines > LOG_BUF_LINES) lines = LOG_BUF_LINES;
+      int approx = mins * 30; if (approx < lines) lines = approx; if (lines > g_log_buf_lines) lines = g_log_buf_lines;
     }
   }
   pthread_mutex_lock(&g_log_lock);
   int avail = g_log_count;
   if (lines < avail) avail = lines;
-  int start = (g_log_head - avail + LOG_BUF_LINES) % LOG_BUF_LINES;
+  int start = (g_log_head - avail + g_log_buf_lines) % g_log_buf_lines;
   /* build JSON in heap buffer */
   size_t est = (size_t)avail * 256 + 256; char *buf = malloc(est); if (!buf) { pthread_mutex_unlock(&g_log_lock); send_json(r, "{\"err\":\"oom\"}\n"); return 0; }
   size_t off = 0; off += snprintf(buf+off, est-off, "{\"lines\":[");
   for (int i = 0; i < avail; i++) {
-    int idx = (start + i) % LOG_BUF_LINES;
+    int idx = (start + i) % g_log_buf_lines;
     /* escape double quotes and backslashes */
-    char esc[LOG_LINE_MAX*2]; size_t eo = 0; const char *s = g_log_buf[idx];
+    char esc[LOG_LINE_MAX*2]; size_t eo = 0; const char *s = log_line_ptr(idx);
+    if (!s) s = "";
     for (size_t j = 0; s[j] && eo+3 < sizeof(esc); j++) {
       if (s[j] == '"' || s[j] == '\\') { esc[eo++] = '\\'; esc[eo++] = s[j]; }
       else if ((unsigned char)s[j] < 32) { esc[eo++] = '?'; }
