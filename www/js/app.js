@@ -238,78 +238,12 @@ function setHTML(id, html) {
 // rejects on network/error conditions.
 function safeFetchStatus(fetchOptions) {
   fetchOptions = fetchOptions || {cache:'no-store'};
-  return fetch('/status', fetchOptions).then(function(r){ return r.text(); }).then(function(txt){
-    // Fast-path: attempt JSON.parse of the whole body
-    try { return JSON.parse(txt); } catch(e) {}
-
-    // Scan the text for all top-level, balanced JSON objects and try to parse them.
-    // Score candidates and pick the one most likely to be the full /status payload
-    function findTopLevelJsonCandidates(str) {
-      var res = [];
-      if (!str) return res;
-      var depth = 0, start = -1;
-      for (var i = 0; i < str.length; i++) {
-        var ch = str.charAt(i);
-        if (ch === '{') {
-          if (depth === 0) start = i;
-          depth++;
-        } else if (ch === '}') {
-          depth--;
-          if (depth === 0 && start !== -1) {
-            res.push(str.substring(start, i+1));
-            start = -1;
-          }
-        }
-      }
-      return res;
-    }
-
-    try {
-      var candidates = findTopLevelJsonCandidates(txt);
-      var best = null, bestScore = -Infinity;
-      for (var j = 0; j < candidates.length; j++) {
-        var s = candidates[j];
-        try {
-          var o = JSON.parse(s);
-          if (!o || typeof o !== 'object') continue;
-          // scoring heuristics: prefer objects that include traceroute/state keys
-          var score = 0;
-          if (o.hasOwnProperty('trace_target')) score += 200;
-          if (o.hasOwnProperty('trace_to_uplink')) score += 150;
-          if (o.hasOwnProperty('trace_hops')) score += 150;
-          // generic boost for more keys (likely a full status object)
-          try { score += Object.keys(o).length; } catch(e) {}
-          // if this candidate contains many of the known status keys, bump it
-          var known = ['queue_length','dropped','processed','unique_routes','unique_nodes','thresholds'];
-          for (var k = 0; k < known.length; k++) if (o.hasOwnProperty(known[k])) score += 5;
-          // prefer later candidates on tie
-          if (score > bestScore || (score === bestScore && j >= 0)) {
-            best = o; bestScore = score;
-          }
-        } catch(e2) {
-          // ignore parse failures for individual candidates
-        }
-      }
-      if (best) return best;
-    } catch(e3) {}
-
-    // Fallback: try parsing last balanced object as before
-    function extractLastJsonObject(str) {
-      if (!str) return null;
-      var lastCandidate = null; var depth = 0; var start = -1;
-      for (var i = 0; i < str.length; i++) {
-        var ch = str.charAt(i);
-        if (ch === '{') { if (depth === 0) start = i; depth++; }
-        else if (ch === '}') { depth--; if (depth === 0 && start !== -1) { lastCandidate = str.substring(start, i+1); start = -1; } }
-      }
-      return lastCandidate;
-    }
-    try {
-      var candidate = extractLastJsonObject(txt);
-      if (candidate) return JSON.parse(candidate);
-    } catch(e4) {}
-
-    throw new Error('Failed to parse /status response');
+  // Simplified: require the server to return a valid JSON payload. If parsing
+  // fails, propagate the error to callers instead of attempting fragile
+  // salvage heuristics.
+  return fetch('/status', fetchOptions).then(function(r){
+    if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
+    return r.json();
   });
 }
 
@@ -2896,43 +2830,8 @@ function runTraceroute(){
     // Be tolerant: /status may sometimes include non-JSON wrapper text on some systems.
     // Fetch as text and try to extract the first JSON object instead of relying on r.json().
     fetch('/status',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(statusText){
-        var st = null;
-        try {
-          // Fast-path: try direct parse
-          st = JSON.parse(statusText);
-        } catch(e) {
-          // Salvage attempt: extract the first balanced JSON object (handles
-          // additional non-JSON text or concatenated JSON blobs).
-          try {
-            // Prefer the last top-level JSON object in case the response contains
-            // wrapper text or multiple concatenated JSON blobs.
-            function extractLastJsonObject(str) {
-              if (!str) return null;
-              var lastCandidate = null;
-              var depth = 0;
-              var start = -1;
-              for (var i = 0; i < str.length; i++) {
-                var ch = str.charAt(i);
-                if (ch === '{') {
-                  if (depth === 0) start = i;
-                  depth++;
-                } else if (ch === '}') {
-                  depth--;
-                  if (depth === 0 && start !== -1) {
-                    lastCandidate = str.substring(start, i + 1);
-                    start = -1;
-                  }
-                }
-              }
-              return lastCandidate;
-            }
-            var candidate = extractLastJsonObject(statusText);
-            if (candidate) st = JSON.parse(candidate);
-          } catch (e2) {
-            if (window._uiDebug) console.debug('detectLegacyOlsrd: status parse failed', e2, statusText && statusText.slice ? statusText.slice(0,200) : statusText);
-            st = null;
-          }
-        }
+      var st = null;
+      try { st = JSON.parse(statusText); } catch(e) { st = null; }
       // Determine whether to show legacy OLSR tab. If status doesn't explicitly
       // indicate legacy olsrd, probe the /olsr/links endpoint before hiding the tab
       // so we don't incorrectly hide it when live data exists elsewhere.
