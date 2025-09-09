@@ -1843,50 +1843,7 @@ document.addEventListener('DOMContentLoaded', function() {
     showTab('#tab-main');
   }
 
-  // Test function to verify all tabs work
-  window.testAllTabs = function() {
-    console.log('Testing all tabs...');
-    const allLinks = Array.from(document.querySelectorAll('#mainTabs a'));
-    let index = 0;
-
-    function testNextTab() {
-      if (index < allLinks.length) {
-        const link = allLinks[index];
-        const href = link.getAttribute('href');
-        console.log('Testing tab:', index + 1, '/', allLinks.length, href);
-
-        // Click the tab
-        link.click();
-
-        // Check if the corresponding pane is visible after a short delay
-        setTimeout(function() {
-          const pane = document.querySelector(href);
-          if (pane) {
-            const isVisible = pane.style.display === 'block' || pane.classList.contains('active');
-            console.log('Tab', href, 'visible:', isVisible);
-            if (!isVisible) {
-              console.error('Tab', href, 'is not visible!');
-            }
-          } else {
-            console.error('Pane not found for', href);
-          }
-
-          index++;
-          setTimeout(testNextTab, 500); // Wait 500ms between tests
-        }, 200);
-      } else {
-        console.log('Tab testing complete');
-      }
-    }
-
-    testNextTab();
-  };
-
-  // Auto-run tab test after 2 seconds for debugging
-  setTimeout(function() {
-    console.log('Auto-testing tabs in 2 seconds...');
-    setTimeout(window.testAllTabs, 2000);
-  }, 2000);
+  // ...existing code...
 
   // onTabShown: called whenever a tab becomes active
   function onTabShown(id) {
@@ -2028,30 +1985,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   detectPlatformAndLoad();
   try { _startStatsPoll(); } catch(e) {}
-  // Temporary: ensure all sidebar tabs are visible and trigger lazy-load for each
-  try {
-    function forceShowAllTabs() {
-      try {
-        console.log('Force showing all tabs...');
-        var lis = document.querySelectorAll('#mainTabs li');
-        lis.forEach(function(li){ li.style.display = ''; });
-        var links = Array.prototype.slice.call(document.querySelectorAll('#mainTabs a'));
-        var activeLink = document.querySelector('#mainTabs li.active a');
-        var origHref = activeLink ? activeLink.getAttribute('href') : null;
-        // Click each link sequentially to trigger lazy-load hooks without leaving UI in a wrong state
-        links.forEach(function(a, idx){
-          setTimeout(function(){ try {
-            console.log('Force clicking tab:', idx + 1, a.getAttribute('href'));
-            a.click();
-          } catch(e){ console.error('Error clicking tab:', e); } }, idx * 250);
-        });
-        // restore original active tab after all loads
-        setTimeout(function(){ try { if (origHref) { var el = document.querySelector('#mainTabs a[href="'+origHref+'"]'); if (el) el.click(); } } catch(e){} }, (links.length * 250) + 150);
-      } catch(e) {}
-    }
-    // run shortly after load to allow initial handlers to attach
-    setTimeout(forceShowAllTabs, 300);
-  } catch(e) {}
+  // ...existing code...
 });
 
 // --- Log tab helpers ---
