@@ -973,18 +973,43 @@ function pushStat(seriesName, value) {
 
 function renderSparkline(containerId, series, color) {
   var el = document.getElementById(containerId); if (!el) return;
-  var w = el.clientWidth || 300; var h = el.clientHeight || 80; var pad = 4;
+  var w = el.clientWidth || 300; var h = el.clientHeight || 80; var pad = 6;
   var maxv = Math.max(1, Math.max.apply(null, series)); var minv = Math.min.apply(null, series);
-  var pts = series.map(function(v,i){ var x = Math.round((i/(series.length-1||1))*(w-2*pad))+pad; var y = Math.round(h- pad - ((v - minv)/(maxv - minv || 1))*(h-2*pad)); return x+','+y; });
+  // build points with coordinates and keep numeric values
+  var coords = series.map(function(v,i){ var x = Math.round((i/(series.length-1||1))*(w-2*pad))+pad; var y = Math.round(h- pad - ((v - minv)/(maxv - minv || 1))*(h-2*pad)); return {x:x, y:y, v: Number(v)||0, i:i}; });
+  var pts = coords.map(function(p){ return p.x+','+p.y; });
   var svg = '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">';
-  // area
   if (pts.length) {
     svg += '<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>';
-    // small circles on last point
-    var last = pts[pts.length-1].split(','); svg += '<circle cx="'+last[0]+'" cy="'+last[1]+'" r="3" fill="'+color+'"></circle>';
+    // circles for each datapoint (small) with data-index/value for tooltip
+    coords.forEach(function(p){ svg += '<circle class="spark-dot" data-idx="'+p.i+'" data-val="'+p.v+'" cx="'+p.x+'" cy="'+p.y+'" r="3" fill="'+color+'"/>'; });
+    // emphasize last point
+    var last = coords[coords.length-1]; svg += '<circle cx="'+last.x+'" cy="'+last.y+'" r="4" fill="'+color+'" stroke="#fff" stroke-width="1"></circle>';
   }
   svg += '</svg>';
   el.innerHTML = svg;
+  // wire tooltip behavior for dots
+  try {
+    var tooltip = document.getElementById('spark-tooltip');
+    if (!tooltip) return;
+    var dots = el.querySelectorAll('.spark-dot');
+    dots.forEach(function(d){
+      d.addEventListener('mouseenter', function(ev){
+        var val = this.getAttribute('data-val');
+        tooltip.style.display = 'block';
+        tooltip.textContent = String(val);
+      });
+      d.addEventListener('mousemove', function(ev){
+        // position tooltip near mouse, but keep inside window
+        var mx = ev.clientX + 12; var my = ev.clientY + 8;
+        var tw = tooltip.offsetWidth || 80; var th = tooltip.offsetHeight || 20;
+        var winW = window.innerWidth || document.documentElement.clientWidth;
+        if (mx + tw + 8 > winW) mx = winW - tw - 12;
+        tooltip.style.left = mx + 'px'; tooltip.style.top = my + 'px';
+      });
+      d.addEventListener('mouseleave', function(){ tooltip.style.display = 'none'; });
+    });
+  } catch(e) {}
 }
 
 // Hook into updateUI to sample stats when status payload contains them
@@ -1012,25 +1037,25 @@ updateUI = function(data) {
       pushStat('fetch_processing', fp);
     } catch(e) {}
     // render graphs
-      try { renderSparkline('olsr-graph', window._stats_series.olsr_routes || [], '#5a9bd8'); } catch(e){}
-      try { renderSparkline('fetch-graph', window._stats_series.fetch_queued || [], '#f39c12'); } catch(e){}
+  try { renderSparkline('routes-graph', window._stats_series.olsr_routes || [], '#5a9bd8'); } catch(e){}
+  try { renderSparkline('nodes-graph', window._stats_series.olsr_nodes || [], '#6cc070'); } catch(e){}
       // update numeric indicators (last values)
       try {
         var olsArr = window._stats_series.olsr_routes || [];
-        var fetchArr = window._stats_series.fetch_queued || [];
+        var nodesArr = window._stats_series.olsr_nodes || [];
         var olsCur = olsArr.length? olsArr[olsArr.length-1]: 0;
-        var fetchCur = fetchArr.length? fetchArr[fetchArr.length-1]: 0;
-        var oel = document.getElementById('olsr-cur'); if (oel) oel.textContent = String(olsCur);
-        var fel = document.getElementById('fetch-cur'); if (fel) fel.textContent = String(fetchCur);
+        var nodesCur = nodesArr.length? nodesArr[nodesArr.length-1]: 0;
+        var oel = document.getElementById('routes-cur'); if (oel) oel.textContent = String(olsCur);
+        var nel = document.getElementById('nodes-cur'); if (nel) nel.textContent = String(nodesCur);
         // set live-dot to updating briefly
-          var od = document.getElementById('olsr-live'); if (od) { od.classList.remove('live-dot-stale'); od.classList.add('live-dot-updating'); clearTimeout(od._staleTO); od._staleTO = setTimeout(function(){ try{ od.classList.remove('live-dot-updating'); od.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
-          var fd = document.getElementById('fetch-live'); if (fd) { fd.classList.remove('live-dot-stale'); fd.classList.add('live-dot-updating'); clearTimeout(fd._staleTO); fd._staleTO = setTimeout(function(){ try{ fd.classList.remove('live-dot-updating'); fd.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+          var od = document.getElementById('routes-live'); if (od) { od.classList.remove('live-dot-stale'); od.classList.add('live-dot-updating'); clearTimeout(od._staleTO); od._staleTO = setTimeout(function(){ try{ od.classList.remove('live-dot-updating'); od.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+          var fd = document.getElementById('nodes-live'); if (fd) { fd.classList.remove('live-dot-stale'); fd.classList.add('live-dot-updating'); clearTimeout(fd._staleTO); fd._staleTO = setTimeout(function(){ try{ fd.classList.remove('live-dot-updating'); fd.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
           // update small timestamp next to live dots (human and title tooltip)
           try {
             var now = new Date();
             var iso = now.toLocaleTimeString();
-            var ots = document.getElementById('olsr-ts'); if (ots) { ots.textContent = iso; ots.title = now.toString(); }
-            var fts = document.getElementById('fetch-ts'); if (fts) { fts.textContent = iso; fts.title = now.toString(); }
+            var ots = document.getElementById('routes-ts'); if (ots) { ots.textContent = iso; ots.title = now.toString(); }
+            var fts = document.getElementById('nodes-ts'); if (fts) { fts.textContent = iso; fts.title = now.toString(); }
           } catch(e) {}
       } catch(e) {}
   } catch(e) {}

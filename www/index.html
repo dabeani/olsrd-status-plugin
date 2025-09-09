@@ -52,6 +52,7 @@
       </header>
 
       <div class="row">
+  <div id="spark-tooltip" style="display:none;"></div>
         <aside class="col-sm-3 sidebar">
           <ul id="mainTabs" class="nav nav-pills nav-stacked">
             <li role="presentation"><a href="#tab-main"><span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span> Übersicht</a></li>
@@ -124,21 +125,22 @@
           <div id="fetch-tab-wrap">
             <div id="stats-graphs" style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start;">
               <div id="stats-graph-olsr" style="flex:1; min-width:220px;">
-                <div style="font-weight:600; margin-bottom:6px">OLSR: routes / nodes</div>
+              <div id="stats-graph-routes" style="flex:1; min-width:220px;">
+                <div style="font-weight:600; margin-bottom:6px">Routes</div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <div id="olsr-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
-                  <span class="spark-ts" id="olsr-ts" title="">-</span>
-                  <div id="olsr-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
-                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="olsr-cur" style="font-weight:600">-</div><div style="font-size:10px">routes</div></div>
+                  <div id="routes-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                  <span class="spark-ts" id="routes-ts" title="">-</span>
+                  <div id="routes-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
+                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="routes-cur" style="font-weight:600">-</div><div style="font-size:10px">routes</div></div>
                 </div>
               </div>
-              <div id="stats-graph-fetch" style="flex:1; min-width:220px;">
-                <div style="font-weight:600; margin-bottom:6px">Fetch Queue</div>
+              <div id="stats-graph-nodes" style="flex:1; min-width:220px;">
+                <div style="font-weight:600; margin-bottom:6px">Nodes</div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <div id="fetch-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
-                  <span class="spark-ts" id="fetch-ts" title="">-</span>
-                  <div id="fetch-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
-                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="fetch-cur" style="font-weight:600">-</div><div style="font-size:10px">queued</div></div>
+                  <div id="nodes-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                  <span class="spark-ts" id="nodes-ts" title="">-</span>
+                  <div id="nodes-graph" style="height:80px; background:#fafafa; border:1px solid #eee; padding:6px; border-radius:4px; flex:1;"></div>
+                  <div class="spark-info" style="width:64px; text-align:right; font-size:11px; color:#666;"><div id="nodes-cur" style="font-weight:600">-</div><div style="font-size:10px">nodes</div></div>
                 </div>
               </div>
             </div>

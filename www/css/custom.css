@@ -79,6 +79,10 @@
 .live-dot-stale { background: #ccc !important; box-shadow: none; }
 .spark-info { display:flex; flex-direction:column; justify-content:center; align-items:flex-end; }
 
+/* Graph tooltip for sparkline datapoints */
+#spark-tooltip { position: absolute; pointer-events: none; background: rgba(0,0,0,0.8); color: #fff; padding:6px 8px; border-radius:4px; font-size:12px; z-index:3000; display:none; }
+.spark-dot { cursor:default; }
+
 /* tiny timestamp next to live dot showing last sample time */
 .spark-ts { font-size:11px; color:#666; margin-left:8px; vertical-align:middle; }
 .spark-ts[title] { cursor:help; }
