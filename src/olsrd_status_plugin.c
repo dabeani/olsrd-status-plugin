@@ -1628,6 +1628,23 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (arrp) topology_section = arrp - 10 > alt ? alt : arrp;
     }
   }
+  /* Extra heuristic: some vendors/versions embed topology-like arrays without the exact key names we search for.
+   * If we still don't have a topology_section, look for common topology object keys and pick the nearest
+   * array '[' before the first match so the counting helpers can operate on that slice. This is tolerant
+   * and non-destructive: we only set topology_section if it's currently NULL.
+   */
+  if (!topology_section) {
+    const char *candidates[] = { "\"lastHopIP\"", "\"lastHop\"", "\"destinationIP\"", "\"destination\"", "\"destIpAddress\"", NULL };
+    for (int ci = 0; candidates[ci] && !topology_section; ++ci) {
+      const char *found = strstr(raw, candidates[ci]);
+      if (found) {
+        /* walk backwards to find the '[' that opens the array containing this object */
+        const char *b = found;
+        while (b > raw && *b != '[') --b;
+        if (b > raw && *b == '[') topology_section = b;
+      }
+    }
+  }
   const char *neighbors_section = strstr(raw, "\"neighbors\"");
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
