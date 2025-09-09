@@ -1507,7 +1507,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
    */
   struct gw_stat { char gw[64]; int routes; int nodes; int name_count; char names[256][64]; };
   #define MAX_GW_STATS 512
-  static struct gw_stat *gw_stats = NULL; static int gw_stats_count = 0; /* not cached between calls */
+  struct gw_stat *gw_stats = NULL; int gw_stats_count = 0; /* local per-call allocation to avoid cross-thread races */
   do {
     char *rt_raw=NULL; size_t rlen=0;
     const char *rt_cmds[] = {
