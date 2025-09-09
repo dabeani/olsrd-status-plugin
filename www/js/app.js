@@ -798,12 +798,10 @@ function showRoutesFor(remoteIp) {
         var device = '';
         var metric = '';
         if (parts.length === 2) {
-          // could be either "destination device" or "destination metric"
           var maybe = parts[1];
           if (!isNaN(Number(maybe))) { metric = maybe; }
           else { device = maybe; }
         } else if (parts.length >= 3) {
-          // assume last token is metric if numeric, rest between dest and last are device
           var last = parts[parts.length-1];
           if (!isNaN(Number(last))) {
             metric = last;
@@ -1286,9 +1284,19 @@ function populateFetchStats(fs) {
           hostEl.style.background = '';
           hostEl.classList.remove('fetch-crit-blink');
         }
-        // write back with icon and hostname preserved
+        // update hostname span and optional icon wrapper (do not clobber children)
         var prefix = '- ';
-        if (hostnameSpan) hostEl.innerHTML = prefix + iconHtml + '<span id="hostname">' + hostText + '</span>'; else hostEl.innerHTML = prefix + iconHtml + hostText;
+        var hostnameSpanEl = hostEl.querySelector('#hostname');
+        if (!hostnameSpanEl) { hostnameSpanEl = document.createElement('span'); hostnameSpanEl.id = 'hostname'; hostEl.appendChild(hostnameSpanEl); }
+        hostnameSpanEl.textContent = hostText || '';
+        // manage small icon wrapper
+        if (iconHtml) {
+          var iconWrap = hostEl.querySelector('.fetch-icon');
+          if (!iconWrap) { iconWrap = document.createElement('span'); iconWrap.className = 'fetch-icon'; hostEl.insertBefore(iconWrap, hostnameSpanEl); }
+          iconWrap.innerHTML = iconHtml;
+        } else {
+          var iconWrap = hostEl.querySelector('.fetch-icon'); if (iconWrap) iconWrap.parentNode.removeChild(iconWrap);
+        }
         hostEl.title = 'Fetch queue: queued=' + queued + ', dropped=' + dropped + ', retries=' + retries;
         // when crit, show toast with short message
         try {
@@ -1303,10 +1311,7 @@ function populateFetchStats(fs) {
             if (toast) toast.style.display = 'none';
           }
         } catch(e){}
-        // make header clickable to open fetch debug modal
-        try {
-          hostEl.onclick = function(){ var body = document.getElementById('fetch-debug-body'); if (body) { body.textContent='Loading...'; fetch('/fetch_debug', {cache:'no-store'}).then(function(r){return r.text();}).then(function(t){ try { var obj = JSON.parse(t); body.textContent = JSON.stringify(obj, null, 2); } catch(e) { body.textContent = t; } }).catch(function(e){ body.textContent = 'ERR: '+e; }); } showModal('fetch-debug-modal'); };
-        } catch(e){}
+  // Note: header-wide click removed to preserve other controls; use debug button instead
       }
     } catch(e) { /* ignore header update errors */ }
 
