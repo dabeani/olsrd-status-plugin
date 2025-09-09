@@ -1548,6 +1548,18 @@ function detectPlatformAndLoad() {
               if (summaryEl) summaryEl.textContent = 'Traceroute to ' + (status.trace_target || '') + ': ' + hops.length + ' hop(s)';
             }
           } catch(e) { /* ignore */ }
+          // If backend provided a trace target but didn't include trace_to_uplink here,
+          // ensure the traceroute input is populated and run once on initial load.
+          try {
+            if (!window._tracerouteAutoRunDone && status && status.trace_target && !(status.trace_to_uplink && status.trace_to_uplink.length)) {
+              var trInput = document.getElementById('tr-host');
+              if (trInput) {
+                trInput.value = status.trace_target;
+                window._tracerouteAutoRunDone = true;
+                setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+              }
+            }
+          } catch(e) {}
         });
     });
   } catch(e) {
@@ -1631,6 +1643,23 @@ window.addEventListener('load', function(){
             summaryEl.setAttribute('aria-label', 'Traceroute summary: no data');
           }
           if (window._uiDebug) console.debug('No traceroute data found in /status response');
+
+          // If backend provided a traceroute target but did not include a precomputed
+          // trace_to_uplink, populate the traceroute input and trigger a live
+          // traceroute once on initial page load. Guard with a global flag to
+          // avoid repeated runs during subsequent events.
+          try {
+            if (!window._tracerouteAutoRunDone && st && st.trace_target) {
+              var trInput = document.getElementById('tr-host');
+              if (trInput) {
+                trInput.value = st.trace_target;
+                // mark as done before starting to avoid re-entrancy
+                window._tracerouteAutoRunDone = true;
+                // give the DOM a tick before running to ensure UI elements are ready
+                setTimeout(function(){ try { runTraceroute(); } catch(e){} }, 10);
+              }
+            }
+          } catch(e) {}
         }
       })
       .catch(function(e){
