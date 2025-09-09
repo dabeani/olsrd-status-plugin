@@ -316,6 +316,7 @@ function showTab(tabId, show) {
 
 function populateDevicesTable(devices, airos) {
   var tbody = document.querySelector('#devicesTable tbody');
+  console.debug('populateDevicesTable called, devices=', (devices && devices.length) || 0);
   tbody.innerHTML = '';
   if (!devices || !Array.isArray(devices) || devices.length === 0) {
     var tbody = document.querySelector('#devicesTable tbody');
@@ -408,6 +409,7 @@ function populateDevicesTable(devices, airos) {
 function populateOlsrLinksTable(links) {
   var tbody = document.querySelector('#olsrLinksTable tbody');
   if (!tbody) return; tbody.innerHTML = '';
+  console.debug('populateOlsrLinksTable called, links=', (links && links.length) || 0);
   if (!links || !Array.isArray(links) || links.length === 0) {
     var tbody = document.querySelector('#olsrLinksTable tbody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-muted">No links found</td></tr>';
@@ -518,6 +520,8 @@ function populateOlsrLinksTable(links) {
   tr.appendChild(actTd);
     tbody.appendChild(tr);
   });
+  // after populating, ensure the table is visible when inside an active tab (avoid race where CSS hides it)
+  try { var pane = document.getElementById('tab-olsr'); if (pane && pane.classList.contains('active')) { /* no-op but forces style recalculation in some browsers */ pane.style.display = ''; setTimeout(function(){ pane.style.display = ''; }, 10); } } catch(e) {}
   // wire header sorting to re-sort the links array and re-render
   try {
     var lheaders = document.querySelectorAll('#olsrLinksTable thead th');
