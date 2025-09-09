@@ -1023,12 +1023,31 @@ updateUI = function(data) {
         var oel = document.getElementById('olsr-cur'); if (oel) oel.textContent = String(olsCur);
         var fel = document.getElementById('fetch-cur'); if (fel) fel.textContent = String(fetchCur);
         // set live-dot to updating briefly
-        var od = document.getElementById('olsr-live'); if (od) { od.classList.remove('live-dot-stale'); od.classList.add('live-dot-updating'); clearTimeout(od._staleTO); od._staleTO = setTimeout(function(){ try{ od.classList.remove('live-dot-updating'); od.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
-        var fd = document.getElementById('fetch-live'); if (fd) { fd.classList.remove('live-dot-stale'); fd.classList.add('live-dot-updating'); clearTimeout(fd._staleTO); fd._staleTO = setTimeout(function(){ try{ fd.classList.remove('live-dot-updating'); fd.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+          var od = document.getElementById('olsr-live'); if (od) { od.classList.remove('live-dot-stale'); od.classList.add('live-dot-updating'); clearTimeout(od._staleTO); od._staleTO = setTimeout(function(){ try{ od.classList.remove('live-dot-updating'); od.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+          var fd = document.getElementById('fetch-live'); if (fd) { fd.classList.remove('live-dot-stale'); fd.classList.add('live-dot-updating'); clearTimeout(fd._staleTO); fd._staleTO = setTimeout(function(){ try{ fd.classList.remove('live-dot-updating'); fd.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
+          // update small timestamp next to live dots (human and title tooltip)
+          try {
+            var now = new Date();
+            var iso = now.toLocaleTimeString();
+            var ots = document.getElementById('olsr-ts'); if (ots) { ots.textContent = iso; ots.title = now.toString(); }
+            var fts = document.getElementById('fetch-ts'); if (fts) { fts.textContent = iso; fts.title = now.toString(); }
+          } catch(e) {}
       } catch(e) {}
   } catch(e) {}
   try { _original_updateUI(data); } catch(e) {}
 };
+
+  // Lightweight polling to keep statistics live: fetch /status/lite periodically and feed updateUI
+  window._stats_poll_interval_ms = window._stats_poll_interval_ms || 5000; // 5s default
+  function _statsPollOnce() {
+    fetch('/status/lite', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s) updateUI(s); } catch(e) {} }).catch(function(){});
+  }
+  function _startStatsPoll() {
+    if (window._stats_poll_handle) return;
+    _statsPollOnce();
+    window._stats_poll_handle = setInterval(_statsPollOnce, window._stats_poll_interval_ms);
+  }
+  function _stopStatsPoll(){ if (window._stats_poll_handle) { clearInterval(window._stats_poll_handle); window._stats_poll_handle = null; } }
 
 // update last-updated timestamp helper (called from updateUI)
 function setLastUpdated(ts) {
@@ -1700,6 +1719,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   detectPlatformAndLoad();
+  try { _startStatsPoll(); } catch(e) {}
 });
 
 // --- Log tab helpers ---
