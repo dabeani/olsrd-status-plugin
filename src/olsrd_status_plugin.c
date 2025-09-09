@@ -3534,7 +3534,8 @@ static int h_traceroute(http_request_t *r) {
         if (hops[i].host[0] == '\0' && hops[i].ip[0] != '\0') {
           char resolved[256] = "";
           if (resolve_ip_to_hostname(hops[i].ip, resolved, sizeof(resolved)) == 0) {
-            snprintf(hops[i].host, sizeof(hops[i].host), "%s", resolved);
+            /* limit copy to host buffer size to avoid truncation warnings */
+            snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, resolved);
           }
         }
       }
