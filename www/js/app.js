@@ -1513,11 +1513,6 @@ function detectPlatformAndLoad() {
     try { return JSON.parse(text); }
     catch(e) {
       try { console.error(label + ' JSON parse failed', e); } catch(_e) {}
-      // Fallback: extract all top-level JSON objects/arrays from the text
-      // and try to pick the most appropriate one. This helps when the
-      // backend emits multiple concatenated JSON objects (for example many
-      // device entries written one after the other) or when wrapper lines
-      // surround the JSON payload.
       function extractAllTopLevelJSON(s) {
         var out = [];
         if (!s || !s.length) return out;
@@ -1537,7 +1532,7 @@ function detectPlatformAndLoad() {
                 var obj = JSON.parse(cand);
                 out.push(obj);
               } catch (err) {
-                /* ignore parse errors for this candidate */
+                // ignore parse errors for this candidate
               }
               i = j; // advance outer loop past this object
               break;
@@ -1549,11 +1544,7 @@ function detectPlatformAndLoad() {
       try {
         var candidates = extractAllTopLevelJSON(String(text || ''));
         if (!candidates || candidates.length === 0) return null;
-        // If we found a single candidate, return it directly
         if (candidates.length === 1) return candidates[0];
-        // If multiple candidates found, prefer any candidate that looks like
-        // a full status object (has common top-level keys). Use the last
-        // matching candidate if multiple.
         var preferredKeys = ['hostname','devices','links','fetch_stats','ip','uptime'];
         for (var k = candidates.length - 1; k >= 0; k--) {
           var c = candidates[k];
@@ -1563,9 +1554,6 @@ function detectPlatformAndLoad() {
             }
           }
         }
-        // If none look like a full status, but all candidates are plain
-        // objects that resemble device entries (have ipv4/hwaddr), return
-        // them wrapped as a devices array so updateUI can use it.
         var allDevices = true;
         for (var ii = 0; ii < candidates.length; ii++) {
           var cc = candidates[ii];
@@ -1573,7 +1561,6 @@ function detectPlatformAndLoad() {
           if (typeof cc.ipv4 === 'undefined' && typeof cc.hwaddr === 'undefined' && typeof cc.ip === 'undefined') { allDevices = false; break; }
         }
         if (allDevices) return { devices: candidates };
-        // Fallback: return the last successfully parsed candidate
         return candidates[candidates.length - 1];
       } catch(_e) { return null; }
     }
