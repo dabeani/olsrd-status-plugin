@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #if defined(__linux__)
 # include <sys/sysinfo.h>
 #endif
@@ -1771,46 +1772,64 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   if (cache_buf && cache_len > 0 && nowt - cache_time < CACHE_TTL) {
     *out = malloc(cache_len+1); if(!*out) return -1; memcpy(*out, cache_buf, cache_len+1); *outlen = cache_len; return 0;
   }
-  /* Skip external tool - use internal broadcast discovery only */
-  /* Internal broadcast discovery */
-  int s = ubnt_open_broadcast_socket(0);
-  if (s >= 0) {
-    struct sockaddr_in dst; memset(&dst,0,sizeof(dst)); dst.sin_family=AF_INET; dst.sin_port=htons(10001); dst.sin_addr.s_addr=inet_addr("255.255.255.255");
-    if (ubnt_discover_send(s,&dst)==0) {
-      struct ubnt_kv kv[64];
-      struct timeval start, now; gettimeofday(&start,NULL);
+  /* Skip external tool - use internal broadcast discovery only.
+   * Enhanced: enumerate local IPv4 interfaces and perform a per-interface
+   * broadcast probe by binding the socket to each local address. This helps
+   * reach devices on different VLANs/subinterfaces automatically.
+   */
+  {
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) == 0 && ifap) {
+      struct ifaddrs *ifa;
       struct agg_dev { char ip[64]; char hostname[256]; char hw[64]; char product[128]; char uptime[64]; char mode[64]; char essid[128]; char firmware[128]; int have_hostname,have_hw,have_product,have_uptime,have_mode,have_essid,have_firmware,have_fwversion; char fwversion_val[128]; } devices[64];
       int dev_count = 0;
-      for(;;) {
-        size_t kvn = sizeof(kv)/sizeof(kv[0]); char ip[64]=""; int n = ubnt_discover_recv(s, ip, sizeof(ip), kv, &kvn);
-        if (n > 0 && ip[0]) {
-          int idx=-1; for(int di=0; di<dev_count; ++di){ if(strcmp(devices[di].ip, ip)==0){ idx=di; break; } }
-            if(idx<0 && dev_count < (int)(sizeof(devices)/sizeof(devices[0]))){ idx = dev_count++; memset(&devices[idx],0,sizeof(devices[idx])); snprintf(devices[idx].ip,sizeof(devices[idx].ip),"%s",ip); }
-            if(idx>=0){
-              for(size_t i=0;i<kvn;i++){
-                if(strcmp(kv[i].key,"hostname")==0 && !devices[idx].have_hostname){ snprintf(devices[idx].hostname,sizeof(devices[idx].hostname),"%s",kv[i].value); devices[idx].have_hostname=1; }
-                else if(strcmp(kv[i].key,"hwaddr")==0 && !devices[idx].have_hw){ snprintf(devices[idx].hw,sizeof(devices[idx].hw),"%s",kv[i].value); devices[idx].have_hw=1; }
-                else if(strcmp(kv[i].key,"product")==0 && !devices[idx].have_product){ snprintf(devices[idx].product,sizeof(devices[idx].product),"%s",kv[i].value); devices[idx].have_product=1; }
-                else if(strcmp(kv[i].key,"uptime")==0 && !devices[idx].have_uptime){ snprintf(devices[idx].uptime,sizeof(devices[idx].uptime),"%s",kv[i].value); devices[idx].have_uptime=1; }
-                else if(strcmp(kv[i].key,"mode")==0 && !devices[idx].have_mode){ snprintf(devices[idx].mode,sizeof(devices[idx].mode),"%s",kv[i].value); devices[idx].have_mode=1; }
-                else if(strcmp(kv[i].key,"essid")==0 && !devices[idx].have_essid){ snprintf(devices[idx].essid,sizeof(devices[idx].essid),"%s",kv[i].value); devices[idx].have_essid=1; }
-                else if(strcmp(kv[i].key,"firmware")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; }
-                else if(strcmp(kv[i].key,"fwversion")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; devices[idx].have_fwversion=1; }
+      /* We'll collect devices across all interfaces into the same devices[] array */
+      for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue; /* skip loopback */
+        char local_ip[INET_ADDRSTRLEN] = {0};
+        struct sockaddr_in *sin = (struct sockaddr_in*)ifa->ifa_addr;
+        inet_ntop(AF_INET, &sin->sin_addr, local_ip, sizeof(local_ip));
+
+        int s = ubnt_open_broadcast_socket_bound(local_ip, 0);
+        if (s < 0) continue;
+
+        struct sockaddr_in dst; memset(&dst,0,sizeof(dst)); dst.sin_family=AF_INET; dst.sin_port=htons(10001); dst.sin_addr.s_addr=inet_addr("255.255.255.255");
+        if (ubnt_discover_send(s,&dst)==0) {
+          struct ubnt_kv kv[64];
+          struct timeval start, now; gettimeofday(&start,NULL);
+          /* per-interface wait/collect loop (short) */
+          for(;;) {
+            size_t kvn = sizeof(kv)/sizeof(kv[0]); char ip[64]=""; int n = ubnt_discover_recv(s, ip, sizeof(ip), kv, &kvn);
+            if (n > 0 && ip[0]) {
+              int idx=-1; for(int di=0; di<dev_count; ++di){ if(strcmp(devices[di].ip, ip)==0){ idx=di; break; } }
+              if(idx<0 && dev_count < (int)(sizeof(devices)/sizeof(devices[0]))){ idx = dev_count++; memset(&devices[idx],0,sizeof(devices[idx])); snprintf(devices[idx].ip,sizeof(devices[idx].ip),"%s",ip); }
+              if(idx>=0){
+                for(size_t i=0;i<kvn;i++){
+                  if(strcmp(kv[i].key,"hostname")==0 && !devices[idx].have_hostname){ snprintf(devices[idx].hostname,sizeof(devices[idx].hostname),"%s",kv[i].value); devices[idx].have_hostname=1; }
+                  else if(strcmp(kv[i].key,"hwaddr")==0 && !devices[idx].have_hw){ snprintf(devices[idx].hw,sizeof(devices[idx].hw),"%s",kv[i].value); devices[idx].have_hw=1; }
+                  else if(strcmp(kv[i].key,"product")==0 && !devices[idx].have_product){ snprintf(devices[idx].product,sizeof(devices[idx].product),"%s",kv[i].value); devices[idx].have_product=1; }
+                  else if(strcmp(kv[i].key,"uptime")==0 && !devices[idx].have_uptime){ snprintf(devices[idx].uptime,sizeof(devices[idx].uptime),"%s",kv[i].value); devices[idx].have_uptime=1; }
+                  else if(strcmp(kv[i].key,"mode")==0 && !devices[idx].have_mode){ snprintf(devices[idx].mode,sizeof(devices[idx].mode),"%s",kv[i].value); devices[idx].have_mode=1; }
+                  else if(strcmp(kv[i].key,"essid")==0 && !devices[idx].have_essid){ snprintf(devices[idx].essid,sizeof(devices[idx].essid),"%s",kv[i].value); devices[idx].have_essid=1; }
+                  else if(strcmp(kv[i].key,"firmware")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; }
+                  else if(strcmp(kv[i].key,"fwversion")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; devices[idx].have_fwversion=1; }
+                }
               }
             }
+            gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
+            if (ms > 300) { ubnt_discover_send(s,&dst); }
+            if (ms > 500) break; /* shorter per-interface window */
+            usleep(20000);
+          }
         }
-        gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
-  if (ms > 300) { ubnt_discover_send(s,&dst); }
-  if (ms > 800) break;
-  usleep(20000);
+        close(s);
+        /* small pause to avoid overwhelming the network */
+        usleep(20000);
       }
-      close(s);
-      for(int di=0; di<dev_count; ++di){ if((!devices[di].have_hostname || !devices[di].have_hw) && devices[di].ip[0]){ char arp_mac[64]=""; char arp_host[256]=""; arp_enrich_ip(devices[di].ip, arp_mac, sizeof(arp_mac), arp_host, sizeof(arp_host)); if(!devices[di].have_hw && arp_mac[0]){ snprintf(devices[di].hw,sizeof(devices[di].hw),"%s",arp_mac); devices[di].have_hw=1; } if(!devices[di].have_hostname && arp_host[0]){ snprintf(devices[di].hostname,sizeof(devices[di].hostname),"%s",arp_host); devices[di].have_hostname=1; } } }
-      size_t cap=4096; size_t len=0; char *b = malloc(cap); if(!b) goto broadcast_fail; b[0]=0; json_buf_append(&b,&len,&cap,"[");
-      for(int di=0; di<dev_count; ++di){ if(di) json_buf_append(&b,&len,&cap,","); json_buf_append(&b,&len,&cap,"{\"ipv4\":"); json_append_escaped(&b,&len,&cap,devices[di].ip); json_buf_append(&b,&len,&cap,",\"hwaddr\":"); json_append_escaped(&b,&len,&cap,devices[di].hw); json_buf_append(&b,&len,&cap,",\"hostname\":"); json_append_escaped(&b,&len,&cap,devices[di].hostname); json_buf_append(&b,&len,&cap,",\"product\":"); json_append_escaped(&b,&len,&cap,devices[di].product); json_buf_append(&b,&len,&cap,",\"uptime\":"); json_append_escaped(&b,&len,&cap,devices[di].uptime); json_buf_append(&b,&len,&cap,",\"mode\":"); json_append_escaped(&b,&len,&cap,devices[di].mode); json_buf_append(&b,&len,&cap,",\"essid\":"); json_append_escaped(&b,&len,&cap,devices[di].essid); json_buf_append(&b,&len,&cap,",\"firmware\":"); json_append_escaped(&b,&len,&cap,devices[di].firmware); json_buf_append(&b,&len,&cap,",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"}"); }
-      json_buf_append(&b,&len,&cap,"]\n"); *out=b; *outlen=len; free(cache_buf); cache_buf=malloc(len+1); if(cache_buf){ memcpy(cache_buf,b,len); cache_buf[len]=0; cache_len=len; cache_time=nowt; } fprintf(stderr,"[status-plugin] internal broadcast discovery merged %d devices (%zu bytes)\n", dev_count, len); return 0;
+      freeifaddrs(ifap);
     }
-    close(s);
   }
 broadcast_fail:
   /* Use internal broadcast discovery */

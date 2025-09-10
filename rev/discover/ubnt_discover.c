@@ -117,6 +117,41 @@ int ubnt_open_broadcast_socket(uint16_t port_bind) {
     return s;
 }
 
+int ubnt_open_broadcast_socket_bound(const char *local_ip, uint16_t port_bind) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return -1;
+
+    int on = 1;
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port_bind);
+    if (local_ip && local_ip[0]) {
+        if (inet_pton(AF_INET, local_ip, &addr.sin_addr) != 1) {
+            close(s); return -1;
+        }
+    } else {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    }
+
+    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        // Not fatal for discovery; allow ephemeral port bind by retrying with 0
+        addr.sin_port = htons(0);
+        if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            close(s);
+            return -1;
+        }
+    }
+
+    // non-blocking for nicer integration
+    int flags = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, flags | O_NONBLOCK);
+
+    return s;
+}
+
 int ubnt_discover_send(int sock, const struct sockaddr_in *dst) {
     if (!dst) return -1;
     ssize_t n = sendto(sock, UBNT_V1_PROBE, sizeof(UBNT_V1_PROBE), 0,
