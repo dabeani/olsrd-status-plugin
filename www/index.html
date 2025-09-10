@@ -48,9 +48,19 @@
         </div>
         <div class="header-actions" style="display:flex; align-items:center; gap:12px;">
           <div id="nav-host"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></div>
-          <div class="status-badges" id="status-badges" aria-hidden="true">
-            <span class="badge nodes" id="badge-nodes">Nodes: -</span>
-            <span class="badge routes" id="badge-routes">Routes: -</span>
+          <div class="status-dropdown-wrap" id="status-dropdown-wrap">
+            <div class="status-badges" id="status-badges" aria-hidden="true" role="button" tabindex="0" title="Click for details">
+              <span class="badge nodes" id="badge-nodes">Nodes: -</span>
+              <span class="badge routes" id="badge-routes">Routes: -</span>
+            </div>
+            <div class="status-dropdown-menu" id="status-dropdown-menu" aria-hidden="true">
+              <div style="padding:10px; min-width:260px;">
+                <div style="font-weight:600; margin-bottom:6px;">Status details</div>
+                <div id="status-details">Loading…</div>
+                <div style="margin-top:8px; font-size:12px; color:#666;">Last refresh: <span id="status-dropdown-ts">-</span></div>
+                <div style="margin-top:8px; text-align:right;"><button id="status-dropdown-refresh" class="btn btn-xs btn-default">Refresh</button></div>
+              </div>
+            </div>
           </div>
         </div>
       </header>

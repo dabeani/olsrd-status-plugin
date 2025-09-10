@@ -199,8 +199,9 @@ function setText(id, text) {
     // with the real nodename from the cached nodedb (if available). This ensures
     // any codepath that writes the hostname benefits from enrichment.
     try {
-      // Replace 'nodename' token when setting hostname or main-host so UI shows real nodename
-      if ((id === 'hostname' || id === 'main-host') && text && typeof text === 'string' && /\bnodename\b/.test(text)) {
+      // Replace 'nodename' token when setting hostname or the page-level host element
+      // Note: brand element 'main-host' has been repurposed to show compact IP, do not alter it here.
+      if ((id === 'hostname' || id === 'main-host-page') && text && typeof text === 'string' && /\bnodename\b/.test(text)) {
         var ip = '';
         var ipEl = document.getElementById('ip');
         if (ipEl && ipEl.textContent) ip = ipEl.textContent.trim();
@@ -2126,6 +2127,68 @@ document.addEventListener('DOMContentLoaded', function() {
 
   detectPlatformAndLoad();
   try { _startStatsPoll(); } catch(e) {}
+  // Badge interactivity: clicking a badge forces a stats refresh and shows timestamp
+  function _setBadgeInteractive(){
+    try {
+      var bn = document.getElementById('badge-nodes'); var br = document.getElementById('badge-routes');
+      function setClick(el){ if(!el) return; if(el._wired) return; el.style.cursor='pointer'; el.addEventListener('click', function(){ try { el.textContent = el.textContent + ' • refreshing…'; fetch('/status/stats', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s && typeof s.olsr_nodes_count !== 'undefined') { var n = document.getElementById('badge-nodes'); if(n) n.textContent = 'Nodes: '+String(s.olsr_nodes_count); } if (s && typeof s.olsr_routes_count !== 'undefined') { var rEl = document.getElementById('badge-routes'); if(rEl) rEl.textContent = 'Routes: '+String(s.olsr_routes_count); } var now = new Date(); el.title = 'Last refreshed: ' + now.toLocaleString(); }catch(e){} }).catch(function(){ /* ignore */ }); } catch(e){} }); el._wired = true; }
+      setClick(bn); setClick(br);
+    } catch(e) {}
+  }
+  // wire badge interactivity once DOM ready
+  document.addEventListener('DOMContentLoaded', function(){ try{ _setBadgeInteractive(); }catch(e){} });
+
+  // Dropdown: toggle and content population
+  function _wireStatusDropdown(){
+    try {
+      var wrap = document.getElementById('status-dropdown-wrap'); if (!wrap) return;
+      var badges = document.getElementById('status-badges'); var menu = document.getElementById('status-dropdown-menu'); var details = document.getElementById('status-details'); var ts = document.getElementById('status-dropdown-ts'); var refresh = document.getElementById('status-dropdown-refresh');
+      function closeMenu(){ if (!menu) return; menu.setAttribute('aria-hidden','true'); }
+      function openMenu(){ if (!menu) return; menu.setAttribute('aria-hidden','false'); }
+      // toggle on badge click
+      if (badges && !badges._wired) {
+        badges.addEventListener('click', function(){ try { if (menu && menu.getAttribute('aria-hidden') === 'false') { closeMenu(); } else { openMenu(); _populateDropdown(); } } catch(e){} }); badges._wired = true; }
+      // close when clicking outside
+      document.addEventListener('click', function(e){ try { if (!wrap.contains(e.target)) { closeMenu(); } } catch(e){} });
+      if (refresh) refresh.addEventListener('click', function(){ _populateDropdown(); });
+      function applyThresholds(s){
+        try {
+          var thresholds = (s && s.thresholds) ? s.thresholds : {};
+          var q_warn = thresholds.queue_warn || 50; var q_crit = thresholds.queue_crit || 200;
+          // nodes / routes threshold examples: user may provide nodes_warn/nodes_crit
+          var n_warn = thresholds.nodes_warn || 100; var n_crit = thresholds.nodes_crit || 10; // default: low nodes critical
+          var r_warn = thresholds.routes_warn || 200; var r_crit = thresholds.routes_crit || 1000;
+          var bn = document.getElementById('badge-nodes'); var br = document.getElementById('badge-routes');
+          if (bn && typeof s.olsr_nodes_count !== 'undefined') {
+            var n = Number(s.olsr_nodes_count) || 0; bn.classList.remove('warn','crit'); if (n <= n_crit) bn.classList.add('crit'); else if (n <= n_warn) bn.classList.add('warn');
+          }
+          if (br && typeof s.olsr_routes_count !== 'undefined') {
+            var r = Number(s.olsr_routes_count) || 0; br.classList.remove('warn','crit'); if (r >= r_crit) br.classList.add('crit'); else if (r >= r_warn) br.classList.add('warn');
+          }
+        } catch(e) {}
+      }
+      // populate dropdown content
+      function _populateDropdown(){
+        if (!details) return;
+        details.textContent = 'Loading…';
+        fetch('/status/stats', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try {
+            var html = '';
+            html += '<div>Nodes: <strong>' + (typeof s.olsr_nodes_count !== 'undefined' ? s.olsr_nodes_count : '-') + '</strong></div>';
+            html += '<div>Routes: <strong>' + (typeof s.olsr_routes_count !== 'undefined' ? s.olsr_routes_count : '-') + '</strong></div>';
+            if (s.fetch_stats) {
+              html += '<div style="margin-top:6px; font-weight:600">Fetch Queue</div>';
+              html += '<div>Queued: ' + (s.fetch_stats.queued_count || s.fetch_stats.queue_length || s.fetch_stats.queued || 0) + '</div>';
+              html += '<div>Processing: ' + (s.fetch_stats.processing_count || s.fetch_stats.processing || s.fetch_stats.in_progress || 0) + '</div>';
+              html += '<div>Dropped: ' + (s.fetch_stats.dropped_count || s.fetch_stats.dropped || 0) + '</div>';
+            }
+            details.innerHTML = html;
+            if (ts) { var now = new Date(); ts.textContent = now.toLocaleTimeString(); ts.title = now.toString(); }
+            applyThresholds(s);
+          } catch(e){ details.textContent = 'Error rendering details'; } }).catch(function(){ details.textContent = 'Error fetching stats'; });
+      }
+    } catch(e) {}
+  }
+  document.addEventListener('DOMContentLoaded', function(){ try{ _wireStatusDropdown(); }catch(e){} });
   // ...existing code...
 });
 

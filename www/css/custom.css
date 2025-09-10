@@ -114,3 +114,16 @@
 .status-badges .badge { background:#eee; color:#333; padding:6px 8px; border-radius:12px; font-size:12px; }
 .status-badges .badge.nodes { background:#6cc070; color:#063; }
 .status-badges .badge.routes { background:#2b9af3; color:#04315a; }
+
+/* Badge interaction and states */
+.status-badges .badge { cursor: default; }
+.status-badges .badge.clickable { cursor: pointer; }
+.status-badges .badge.warn { box-shadow: 0 0 8px rgba(255,165,0,0.2); }
+.status-badges .badge.crit { box-shadow: 0 0 12px rgba(255,69,58,0.25); }
+
+/* Compact dropdown menu for header status (absolute positioned) */
+.status-dropdown-wrap { position:relative; }
+.status-dropdown-menu { display:none; position:absolute; right:0; top:32px; z-index:2200; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 8px 18px rgba(0,0,0,0.12); }
+.status-dropdown-menu[aria-hidden="false"] { display:block; }
+.status-badges .badge { transition: box-shadow 200ms ease, background-color 200ms ease; }
+.status-badges .badge.clickable { cursor:pointer; }
