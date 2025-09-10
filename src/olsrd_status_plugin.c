@@ -564,10 +564,12 @@ static void fetch_discover_once(void) {
        * hostname, product, etc.). Storing normalized JSON avoids mismatches
        * between cached and inline responses.
        */
-      pthread_mutex_lock(&g_devices_cache_lock);
-      if (g_devices_cache) free(g_devices_cache);
-      g_devices_cache = normalized; g_devices_cache_len = nlen; g_devices_cache_ts = time(NULL);
-      pthread_mutex_unlock(&g_devices_cache_lock);
+  pthread_mutex_lock(&g_devices_cache_lock);
+  if (g_devices_cache) free(g_devices_cache);
+  g_devices_cache = normalized; g_devices_cache_len = nlen; g_devices_cache_ts = time(NULL);
+  pthread_mutex_unlock(&g_devices_cache_lock);
+  /* Log that the background discover updated the cache so automatic scans appear in logs */
+  fprintf(stderr, "[status-plugin] got device data from ubnt-discover (worker %zu bytes)\n", nlen);
       /* note: do not free(normalized) here as ownership moved into g_devices_cache */
     }
   }
