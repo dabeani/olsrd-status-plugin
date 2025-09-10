@@ -121,6 +121,15 @@ static pthread_t g_fetch_report_thread = 0;
 /* Auto-refresh interval (milliseconds) suggested for UI. 0 means disabled. Can be set via PlParam 'fetch_auto_refresh_ms' or env OLSRD_STATUS_FETCH_AUTO_REFRESH_MS */
 static int g_fetch_auto_refresh_ms = 15000; /* default 15s */
 static int g_cfg_fetch_auto_refresh_set = 0;
+/* Automatic devices discovery interval (seconds). Default 60s; configurable via
+ * PlParam 'discover_interval' or env OLSRD_STATUS_DISCOVER_INTERVAL. */
+static int g_devices_discover_interval = 60;
+static int g_cfg_devices_discover_interval_set = 0;
+
+/* UBNT probe per-interface window in milliseconds. Default 1000 ms. Configurable
+ * via PlParam 'ubnt_probe_window_ms' or env OLSRD_STATUS_UBNT_PROBE_WINDOW_MS. */
+static int g_ubnt_probe_window_ms = 1000;
+static int g_cfg_ubnt_probe_window_ms_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
@@ -1823,8 +1832,11 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
               }
             }
             gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
-            if (ms > 500) { ubnt_discover_send(s,&dst); }
-            if (ms > 1000) break; /* per-interface window increased to 1000 ms */
+            /* retransmit halfway through the configured window (but at least 100ms) */
+            int retransmit_ms = g_ubnt_probe_window_ms / 2;
+            if (retransmit_ms < 100) retransmit_ms = 100;
+            if (ms > retransmit_ms) { ubnt_discover_send(s,&dst); }
+            if (ms > g_ubnt_probe_window_ms) break; /* per-interface window configurable */
             usleep(20000);
           }
         }
@@ -4018,6 +4030,9 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
   { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
   { .name = "fetch_dropped_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_dropped_warn, .addon = {0} },
+  /* discovery tuning */
+  { .name = "discover_interval", .set_plugin_parameter = &set_int_param, .data = &g_devices_discover_interval, .addon = {0} },
+  { .name = "ubnt_probe_window_ms", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_probe_window_ms, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -4195,6 +4210,30 @@ int olsrd_plugin_init(void) {
         g_fetch_log_queue = (int)v;
         fprintf(stderr, "[status-plugin] setting fetch_log_queue from env: %d\n", g_fetch_log_queue);
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_LOG_QUEUE value: %s (ignored)\n", env_lq);
+    }
+
+    /* discovery interval env override (seconds) */
+    if (!g_cfg_devices_discover_interval_set) {
+      const char *env_di = getenv("OLSRD_STATUS_DISCOVER_INTERVAL");
+      if (env_di && env_di[0]) {
+        char *endptr = NULL; long v = strtol(env_di, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 5 && v <= 86400) {
+          g_devices_discover_interval = (int)v;
+          fprintf(stderr, "[status-plugin] setting devices discover interval from env: %d\n", g_devices_discover_interval);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_DISCOVER_INTERVAL value: %s (ignored)\n", env_di);
+      }
+    }
+
+    /* ubnt probe window override (milliseconds) */
+    if (!g_cfg_ubnt_probe_window_ms_set) {
+      const char *env_pw = getenv("OLSRD_STATUS_UBNT_PROBE_WINDOW_MS");
+      if (env_pw && env_pw[0]) {
+        char *endptr = NULL; long v = strtol(env_pw, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 100 && v <= 60000) {
+          g_ubnt_probe_window_ms = (int)v;
+          fprintf(stderr, "[status-plugin] setting ubnt probe window from env: %d ms\n", g_ubnt_probe_window_ms);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_PROBE_WINDOW_MS value: %s (ignored)\n", env_pw);
+      }
     }
   }
 
