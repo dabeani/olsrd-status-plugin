@@ -94,9 +94,9 @@ ubnt_discover_cli: $(CLI_BIN)
 
 $(CLI_BIN): rev/discover/ubnt_discover.c rev/discover/ubnt_discover.h | $(CLI_BIN_DIR)
 	@if [ -f rev/discover/ubnt_discover_cli.c ]; then \
-		$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ rev/discover/ubnt_discover_cli.c rev/discover/ubnt_discover.c -lpthread; \
+		$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS)  -o $@ rev/discover/ubnt_discover_cli.c rev/discover/ubnt_discover.c $(LDFLAGS) $(LDLIBS); \
 	else \
-		$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ rev/discover/ubnt_discover.c -lpthread; \
+		$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS)  -o $@ rev/discover/ubnt_discover.c $(LDFLAGS) $(LDLIBS); \
 	fi
 
 $(CLI_BIN_DIR):
