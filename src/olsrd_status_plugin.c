@@ -4645,7 +4645,7 @@ static int h_discover_ubnt(http_request_t *r) {
       struct sockaddr_in sin; memset(&sin,0,sizeof(sin)); memcpy(&sin, ifa->ifa_addr, sizeof(sin));
       char local_ip[INET_ADDRSTRLEN] = {0}; inet_ntop(AF_INET, &sin.sin_addr, local_ip, sizeof(local_ip));
 
-      if (!first_if) json_buf_append(&b, &len, &cap, ","); first_if = 0;
+  if (!first_if) { json_buf_append(&b, &len, &cap, ","); } first_if = 0;
       json_buf_append(&b, &len, &cap, "{");
       json_buf_append(&b, &len, &cap, "\"if\":\""); json_append_escaped(&b,&len,&cap, ifname); json_buf_append(&b,&len,&cap,"\"\",");
       json_buf_append(&b, &len, &cap, "\"local_ip\":\""); json_append_escaped(&b,&len,&cap, local_ip); json_buf_append(&b,&len,&cap,"\"");
@@ -4669,7 +4669,7 @@ static int h_discover_ubnt(http_request_t *r) {
         for (;;) {
           size_t kvn = sizeof(kv)/sizeof(kv[0]); char rip[64] = {0}; int n = ubnt_discover_recv(s, rip, sizeof(rip), kv, &kvn);
           if (n > 0 && rip[0]) {
-            if (!first_resp) json_buf_append(&b,&len,&cap, ","); first_resp = 0;
+            if (!first_resp) { json_buf_append(&b,&len,&cap, ","); } first_resp = 0;
             json_buf_append(&b,&len,&cap, "{");
             /* ip */
             json_buf_append(&b,&len,&cap, "\"ip\":\"");
