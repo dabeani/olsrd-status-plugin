@@ -249,11 +249,14 @@ function safeFetchStatus(fetchOptions) {
   }).then(function(text){
     // Try a direct parse first
     try { return JSON.parse(text); } catch (e) {
-      // Fallback: scan the text for the last complete top-level JSON object
-      // or array and parse that. This is defensive and intentionally forgiving.
-      function extractLastTopLevelJSON(s) {
-        if (!s || !s.length) return null;
-        var lastParsed = null;
+      // Fallback: extract all complete top-level JSON objects/arrays and
+      // choose the most appropriate candidate. This mirrors the tolerant
+      // parsing used elsewhere and avoids selecting small fragments like
+      // an isolated empty devices array that may appear earlier in the
+      // response.
+      function extractAllTopLevelJSON(s) {
+        var out = [];
+        if (!s || !s.length) return out;
         var len = s.length;
         for (var i = 0; i < len; i++) {
           var ch = s[i];
@@ -268,19 +271,45 @@ function safeFetchStatus(fetchOptions) {
               var cand = s.substring(i, j + 1);
               try {
                 var obj = JSON.parse(cand);
-                lastParsed = obj;
+                out.push(obj);
               } catch (err) {
-                /* ignore parse errors for this candidate */
+                // ignore parse errors for this candidate
               }
-              break; // continue scanning after this object
+              i = j; // advance outer loop past this object
+              break;
             }
           }
         }
-        return lastParsed;
+        return out;
       }
-      var recovered = extractLastTopLevelJSON(text);
-      if (recovered !== null) return recovered;
-      throw new Error('Invalid JSON from /status');
+
+      try {
+        var candidates = extractAllTopLevelJSON(String(text || ''));
+        if (!candidates || candidates.length === 0) throw new Error('Invalid JSON from /status');
+        if (candidates.length === 1) return candidates[0];
+        // Prefer a candidate that looks like the full status object
+        var preferredKeys = ['hostname','devices','links','fetch_stats','ip','uptime'];
+        for (var k = candidates.length - 1; k >= 0; k--) {
+          var c = candidates[k];
+          if (c && typeof c === 'object') {
+            for (var pi = 0; pi < preferredKeys.length; pi++) {
+              if (typeof c[preferredKeys[pi]] !== 'undefined') return c;
+            }
+          }
+        }
+        // If all candidates look like device entries, wrap as devices array
+        var allDevices = true;
+        for (var ii = 0; ii < candidates.length; ii++) {
+          var cc = candidates[ii];
+          if (!cc || typeof cc !== 'object') { allDevices = false; break; }
+          if (typeof cc.ipv4 === 'undefined' && typeof cc.hwaddr === 'undefined' && typeof cc.ip === 'undefined') { allDevices = false; break; }
+        }
+        if (allDevices) return { devices: candidates };
+        // Fallback: return the last candidate
+        return candidates[candidates.length - 1];
+      } catch (err) {
+        throw new Error('Invalid JSON from /status');
+      }
     }
   });
 }
