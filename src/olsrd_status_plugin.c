@@ -5,6 +5,7 @@
 #include "status_log.h"
 #include <stddef.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -3976,8 +3977,8 @@ static pthread_mutex_t g_kv_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int olsr_cache_get(const char *key, char *out, size_t outlen) {
   if (!key || !out) return 0;
-  unsigned long h = 1469598103934665603UL;
-  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  uint64_t h = UINT64_C(1469598103934665603);
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
   int idx = (int)(h % CACHE_SIZE);
   pthread_mutex_lock(&g_kv_cache_lock);
   if (g_olsr_cache[idx].key[0] == 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
@@ -3991,8 +3992,8 @@ static int olsr_cache_get(const char *key, char *out, size_t outlen) {
 
 static void olsr_cache_set(const char *key, const char *val) {
   if (!key || !val) return;
-  unsigned long h = 1469598103934665603UL;
-  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  uint64_t h = UINT64_C(1469598103934665603);
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
   int idx = (int)(h % CACHE_SIZE);
   pthread_mutex_lock(&g_kv_cache_lock);
   snprintf(g_olsr_cache[idx].key, sizeof(g_olsr_cache[idx].key), "%s", key);
@@ -4004,8 +4005,8 @@ static void olsr_cache_set(const char *key, const char *val) {
 
 static void cache_set(struct kv_cache_entry *cache, const char *key, const char *val) {
   if (!key || !val) return;
-  unsigned long h = 1469598103934665603UL;
-  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  uint64_t h = UINT64_C(1469598103934665603);
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
   int idx = (int)(h % CACHE_SIZE);
   pthread_mutex_lock(&g_kv_cache_lock);
   snprintf(cache[idx].key, sizeof(cache[idx].key), "%s", key);
@@ -4016,8 +4017,8 @@ static void cache_set(struct kv_cache_entry *cache, const char *key, const char 
 
 static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, size_t outlen) {
   if (!key || !out) return 0;
-  unsigned long h = 1469598103934665603UL;
-  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * 1099511628211UL;
+  uint64_t h = UINT64_C(1469598103934665603);
+  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
   int idx = (int)(h % CACHE_SIZE);
   pthread_mutex_lock(&g_kv_cache_lock);
   if (cache[idx].key[0] == 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
