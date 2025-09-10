@@ -22,18 +22,11 @@ WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstr
 LDFLAGS  += -shared
 LDLIBS   += -lpthread
 
-# Try to detect libcurl via pkg-config. If present, add its cflags/libs
-PKG_CONFIG ?= pkg-config
-CURL_DETECTED := $(shell $(PKG_CONFIG) --exists libcurl 2>/dev/null && echo 1 || echo 0)
-ifeq ($(CURL_DETECTED),1)
-CURL_CFLAGS := $(shell $(PKG_CONFIG) --cflags libcurl)
-CURL_LIBS := $(shell $(PKG_CONFIG) --libs libcurl)
-CPPFLAGS += $(CURL_CFLAGS) -DHAVE_LIBCURL=1
-LDLIBS += $(CURL_LIBS)
-$(info >>> libcurl detected via pkg-config; building with libcurl support)
-else
-$(info >>> libcurl NOT detected; building without libcurl support)
-endif
+# Do not use libcurl from system libraries; force building without libcurl
+# so the plugin will use the external `curl` binary at runtime instead.
+# This removes any dependency on libcurl headers/libs during build.
+CURL_DETECTED := 0
+$(info >>> libcurl support: DISABLED (building to use external 'curl' binary only))
 
 # Control whether the plugin will spawn an external `curl` binary as a fallback
 # Set ENABLE_CURL_FALLBACK=0 to disable the external-curl fallback and require
