@@ -114,6 +114,15 @@ int ubnt_open_broadcast_socket(uint16_t port_bind) {
     int flags = fcntl(s, F_GETFL, 0);
     fcntl(s, F_SETFL, flags | O_NONBLOCK);
 
+    /* report bound address for debug */
+    struct sockaddr_in sa; socklen_t sl = sizeof(sa);
+    if (getsockname(s, (struct sockaddr*)&sa, &sl) == 0) {
+        char buf_ip[INET_ADDRSTRLEN] = "";
+        inet_ntop(AF_INET, &sa.sin_addr, buf_ip, sizeof(buf_ip));
+    fprintf(stderr, "ubnt: opened socket fd=%d bound to %s:%d (requested local=%s)\n",
+        s, buf_ip[0]?buf_ip:"0.0.0.0", ntohs(sa.sin_port), "(any)");
+    }
+
     return s;
 }
 
@@ -149,6 +158,15 @@ int ubnt_open_broadcast_socket_bound(const char *local_ip, uint16_t port_bind) {
     int flags = fcntl(s, F_GETFL, 0);
     fcntl(s, F_SETFL, flags | O_NONBLOCK);
 
+    /* report bound address for debug */
+    struct sockaddr_in sa; socklen_t sl = sizeof(sa);
+    if (getsockname(s, (struct sockaddr*)&sa, &sl) == 0) {
+        char buf_ip[INET_ADDRSTRLEN] = "";
+        inet_ntop(AF_INET, &sa.sin_addr, buf_ip, sizeof(buf_ip));
+        fprintf(stderr, "ubnt: opened socket fd=%d bound to %s:%d (requested local=%s)\n",
+                s, buf_ip[0]?buf_ip:"0.0.0.0", ntohs(sa.sin_port), local_ip?local_ip:"(none)");
+    }
+
     return s;
 }
 
@@ -156,7 +174,14 @@ int ubnt_discover_send(int sock, const struct sockaddr_in *dst) {
     if (!dst) return -1;
     ssize_t n = sendto(sock, UBNT_V1_PROBE, sizeof(UBNT_V1_PROBE), 0,
                        (const struct sockaddr*)dst, sizeof(*dst));
-    return (n == (ssize_t)sizeof(UBNT_V1_PROBE)) ? 0 : -1;
+    if (n == (ssize_t)sizeof(UBNT_V1_PROBE)) {
+        char dst_ip[INET_ADDRSTRLEN] = "";
+        inet_ntop(AF_INET, &dst->sin_addr, dst_ip, sizeof(dst_ip));
+        fprintf(stderr, "ubnt: sent probe via fd=%d to %s:%d\n", sock, dst_ip, ntohs(dst->sin_port));
+        return 0;
+    }
+    fprintf(stderr, "ubnt: sendto(fd=%d) failed: %s\n", sock, strerror(errno));
+    return -1;
 }
 
 static size_t kv_put(struct ubnt_kv *kv, size_t cap, size_t idx, const char *k, const char *v) {
@@ -181,16 +206,19 @@ static size_t parse_tlv(const uint8_t *buf, size_t len, struct ubnt_kv *kv, size
             if (is_mac && l==6) {
                 snprintf(val, sizeof(val), "%02X:%02X:%02X:%02X:%02X:%02X",
                          v[0],v[1],v[2],v[3],v[4],v[5]);
+                fprintf(stderr, "ubnt: parsed tag %s = %s\n", name, val);
                 out = kv_put(kv, cap, out, name, val);
             } else if (is_ipv4 && l==4) {
                 char ipbuf[INET_ADDRSTRLEN];
                 struct in_addr ia; memcpy(&ia, v, 4);
                 snprintf(val, sizeof(val), "%s", inet_ntop(AF_INET, &ia, ipbuf, sizeof(ipbuf)));
+                fprintf(stderr, "ubnt: parsed tag %s = %s\n", name, val);
                 out = kv_put(kv, cap, out, name, val);
             } else if (is_u32 && l==4) {
                 // many devices send little-endian fields regardless of CPU endianness
                 uint32_t u = (uint32_t)v[0] | ((uint32_t)v[1]<<8) | ((uint32_t)v[2]<<16) | ((uint32_t)v[3]<<24);
                 snprintf(val, sizeof(val), "%u", u);
+                fprintf(stderr, "ubnt: parsed tag %s = %s\n", name, val);
                 out = kv_put(kv, cap, out, name, val);
             } else if (is_str && l>0 && l < (int)sizeof(val)) {
                 // allow NUL within len
@@ -202,7 +230,7 @@ static size_t parse_tlv(const uint8_t *buf, size_t len, struct ubnt_kv *kv, size
                 // make sure printable
                 int ok = 1;
                 for (size_t j=0;j<copy;j++) if (!isprint((unsigned char)val[j])) { ok=0; break; }
-                if (ok) out = kv_put(kv, cap, out, name, val);
+                if (ok) { fprintf(stderr, "ubnt: parsed tag %s = %s\n", name, val); out = kv_put(kv, cap, out, name, val); }
             }
         }
         i += l;

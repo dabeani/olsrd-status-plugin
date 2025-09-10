@@ -1781,10 +1781,10 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
    */
   {
     struct ifaddrs *ifap = NULL;
+    struct agg_dev { char ip[64]; char hostname[256]; char hw[64]; char product[128]; char uptime[64]; char mode[64]; char essid[128]; char firmware[128]; int have_hostname,have_hw,have_product,have_uptime,have_mode,have_essid,have_firmware,have_fwversion; char fwversion_val[128]; } devices[64];
+    int dev_count = 0;
     if (getifaddrs(&ifap) == 0 && ifap) {
       struct ifaddrs *ifa;
-      struct agg_dev { char ip[64]; char hostname[256]; char hw[64]; char product[128]; char uptime[64]; char mode[64]; char essid[128]; char firmware[128]; int have_hostname,have_hw,have_product,have_uptime,have_mode,have_essid,have_firmware,have_fwversion; char fwversion_val[128]; } devices[64];
-      int dev_count = 0;
       /* We'll collect devices across all interfaces into the same devices[] array */
       for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
         if (!ifa->ifa_addr) continue;
@@ -1831,6 +1831,32 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
         usleep(20000);
       }
       freeifaddrs(ifap);
+    }
+
+    /* If we collected any devices from UBNT probes, build JSON and return it */
+    if (dev_count > 0) {
+      char *buf = NULL; size_t cap = 4096, len = 0;
+      buf = malloc(cap); if (!buf) return -1; buf[0]=0;
+      json_buf_append(&buf, &len, &cap, "[");
+      for (int i = 0; i < dev_count; ++i) {
+        if (i > 0) json_buf_append(&buf, &len, &cap, ",");
+        /* match format used by devices_from_arp_json but mark source as ubnt */
+        json_buf_append(&buf, &len, &cap, "{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,devices[i].ip);
+        json_buf_append(&buf, &len, &cap, ",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,devices[i].hw);
+        json_buf_append(&buf, &len, &cap, ",\"hostname\":"); json_append_escaped(&buf,&len,&cap,devices[i].hostname);
+        json_buf_append(&buf, &len, &cap, ",\"product\":"); json_append_escaped(&buf,&len,&cap,devices[i].product);
+        json_buf_append(&buf, &len, &cap, ",\"uptime\":"); json_append_escaped(&buf,&len,&cap,devices[i].uptime);
+        json_buf_append(&buf, &len, &cap, ",\"mode\":"); json_append_escaped(&buf,&len,&cap,devices[i].mode);
+        json_buf_append(&buf, &len, &cap, ",\"essid\":"); json_append_escaped(&buf,&len,&cap,devices[i].essid);
+        json_buf_append(&buf, &len, &cap, ",\"firmware\":"); json_append_escaped(&buf,&len,&cap,devices[i].firmware);
+        json_buf_append(&buf, &len, &cap, ",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\",\"source\":\"ubnt\"}");
+      }
+      json_buf_append(&buf, &len, &cap, "]");
+      *out = buf; *outlen = len;
+      /* update cache */
+      free(cache_buf); cache_buf = malloc(len+1);
+      if (cache_buf) { memcpy(cache_buf, buf, len); cache_buf[len]=0; cache_len = len; cache_time = nowt; }
+      return 0;
     }
   }
   /* Use internal broadcast discovery */
