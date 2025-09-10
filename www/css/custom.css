@@ -105,3 +105,12 @@
 /* tiny timestamp next to live dot showing last sample time */
 .spark-ts { font-size:11px; color:#666; margin-left:8px; vertical-align:middle; }
 .spark-ts[title] { cursor:help; }
+
+/* page-level main host (avoid duplicate ID with nav-host) */
+#main-host-page { color:#013369; font-weight:600; }
+
+/* Compact status badges shown in header */
+.status-badges { display:flex; gap:8px; align-items:center; }
+.status-badges .badge { background:#eee; color:#333; padding:6px 8px; border-radius:12px; font-size:12px; }
+.status-badges .badge.nodes { background:#6cc070; color:#063; }
+.status-badges .badge.routes { background:#2b9af3; color:#04315a; }

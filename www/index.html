@@ -46,8 +46,12 @@
         <div class="brand">
           <h3 style="margin:0">Web Status <small id="main-host">&nbsp;</small></h3>
         </div>
-        <div class="header-actions">
+        <div class="header-actions" style="display:flex; align-items:center; gap:12px;">
           <div id="nav-host"><span id="hostname">hostname.nodename.wien.funkfeuer.at</span></div>
+          <div class="status-badges" id="status-badges" aria-hidden="true">
+            <span class="badge nodes" id="badge-nodes">Nodes: -</span>
+            <span class="badge routes" id="badge-routes">Routes: -</span>
+          </div>
         </div>
       </header>
 
@@ -148,7 +152,7 @@
         <!-- Main / Willkommen -->
         <div id="tab-main" class="tab-pane">
           <div class="page-header">
-            <h1>Willkommen auf <span id="main-host"> </span></h1>
+            <h1>Willkommen auf <span id="main-host-page"> </span></h1>
           </div>
           <div class="panel panel-default">
             <div class="panel-body"><b>WAS?</b></div>

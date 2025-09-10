@@ -930,7 +930,7 @@ function updateUI(data) {
   setText('uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
-  try { setText('main-host', (resolved || data.hostname) || ''); } catch(e) {}
+  try { setText('main-host', data.ip || ''); } catch(e) {}
   try {
     // Build FQDN explicitly from backend fields. Prefer explicit node identifiers
     // (data.node, data.nodename, data.node_name, data.net) and fall back to a
@@ -961,6 +961,8 @@ function updateUI(data) {
       fqdn = shortHost;
     }
     populateNavHost(fqdn, ipKey);
+  // Also set the page-level host element (non-duplicating ID)
+  try { var mh = document.getElementById('main-host-page'); if (mh) mh.textContent = fqdn || ''; } catch(e) {}
   } catch(e) {}
   // render default route if available (hostname link + ip link + device)
   try {
@@ -1095,6 +1097,11 @@ updateUI = function(data) {
       }
       pushStat('olsr_routes', routes);
       pushStat('olsr_nodes', nodes);
+      // Update compact header badges when available
+      try {
+        var bn = document.getElementById('badge-nodes'); if (bn) { bn.textContent = 'Nodes: ' + String(nodes); }
+        var br = document.getElementById('badge-routes'); if (br) { br.textContent = 'Routes: ' + String(routes); }
+      } catch(e) {}
     } catch(e) {}
     // sample fetch queue metrics if provided
     try {
@@ -2440,10 +2447,11 @@ function populateNavHost(host, ip) {
       var iconWrapRem = el.querySelector('.fetch-icon'); if (iconWrapRem) iconWrapRem.parentNode.removeChild(iconWrapRem);
     }
     // Also update compact header host element if present
-    var mainHostEl = document.getElementById('main-host');
-    if (mainHostEl) {
-      try { mainHostEl.textContent = displayHost || ''; } catch(e) { mainHostEl.innerText = displayHost || ''; }
-    }
+  // Do not overwrite the brand 'main-host' which is reserved for compact IP display.
+  // Update page-level host element instead.
+  try { var pageHostEl = document.getElementById('main-host-page'); if (pageHostEl) { pageHostEl.textContent = displayHost || ''; } } catch(e) {}
+  // Also update the page-level host element where present
+  try { var pageHost = document.getElementById('main-host-page'); if (pageHost) { pageHost.textContent = displayHost || ''; } } catch(e) {}
   } catch (e) {
     // fallback simple text
     el.textContent = (ip ? ip + ' - ' : '') + (host || '');
