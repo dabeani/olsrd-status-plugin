@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -1821,8 +1822,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
               }
             }
             gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
-            if (ms > 300) { ubnt_discover_send(s,&dst); }
-            if (ms > 500) break; /* shorter per-interface window */
+            if (ms > 500) { ubnt_discover_send(s,&dst); }
+            if (ms > 1000) break; /* per-interface window increased to 1000 ms */
             usleep(20000);
           }
         }
@@ -4355,6 +4356,19 @@ static void ringbuf_push(const char *s) {
     if (g_log_count < g_log_buf_lines) g_log_count++;
   }
   pthread_mutex_unlock(&g_log_lock);
+}
+
+/* Trace-level logger used by discovery helpers. This formats into a local
+ * buffer, writes through to original stderr so system logs still receive it,
+ * and also pushes the line into the plugin's ring buffer.
+ */
+void plugin_log_trace(const char *fmt, ...) {
+  char tmp[1024]; va_list ap; va_start(ap, fmt); int n = vsnprintf(tmp, sizeof(tmp), fmt, ap); va_end(ap);
+  if (n <= 0) return; /* nothing formatted */
+  /* ensure single-line and trim trailing newline */
+  if (n > 0 && tmp[n-1] == '\n') tmp[n-1] = '\0';
+  if (g_orig_stderr_fd >= 0) dprintf(g_orig_stderr_fd, "%s\n", tmp);
+  ringbuf_push(tmp);
 }
 
 static void *stderr_reader_thread(void *arg) {
