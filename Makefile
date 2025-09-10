@@ -86,8 +86,6 @@ status_plugin_clean:
 
 status_plugin: $(BUILDDIR)/$(SONAME)
 
-...existing code...
-
 install: status_plugin_install
 uninstall: status_plugin_uninstall
 
