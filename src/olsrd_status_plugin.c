@@ -4606,21 +4606,111 @@ static int h_discover(http_request_t *r) {
  * request and wait briefly for the worker to complete, then return cached result.
  */
 static int h_discover_ubnt(http_request_t *r) {
-  char *out = NULL; size_t n = 0;
-  if (ubnt_discover_output(&out, &n) == 0 && out && n > 0) {
-    send_json(r, out); free(out); return 0;
-  }
-  /* Attempt to enqueue a discovery job and wait for it to finish (short). */
-  enqueue_fetch_request(1, 1, FETCH_TYPE_DISCOVER);
-  pthread_mutex_lock(&g_devices_cache_lock);
-  if (g_devices_cache && g_devices_cache_len > 0) {
-    send_json(r, g_devices_cache);
+  char *devices_json = NULL; size_t devices_n = 0;
+  /* Try immediate internal aggregated discovery first (fast path) */
+  if (ubnt_discover_output(&devices_json, &devices_n) != 0 || !devices_json || devices_n == 0) {
+    /* enqueue and wait briefly as fallback */
+    enqueue_fetch_request(1, 1, FETCH_TYPE_DISCOVER);
+    pthread_mutex_lock(&g_devices_cache_lock);
+    if (g_devices_cache && g_devices_cache_len > 0) {
+      devices_json = strdup(g_devices_cache);
+      devices_n = g_devices_cache_len;
+    }
     pthread_mutex_unlock(&g_devices_cache_lock);
-    return 0;
   }
-  pthread_mutex_unlock(&g_devices_cache_lock);
-  /* fallback: empty object */
-  send_json(r, "{}");
+
+  /* Always produce a JSON object with 'devices' and 'debug' fields */
+  size_t cap = 4096; size_t len = 0; char *b = malloc(cap); if (!b) { if (devices_json) free(devices_json); send_json(r, "{}"); return 0; }
+  b[0] = 0; json_buf_append(&b, &len, &cap, "{");
+  /* devices: either discovered JSON array or empty array */
+  json_buf_append(&b, &len, &cap, "\"devices\":");
+  if (devices_json && devices_n > 0) {
+    /* insert raw devices JSON */
+    json_buf_append(&b, &len, &cap, "%s", devices_json);
+  } else {
+    json_buf_append(&b, &len, &cap, "[]");
+  }
+
+  /* debug: per-interface probe details */
+  json_buf_append(&b, &len, &cap, ",\"debug\":{\"interfaces\":[");
+  struct ifaddrs *ifap = NULL;
+  int first_if = 1;
+  if (getifaddrs(&ifap) == 0 && ifap) {
+    struct ifaddrs *ifa;
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+      if (!ifa->ifa_addr) continue;
+      if (ifa->ifa_addr->sa_family != AF_INET) continue;
+      if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+      char ifname[128] = {0}; snprintf(ifname, sizeof(ifname), "%s", ifa->ifa_name ? ifa->ifa_name : "");
+      struct sockaddr_in sin; memset(&sin,0,sizeof(sin)); memcpy(&sin, ifa->ifa_addr, sizeof(sin));
+      char local_ip[INET_ADDRSTRLEN] = {0}; inet_ntop(AF_INET, &sin.sin_addr, local_ip, sizeof(local_ip));
+
+      if (!first_if) json_buf_append(&b, &len, &cap, ","); first_if = 0;
+      json_buf_append(&b, &len, &cap, "{");
+      json_buf_append(&b, &len, &cap, "\"if\":\""); json_append_escaped(&b,&len,&cap, ifname); json_buf_append(&b,&len,&cap,"\"\",");
+      json_buf_append(&b, &len, &cap, "\"local_ip\":\""); json_append_escaped(&b,&len,&cap, local_ip); json_buf_append(&b,&len,&cap,"\"");
+
+      /* probe using bound socket */
+      int s = ubnt_open_broadcast_socket_bound(local_ip, 0);
+      if (s < 0) {
+        json_buf_append(&b,&len,&cap, ",\"socket\":false}");
+        continue;
+      }
+      json_buf_append(&b,&len,&cap, ",\"socket\":true");
+      struct sockaddr_in dst; memset(&dst,0,sizeof(dst)); dst.sin_family=AF_INET; dst.sin_port=htons(10001); dst.sin_addr.s_addr=inet_addr("255.255.255.255");
+      int sent = (ubnt_discover_send(s,&dst)==0);
+      json_buf_append(&b,&len,&cap, ",\"send\":"); json_buf_append(&b,&len,&cap, sent ? "true" : "false");
+
+      json_buf_append(&b,&len,&cap, ",\"responses\":[");
+      int first_resp = 1;
+      if (sent) {
+        struct ubnt_kv kv[64];
+        struct timeval start, now; gettimeofday(&start,NULL);
+        for (;;) {
+          size_t kvn = sizeof(kv)/sizeof(kv[0]); char rip[64] = {0}; int n = ubnt_discover_recv(s, rip, sizeof(rip), kv, &kvn);
+          if (n > 0 && rip[0]) {
+            if (!first_resp) json_buf_append(&b,&len,&cap, ","); first_resp = 0;
+            json_buf_append(&b,&len,&cap, "{");
+            /* ip */
+            json_buf_append(&b,&len,&cap, "\"ip\":\"");
+            json_append_escaped(&b,&len,&cap, rip);
+            json_buf_append(&b,&len,&cap, "\"");
+            json_buf_append(&b,&len,&cap, ",");
+            /* kv array */
+            json_buf_append(&b,&len,&cap, "\"kv\":[");
+            for (size_t i=0;i<kvn;i++) {
+              if (i) json_buf_append(&b,&len,&cap, ",");
+              json_buf_append(&b,&len,&cap, "{");
+              json_buf_append(&b,&len,&cap, "\"k\":\"");
+              json_append_escaped(&b,&len,&cap, kv[i].key);
+              json_buf_append(&b,&len,&cap, "\"");
+              json_buf_append(&b,&len,&cap, ",");
+              json_buf_append(&b,&len,&cap, "\"v\":\"");
+              json_append_escaped(&b,&len,&cap, kv[i].value);
+              json_buf_append(&b,&len,&cap, "\"}");
+            }
+            json_buf_append(&b,&len,&cap, "]}");
+          }
+          gettimeofday(&now,NULL); long ms = (now.tv_sec - start.tv_sec)*1000 + (now.tv_usec - start.tv_usec)/1000;
+          if (ms > 300) { ubnt_discover_send(s,&dst); }
+          if (ms > 500) break;
+          usleep(20000);
+        }
+      }
+      json_buf_append(&b,&len,&cap, "]}");
+      close(s);
+    }
+    freeifaddrs(ifap);
+  }
+
+  json_buf_append(&b,&len,&cap, "]}}\n");
+
+  /* Return assembled JSON */
+  http_send_status(r, 200, "OK");
+  http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+  http_write(r, b, len);
+  free(b);
+  if (devices_json) free(devices_json);
   return 0;
 }
 
