@@ -289,14 +289,22 @@ function safeFetchStatus(fetchOptions) {
         if (candidates.length === 1) return candidates[0];
         // Prefer a candidate that looks like the full status object
         var preferredKeys = ['hostname','devices','links','fetch_stats','ip','uptime'];
+        var bestCandidate = null;
+        var bestScore = 0;
         for (var k = candidates.length - 1; k >= 0; k--) {
           var c = candidates[k];
           if (c && typeof c === 'object') {
+            var score = 0;
             for (var pi = 0; pi < preferredKeys.length; pi++) {
-              if (typeof c[preferredKeys[pi]] !== 'undefined') return c;
+              if (typeof c[preferredKeys[pi]] !== 'undefined') score++;
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              bestCandidate = c;
             }
           }
         }
+        if (bestCandidate) return bestCandidate;
         // If all candidates look like device entries, wrap as devices array
         var allDevices = true;
         for (var ii = 0; ii < candidates.length; ii++) {

@@ -2291,6 +2291,7 @@ static int h_status(http_request_t *r) {
         char bufip[INET_ADDRSTRLEN] = "";
         struct sockaddr_in sa_local; memset(&sa_local, 0, sizeof(sa_local)); memcpy(&sa_local, ifa->ifa_addr, sizeof(sa_local));
         inet_ntop(AF_INET, &sa_local.sin_addr, bufip, sizeof(bufip));
+        if (strcmp(bufip, "127.0.0.1") == 0) continue;
         snprintf(ipaddr, sizeof(ipaddr), "%s", bufip);
         break;
       }
