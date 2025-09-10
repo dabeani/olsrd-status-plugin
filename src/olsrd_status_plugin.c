@@ -1252,7 +1252,7 @@ static int neighbor_twohop_for_ip(const char *section, const char *ip) {
 }
 
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
-static void arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
+static void __attribute__((unused)) arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
   if (mac_out && mac_len) mac_out[0]=0;
   if (host_out && host_len) host_out[0]=0;
   if(!ip||!*ip) return;
@@ -1789,8 +1789,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
         if (ifa->ifa_addr->sa_family != AF_INET) continue;
         if (ifa->ifa_flags & IFF_LOOPBACK) continue; /* skip loopback */
         char local_ip[INET_ADDRSTRLEN] = {0};
-        struct sockaddr_in *sin = (struct sockaddr_in*)ifa->ifa_addr;
-        inet_ntop(AF_INET, &sin->sin_addr, local_ip, sizeof(local_ip));
+  struct sockaddr_in sin; memset(&sin, 0, sizeof(sin)); memcpy(&sin, ifa->ifa_addr, sizeof(sin));
+  inet_ntop(AF_INET, &sin.sin_addr, local_ip, sizeof(local_ip));
 
         int s = ubnt_open_broadcast_socket_bound(local_ip, 0);
         if (s < 0) continue;
@@ -1831,7 +1831,6 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
       freeifaddrs(ifap);
     }
   }
-broadcast_fail:
   /* Use internal broadcast discovery */
   if (devices_from_arp_json(out, outlen)==0 && *out && *outlen>0) { free(cache_buf); cache_buf=malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=nowt; } return 0; }
   return -1;
