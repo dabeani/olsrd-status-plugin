@@ -2939,7 +2939,7 @@ static int h_status_lite(http_request_t *r) {
             if (!first) APP_L(",");
             /* append raw substring */
             size_t chunk = (size_t)(q - p);
-            http_write(r, p, chunk);
+            if (json_buf_append(&buf, &len, &cap, "%.*s", (int)chunk, p) < 0) { free(buf); send_json(r,"{}\n"); return 0; }
             first = 0;
             p = q;
             continue;
@@ -2966,7 +2966,8 @@ static int h_status_lite(http_request_t *r) {
             while (q < e) { if (*q == '{') depth++; else if (*q == '}') { depth--; if (depth == 0) { q++; break; } } q++; }
             if (q <= p) break;
             if (!first) APP_L(",");
-            http_write(r, p, (size_t)(q - p));
+            size_t chunk = (size_t)(q - p);
+            if (json_buf_append(&buf, &len, &cap, "%.*s", (int)chunk, p) < 0) { free(buf); send_json(r,"{}\n"); return 0; }
             first = 0;
             p = q;
             continue;
