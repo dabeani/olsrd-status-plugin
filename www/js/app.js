@@ -1484,13 +1484,14 @@ function detectPlatformAndLoad() {
     try { return JSON.parse(text); }
     catch(e) {
       try { console.error(label + ' JSON parse failed', e); } catch(_e) {}
-      // Fallback: attempt to extract the last complete top-level JSON object
-      // or array from the provided text. This mirrors the recovery logic used
-      // in safeFetchStatus and makes the parser tolerant to concatenated
-      // objects or surrounding log/wrapper text emitted by some devices.
-      function extractLastTopLevelJSON(s) {
-        if (!s || !s.length) return null;
-        var lastParsed = null;
+      // Fallback: extract all top-level JSON objects/arrays from the text
+      // and try to pick the most appropriate one. This helps when the
+      // backend emits multiple concatenated JSON objects (for example many
+      // device entries written one after the other) or when wrapper lines
+      // surround the JSON payload.
+      function extractAllTopLevelJSON(s) {
+        var out = [];
+        if (!s || !s.length) return out;
         var len = s.length;
         for (var i = 0; i < len; i++) {
           var ch = s[i];
@@ -1505,21 +1506,47 @@ function detectPlatformAndLoad() {
               var cand = s.substring(i, j + 1);
               try {
                 var obj = JSON.parse(cand);
-                lastParsed = obj;
+                out.push(obj);
               } catch (err) {
                 /* ignore parse errors for this candidate */
               }
-              break; // continue scanning after this object
+              i = j; // advance outer loop past this object
+              break;
             }
           }
         }
-        return lastParsed;
+        return out;
       }
       try {
-        var recovered = extractLastTopLevelJSON(String(text || ''));
-        if (recovered !== null) return recovered;
-      } catch(_e) {}
-      return null;
+        var candidates = extractAllTopLevelJSON(String(text || ''));
+        if (!candidates || candidates.length === 0) return null;
+        // If we found a single candidate, return it directly
+        if (candidates.length === 1) return candidates[0];
+        // If multiple candidates found, prefer any candidate that looks like
+        // a full status object (has common top-level keys). Use the last
+        // matching candidate if multiple.
+        var preferredKeys = ['hostname','devices','links','fetch_stats','ip','uptime'];
+        for (var k = candidates.length - 1; k >= 0; k--) {
+          var c = candidates[k];
+          if (c && typeof c === 'object') {
+            for (var pi = 0; pi < preferredKeys.length; pi++) {
+              if (typeof c[preferredKeys[pi]] !== 'undefined') return c;
+            }
+          }
+        }
+        // If none look like a full status, but all candidates are plain
+        // objects that resemble device entries (have ipv4/hwaddr), return
+        // them wrapped as a devices array so updateUI can use it.
+        var allDevices = true;
+        for (var ii = 0; ii < candidates.length; ii++) {
+          var cc = candidates[ii];
+          if (!cc || typeof cc !== 'object') { allDevices = false; break; }
+          if (typeof cc.ipv4 === 'undefined' && typeof cc.hwaddr === 'undefined' && typeof cc.ip === 'undefined') { allDevices = false; break; }
+        }
+        if (allDevices) return { devices: candidates };
+        // Fallback: return the last successfully parsed candidate
+        return candidates[candidates.length - 1];
+      } catch(_e) { return null; }
     }
   }
   fetch('/capabilities', {cache: 'no-store'})
