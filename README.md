@@ -198,6 +198,34 @@ export OLSRD_STATUS_FETCH_QUEUE_MAX=8
 export OLSRD_STATUS_FETCH_RETRIES=5
 ```
 
+Discovery tuning (PlParam names available in `olsrd.conf` plugin block):
+
+* `OLSRD_STATUS_DISCOVER_INTERVAL` / PlParam `discover_interval` – automatic devices discovery interval in seconds. Default: 60s. Valid range: 5 - 86400 (1 day).
+
+```bash
+export OLSRD_STATUS_DISCOVER_INTERVAL=60
+```
+
+* `OLSRD_STATUS_UBNT_PROBE_WINDOW_MS` / PlParam `ubnt_probe_window_ms` – per‑interface UBNT probe collection window in milliseconds (the discover probe is retransmitted at about half this window, min 100ms). Default: 1000 ms. Valid range: 100 - 60000.
+
+```bash
+export OLSRD_STATUS_UBNT_PROBE_WINDOW_MS=1000
+```
+
+Example `olsrd.conf` plugin block (pasteable):
+
+```
+LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
+{
+    PlParam "bind"       "0.0.0.0"
+    PlParam "port"       "11080"
+    PlParam "assetroot"  "/usr/share/olsrd-status-plugin/www"
+    # Discovery tuning (PlParam wins over environment variables)
+    PlParam "discover_interval" "60"            # seconds
+    PlParam "ubnt_probe_window_ms" "1000"       # milliseconds
+}
+```
+
 * `OLSRD_STATUS_FETCH_BACKOFF_INITIAL` / PlParam `fetch_backoff_initial` – initial backoff in seconds used when retrying; backoff doubles each attempt. Default: 1.
 
 ```bash
