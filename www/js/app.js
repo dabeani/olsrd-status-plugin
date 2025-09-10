@@ -234,7 +234,7 @@ function setHTML(id, html) {
   if (el) el.innerHTML = html;
 }
 
-// Robustly fetch /status and parse the last top-level JSON object from the
+// Robustly fetch /status/lite and parse the last top-level JSON object from the
 // response text. Returns a Promise that resolves to the parsed object or
 // rejects on network/error conditions.
 function safeFetchStatus(fetchOptions) {
@@ -243,7 +243,7 @@ function safeFetchStatus(fetchOptions) {
   // fails, attempt to salvage the last top-level JSON object/array from the
   // response text. This makes the UI tolerant to wrappers or logging lines
   // prepended/appended by some embedded systems.
-  return fetch('/status', fetchOptions).then(function(r){
+  return fetch('/status/lite', fetchOptions).then(function(r){
     if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
     return r.text();
   }).then(function(text){
@@ -285,7 +285,7 @@ function safeFetchStatus(fetchOptions) {
 
       try {
         var candidates = extractAllTopLevelJSON(String(text || ''));
-        if (!candidates || candidates.length === 0) throw new Error('Invalid JSON from /status');
+        if (!candidates || candidates.length === 0) throw new Error('Invalid JSON from /status/lite');
         if (candidates.length === 1) return candidates[0];
         // Prefer a candidate that looks like the full status object
         var preferredKeys = ['hostname','devices','links','fetch_stats','ip','uptime'];
@@ -316,7 +316,7 @@ function safeFetchStatus(fetchOptions) {
         // Fallback: return the last candidate
         return candidates[candidates.length - 1];
       } catch (err) {
-        throw new Error('Invalid JSON from /status');
+        throw new Error('Invalid JSON from /status/lite');
       }
     }
   });
@@ -1759,7 +1759,7 @@ function detectPlatformAndLoad() {
   } catch(e) {
     // Fallback: try to load data without capabilities
     try {
-      fetch('/status', {cache: 'no-store'})
+      fetch('/status/lite', {cache: 'no-store'})
         .then(function(r) { return r.json(); })
         .then(function(status) {
           try { if (status.fetch_stats) populateFetchStats(status.fetch_stats); else populateFetchStats({}); } catch(e){}
@@ -2164,7 +2164,7 @@ document.addEventListener('DOMContentLoaded', function() {
         setTabLoading('tab-status');
         try {
             if (!window._statusLoaded || (Date.now() - (window._statusLoadedAt || 0) > 10000)) {
-            console.log('Fetching /status API...');
+            console.log('Fetching /status/lite API...');
             safeFetchStatus({cache:'no-store'}).then(function(st){ try { if (st) { console.log('Status data received:', Object.keys(st)); updateUI(st); if (st.links && Array.isArray(st.links) && st.links.length) { try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){} } } window._statusLoaded = true; window._statusLoadedAt = Date.now(); setTabLoaded('tab-status'); } catch(e){ setTabError('tab-status'); } }).catch(function(){ setTabError('tab-status'); });
           } else {
             console.log('Status already loaded recently');
