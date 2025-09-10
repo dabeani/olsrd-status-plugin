@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include "status_log.h"
 #include <stddef.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -4363,7 +4364,13 @@ static void ringbuf_push(const char *s) {
  * and also pushes the line into the plugin's ring buffer.
  */
 void plugin_log_trace(const char *fmt, ...) {
-  char tmp[1024]; va_list ap; va_start(ap, fmt); int n = vsnprintf(tmp, sizeof(tmp), fmt, ap); va_end(ap);
+  char tmp[1024]; va_list ap; va_start(ap, fmt);
+  /* vsnprintf with non-literal fmt is allowed; guard with pragma to silence clang warning */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+  int n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
+#pragma clang diagnostic pop
+  va_end(ap);
   if (n <= 0) return; /* nothing formatted */
   /* ensure single-line and trim trailing newline */
   if (n > 0 && tmp[n-1] == '\n') tmp[n-1] = '\0';

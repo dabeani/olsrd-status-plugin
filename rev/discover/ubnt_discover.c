@@ -133,6 +133,14 @@ int ubnt_open_broadcast_socket(uint16_t port_bind) {
 }
 
 int ubnt_open_broadcast_socket_bound(const char *local_ip, uint16_t port_bind) {
+    /* runtime toggle: if environment variable set, enable UBNT_DEBUG at runtime */
+    static int runtime_debug_checked = 0;
+    static int runtime_debug_on = 0;
+    if (!runtime_debug_checked) {
+        const char *e = getenv("OLSRD_STATUS_UBNT_DEBUG");
+        if (e && e[0]=='1') runtime_debug_on = 1;
+        runtime_debug_checked = 1;
+    }
     int s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s < 0) return -1;
 
@@ -169,7 +177,7 @@ int ubnt_open_broadcast_socket_bound(const char *local_ip, uint16_t port_bind) {
     if (getsockname(s, (struct sockaddr*)&sa, &sl) == 0) {
         char buf_ip[INET_ADDRSTRLEN] = "";
         inet_ntop(AF_INET, &sa.sin_addr, buf_ip, sizeof(buf_ip));
-        fprintf(stderr, "ubnt: opened socket fd=%d bound to %s:%d (requested local=%s)\n",
+        if (UBNT_DEBUG || runtime_debug_on) plugin_log_trace("ubnt: opened socket fd=%d bound to %s:%d (requested local=%s)",
                 s, buf_ip[0]?buf_ip:"0.0.0.0", ntohs(sa.sin_port), local_ip?local_ip:"(none)");
     }
 
