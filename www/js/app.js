@@ -3091,9 +3091,11 @@ function runTraceroute(){
   function detectLegacyOlsrd(cb){
     // Be tolerant: /status may sometimes include non-JSON wrapper text on some systems.
     // Fetch as text and try to extract the first JSON object instead of relying on r.json().
-    fetch('/status',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(statusText){
-      var st = null;
-      try { st = JSON.parse(statusText); } catch(e) { st = null; }
+    // Use the tolerant safeFetchStatus to parse /status (handles concatenated
+    // JSON and wrapper text). This avoids hard JSON.parse failures on some
+    // embedded systems that emit multiple objects.
+    safeFetchStatus({cache:'no-store'}).then(function(st){
+      // st may be null if parsing failed inside safeFetchStatus
       // Determine whether to show legacy OLSR tab. If status doesn't explicitly
       // indicate legacy olsrd, probe the /olsr/links endpoint before hiding the tab
       // so we don't incorrectly hide it when live data exists elsewhere.
@@ -3131,7 +3133,7 @@ function runTraceroute(){
         linkTab.parentElement.style.display = show? '' : 'none';
       }
       if (cb) cb(show);
-    }).catch(function(err){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) { if (window._uiDebug) console.debug('detectLegacyOlsrd: fetch failed, leaving OLSR tab visibility unchanged:', err); } if(cb) cb(false); });
+  }).catch(function(err){ var linkTab = document.querySelector('#mainTabs a[href="#tab-olsr"]'); if (linkTab) { if (window._uiDebug) console.debug('detectLegacyOlsrd: fetch failed, leaving OLSR tab visibility unchanged:', err); } if(cb) cb(false); });
   }
   detectLegacyOlsrd();
 
