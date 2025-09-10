@@ -2278,6 +2278,10 @@ static int h_airos(http_request_t *r);
 static int h_status(http_request_t *r) {
   char *buf = NULL; size_t cap = 16384, len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); return 0; } buf[0]=0;
   #define APPEND(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
+
+  /* Build JSON */
+  APPEND("{");
+
   /* hostname */
   char hostname[256] = ""; if (gethostname(hostname, sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0;
 
@@ -2370,7 +2374,6 @@ static int h_status(http_request_t *r) {
   char *olsr_topology_raw=NULL; size_t olt=0; if(util_http_get_url_local("http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
 
   /* Build JSON */
-  APPEND("{");
   APPEND("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APPEND(",");
   APPEND("\"ip\":"); json_append_escaped(&buf,&len,&cap,ipaddr); APPEND(",");
   APPEND("\"uptime\":\"%ld\",", uptime_seconds);
