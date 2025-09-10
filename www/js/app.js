@@ -381,11 +381,34 @@ function populateDevicesTable(devices, airos) {
   tbody.innerHTML = '';
   // Ensure parent pane is not accidentally hidden (help with intermittent empty-tab issue)
   try { var pane = document.getElementById('tab-status'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e) {}
+  // Note: we no longer filter out ARP-like entries here. Instead compute a
+  // `source` field per device and render it in the new Source column so users
+  // can distinguish devices originating from ubnt-discover vs ARP vs unknown.
+  function computeDeviceSource(dev) {
+    if (!dev) return 'unknown';
+    try {
+      var hasProduct = (dev.product || '').toString().trim().length > 0;
+      var hasHostname = (dev.hostname || '').toString().trim().length > 0;
+      var hasExtras = (dev.essid || dev.firmware || dev.uptime || dev.mode || dev.signal);
+      // If ubnt-discover provided product/hostname, prefer that
+      if (hasProduct || hasHostname) return 'ubnt-discover';
+      // If we only have hwaddr and no other identifying fields, it's likely from ARP
+      if (dev.hwaddr && !hasExtras && !hasProduct && !hasHostname) return 'arp';
+    } catch(e) {}
+    return 'unknown';
+  }
+
+  // If incoming devices is empty but we have a cached view, keep showing the cached devices
+  if (!devices || !Array.isArray(devices) || devices.length === 0) {
+    try { if (window._devices_data && Array.isArray(window._devices_data) && window._devices_data.length > 0) { devices = window._devices_data.slice(); } } catch(e) {}
+  }
   if (!devices || !Array.isArray(devices) || devices.length === 0) {
     var tbody = document.querySelector('#devicesTable tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No devices found</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-muted">No devices found</td></tr>';
     return;
   }
+  // Ensure we expose a source and wireless property on each device so sorting
+  // and display works consistently.
   var warn_frequency = 0;
   // Display all devices provided by the backend (e.g. ubnt discover output)
   devices.forEach(function(device) {
@@ -418,8 +441,13 @@ function populateDevicesTable(devices, airos) {
       }
       wireless = (w.frequency ? w.frequency + 'MHz ' : '') + (w.mode || '');
     }
-    tr.appendChild(td(wireless));
-    tbody.appendChild(tr);
+  // persist wireless string on device for sorting
+  device.wireless = wireless;
+  // compute and persist source for display/sorting
+  device.source = computeDeviceSource(device);
+  tr.appendChild(td(wireless));
+  tr.appendChild(td(device.source || ''));
+  tbody.appendChild(tr);
   });
   var table = document.getElementById('devicesTable');
   if (warn_frequency && table) {
@@ -447,7 +475,8 @@ function populateDevicesTable(devices, airos) {
           case 7: key = 'signal'; break;
           case 8: key = 'tx_rate'; break;
           case 9: key = 'rx_rate'; break;
-          case 10: key = 'wireless'; break;
+    case 10: key = 'wireless'; break;
+    case 11: key = 'source'; break;
         }
         if (!key) return;
         if (_devicesSort.key === key) _devicesSort.asc = !_devicesSort.asc; else { _devicesSort.key = key; _devicesSort.asc = true; }
