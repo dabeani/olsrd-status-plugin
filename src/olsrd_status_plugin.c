@@ -34,6 +34,15 @@
 #include "olsrd_plugin.h"
 #include "ubnt_discover.h"
 
+/* Ensure UBNT_DEBUG is defined when compiling this translation unit.
+ * rev/discover/ubnt_discover.c defines a compile-time UBNT_DEBUG fallback
+ * locally; the plugin also references UBNT_DEBUG so provide a safe default
+ * here to avoid undeclared identifier errors when not defined globally.
+ */
+#ifndef UBNT_DEBUG
+#define UBNT_DEBUG 0
+#endif
+
 #include <stdarg.h>
 
 /* Thread-safe IP -> hostname resolver using getnameinfo */
@@ -580,8 +589,8 @@ static void fetch_discover_once(void) {
   if (g_devices_cache) free(g_devices_cache);
   g_devices_cache = normalized; g_devices_cache_len = nlen; g_devices_cache_ts = time(NULL);
   pthread_mutex_unlock(&g_devices_cache_lock);
-  /* Log that the background discover updated the cache so automatic scans appear in logs */
-  fprintf(stderr, "[status-plugin] got device data from ubnt-discover (worker %zu bytes)\n", nlen);
+  /* Also emit into the UBNT/trace ring so runtime ubnt-debug consumers see it */
+  if (UBNT_DEBUG) plugin_log_trace("ubnt: got device data from ubnt-discover (worker %zu bytes)", nlen);
       /* note: do not free(normalized) here as ownership moved into g_devices_cache */
     }
   }
@@ -2523,6 +2532,8 @@ static int h_status(http_request_t *r) {
       char *ud = NULL; size_t udn = 0;
       if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
         fprintf(stderr, "[status-plugin] got device data from ubnt-discover (inline %zu bytes)\n", udn);
+        /* Mirror message into ubnt debug channel for parity with background worker */
+        if (UBNT_DEBUG) plugin_log_trace("ubnt: got device data from ubnt-discover (inline %zu bytes)", udn);
         char *normalized = NULL; size_t nlen = 0;
         if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
           APPEND("\"devices\":%s,", normalized);
