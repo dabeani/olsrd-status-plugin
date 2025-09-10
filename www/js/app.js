@@ -458,15 +458,15 @@ function populateDevicesTable(devices, airos) {
   // Note: we no longer filter out ARP-like entries here. Instead compute a
   // `source` field per device and render it in the new Source column so users
   // can distinguish devices originating from ubnt-discover vs ARP vs unknown.
-  function computeDeviceSource(dev) {
+  // Determine a single-entry source tag for an incoming device object.
+  // Returns 'ubnt-discover', 'arp' or 'unknown' for a single raw record.
+  function detectSource(dev) {
     if (!dev) return 'unknown';
     try {
       var hasProduct = (dev.product || '').toString().trim().length > 0;
       var hasHostname = (dev.hostname || '').toString().trim().length > 0;
       var hasExtras = (dev.essid || dev.firmware || dev.uptime || dev.mode || dev.signal);
-      // If ubnt-discover provided product/hostname, prefer that
       if (hasProduct || hasHostname) return 'ubnt-discover';
-      // If we only have hwaddr and no other identifying fields, it's likely from ARP
       if (dev.hwaddr && !hasExtras && !hasProduct && !hasHostname) return 'arp';
     } catch(e) {}
     return 'unknown';
@@ -484,6 +484,46 @@ function populateDevicesTable(devices, airos) {
   // Ensure we expose a source and wireless property on each device so sorting
   // and display works consistently.
   var warn_frequency = 0;
+
+  // Merge duplicates produced by ARP + ubnt-discover: prefer richer fields and
+  // combine source indicators (e.g. 'arp, ubnt-discover'). We merge by
+  // hardware address when present, otherwise by IPv4 address.
+  try {
+    var mergedMap = Object.create(null);
+    devices.forEach(function(dev) {
+      var key = null;
+      if (dev.hwaddr) key = String(dev.hwaddr).toLowerCase();
+      else if (dev.ipv4) key = String(dev.ipv4);
+      else if (dev.ip) key = String(dev.ip);
+      else key = String(dev.hostname || ('_anon_' + Math.random().toString(36).slice(2,8)));
+
+      if (!mergedMap[key]) {
+        // shallow copy so we don't mutate original source objects
+        var copy = {};
+        for (var k in dev) if (dev.hasOwnProperty(k)) copy[k] = dev[k];
+        copy.sources = new Set();
+        copy.sources.add(detectSource(dev));
+        mergedMap[key] = copy;
+      } else {
+        var cur = mergedMap[key];
+        // prefer non-empty values from incoming record
+        ['ipv4','ip','hwaddr','hostname','product','uptime','mode','essid','firmware','signal','tx_rate','rx_rate'].forEach(function(f){
+          try { if ((!cur[f] || String(cur[f]).trim() === '') && dev[f] && String(dev[f]).trim() !== '') cur[f] = dev[f]; } catch(e) {}
+        });
+        cur.sources.add(detectSource(dev));
+      }
+    });
+    // rebuild devices array from mergedMap
+    var mergedDevices = [];
+    Object.keys(mergedMap).forEach(function(k){
+      var item = mergedMap[k];
+      try { item.source = Array.from(item.sources).sort().filter(function(x){return x && x!=='unknown';}).join(', '); } catch(e){ item.source = 'unknown'; }
+      delete item.sources;
+      mergedDevices.push(item);
+    });
+    devices = mergedDevices;
+  } catch(e) { /* if merging fails, fall back to original devices array */ }
+
   // Display all devices provided by the backend (e.g. ubnt discover output)
   devices.forEach(function(device) {
     var tr = document.createElement('tr');
@@ -518,12 +558,16 @@ function populateDevicesTable(devices, airos) {
   // persist wireless string on device for sorting
   device.wireless = wireless;
   // compute and persist source for display/sorting
-  device.source = computeDeviceSource(device);
+  // If merging ran above it already set device.source; otherwise detect from single record
+  if (!device.source) {
+    try { device.source = detectSource(device); } catch(e) { device.source = 'unknown'; }
+  }
   tr.appendChild(td(wireless));
   // create Source cell with colored dot + label (for visual clarity)
   var srcTd = document.createElement('td');
   var srcWrap = document.createElement('span');
-  var scls = 'device-source src-' + (device.source ? device.source.replace(/[^a-z0-9\-]/gi,'') : 'unknown');
+  // sanitize source string into a safe class name (comma/space -> single hyphen, remove other chars)
+  var scls = 'device-source src-' + (device.source ? device.source.toLowerCase().replace(/[^a-z0-9]+/gi,'-').replace(/-+/g,'-').replace(/^-|-$/g,'') : 'unknown');
   srcWrap.className = scls;
   var dot = document.createElement('span'); dot.className = 'dot';
   var lbl = document.createElement('span'); lbl.className = 'lbl small'; lbl.innerText = device.source || 'unknown';

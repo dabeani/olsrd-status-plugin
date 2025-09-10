@@ -4365,11 +4365,15 @@ static void ringbuf_push(const char *s) {
  */
 void plugin_log_trace(const char *fmt, ...) {
   char tmp[1024]; va_list ap; va_start(ap, fmt);
-  /* vsnprintf with non-literal fmt is allowed; guard with pragma to silence clang warning */
+  /* vsnprintf with non-literal fmt is allowed; silence clang-only warning when compiling with clang */
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wformat-nonliteral"
+#endif
   int n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
+#ifdef __clang__
 #pragma clang diagnostic pop
+#endif
   va_end(ap);
   if (n <= 0) return; /* nothing formatted */
   /* ensure single-line and trim trailing newline */
