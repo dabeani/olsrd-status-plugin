@@ -1136,9 +1136,16 @@ function updateUI(data) {
       setText('default-route', 'n/a');
     }
   } catch(e) { setText('default-route', 'n/a'); }
+  // Render lightweight devices if present, but fetch full device inventory
+  // asynchronously from /devices.json so /status/lite stays fast.
   populateDevicesTable(data.devices, data.airos);
-  // cache devices for client-side sorting and re-render
   try { window._devices_data = Array.isArray(data.devices) ? data.devices : []; } catch(e) { window._devices_data = []; }
+  // Show loading row while fetching the full table
+  try {
+    var tbody = document.querySelector('#devicesTable tbody');
+    if (tbody) tbody.innerHTML = '<tr id="devices-loading"><td colspan="12" class="text-muted">Loading devices…</td></tr>';
+    fetch('/devices.json', {cache: 'no-store'}).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function(d){ try { if (d && Array.isArray(d.devices)) populateDevicesTable(d.devices, d.airos || {}); } catch(e){} }).catch(function(){ try { if (window._devices_data && Array.isArray(window._devices_data)) populateDevicesTable(window._devices_data, data.airos); } catch(e){} }).finally(function(){ var el = document.getElementById('devices-loading'); if (el) el.parentNode.removeChild(el); });
+  } catch(e){}
   if (data.olsr2_on) {
     showTab('tab-olsr2', true);
     var li = document.getElementById('tab-olsrd2-links'); if (li) li.style.display='';

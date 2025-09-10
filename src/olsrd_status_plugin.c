@@ -722,6 +722,7 @@ static int h_fetch_metrics(http_request_t *r);
 static int h_prometheus_metrics(http_request_t *r);
 static int h_fetch_debug(http_request_t *r);
 static int h_traceroute(http_request_t *r);
+static int h_devices_json(http_request_t *r);
 
 /* Forward declarations for device discovery helpers used by background worker */
 static int ubnt_discover_output(char **out, size_t *outlen);
@@ -3060,6 +3061,120 @@ static int h_status_lite(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
 
+/* Devices JSON endpoint: return merged ubnt-discover (cached) + ARP entries
+ * Response schema: { "devices": [ ... ], "airos": { ... } }
+ */
+static int h_devices_json(http_request_t *r) {
+  char *arp = NULL; size_t arpn = 0;
+  char *udcopy = NULL; size_t udlen = 0;
+  int have_ud = 0, have_arp = 0;
+
+  /* grab snapshot of cached normalized ubnt devices if present */
+  pthread_mutex_lock(&g_devices_cache_lock);
+  if (g_devices_cache && g_devices_cache_len > 0) {
+    udlen = g_devices_cache_len;
+    udcopy = malloc(udlen + 1);
+    if (udcopy) {
+      memcpy(udcopy, g_devices_cache, udlen);
+      udcopy[udlen] = '\0';
+      have_ud = 1;
+    }
+  }
+  pthread_mutex_unlock(&g_devices_cache_lock);
+
+  /* read ARP-derived devices */
+  if (devices_from_arp_json(&arp, &arpn) == 0 && arp && arpn > 0) {
+    have_arp = 1;
+  }
+
+  /* Build merged JSON */
+  char *out = NULL; size_t cap = 4096, len = 0;
+  out = malloc(cap);
+  if (!out) {
+    if (udcopy) free(udcopy);
+    if (arp) free(arp);
+    send_json(r, "{}\n");
+    return 0;
+  }
+  out[0] = '\0';
+  if (json_buf_append(&out, &len, &cap, "{") < 0) { free(out); if (udcopy) free(udcopy); if (arp) free(arp); send_json(r, "{}\n"); return 0; }
+  /* devices array */
+  if (!have_ud && !have_arp) {
+    json_buf_append(&out, &len, &cap, "\"devices\":[]");
+  } else {
+    json_buf_append(&out, &len, &cap, "\"devices\":[");
+    int first = 1;
+    if (have_ud && udcopy) {
+      /* udcopy is a JSON array; strip outer [ ] and emit elements */
+      const char *s = udcopy; while (*s && isspace((unsigned char)*s)) s++; if (*s == '[') s++;
+      const char *e = udcopy + udlen; while (e > s && isspace((unsigned char)*(e-1))) e--; if (e > s && *(e-1) == ']') e--;
+      const char *p = s;
+      while (p < e) {
+        while (p < e && isspace((unsigned char)*p)) p++;
+        if (p < e && *p == ',') { p++; continue; }
+        if (p >= e) break;
+        if (*p == '{') {
+          const char *q = p; int depth = 0;
+          while (q < e) { if (*q == '{') depth++; else if (*q == '}') { depth--; if (depth == 0) { q++; break; } } q++; }
+          if (q <= p) break;
+          if (!first) json_buf_append(&out, &len, &cap, ",");
+          size_t chunk = (size_t)(q - p);
+          json_buf_append(&out, &len, &cap, "%.*s", (int)chunk, p);
+          first = 0;
+          p = q;
+          continue;
+        }
+        p++;
+      }
+    }
+    if (have_arp && arp) {
+      const char *s = arp; while (*s && isspace((unsigned char)*s)) s++; if (*s == '[') s++;
+      const char *e = arp + arpn; while (e > s && isspace((unsigned char)*(e-1))) e--; if (e > s && *(e-1) == ']') e--;
+      const char *p = s;
+      while (p < e) {
+        while (p < e && isspace((unsigned char)*p)) p++;
+        if (p < e && *p == ',') { p++; continue; }
+        if (p >= e) break;
+        if (*p == '{') {
+          const char *q = p; int depth = 0;
+          while (q < e) { if (*q == '{') depth++; else if (*q == '}') { depth--; if (depth == 0) { q++; break; } } q++; }
+          if (q <= p) break;
+          if (!first) json_buf_append(&out, &len, &cap, ",");
+          size_t chunk = (size_t)(q - p);
+          json_buf_append(&out, &len, &cap, "%.*s", (int)chunk, p);
+          first = 0;
+          p = q;
+          continue;
+        }
+        p++;
+      }
+    }
+    json_buf_append(&out, &len, &cap, "]");
+  }
+
+  /* airos object */
+  if (path_exists("/tmp/10-all.json")) {
+    char *ar = NULL; size_t an = 0;
+    if (util_read_file("/tmp/10-all.json", &ar, &an) == 0 && ar && an > 0) {
+      json_buf_append(&out, &len, &cap, ",\"airos\":%s", ar);
+      free(ar);
+    } else {
+      json_buf_append(&out, &len, &cap, ",\"airos\":{}");
+    }
+  } else {
+    json_buf_append(&out, &len, &cap, ",\"airos\":{}");
+  }
+
+  json_buf_append(&out, &len, &cap, "}");
+
+  http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, len);
+
+  if (out) free(out);
+  if (udcopy) free(udcopy);
+  if (arp) free(arp);
+  return 0;
+}
+
 // Minimal stats endpoint for UI polling
 static int h_status_stats(http_request_t *r) {
   char out[512];
@@ -4304,6 +4419,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/summary", &h_status_summary);
   http_server_register_handler("/status/olsr", &h_status_olsr);
   http_server_register_handler("/status/lite", &h_status_lite);
+  http_server_register_handler("/devices.json", &h_devices_json);
   http_server_register_handler("/status/stats", &h_status_stats);
   http_server_register_handler("/status.py", &h_status_py);
   http_server_register_handler("/status/traceroute", &h_status_traceroute);
