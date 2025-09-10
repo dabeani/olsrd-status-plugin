@@ -240,11 +240,48 @@ function setHTML(id, html) {
 function safeFetchStatus(fetchOptions) {
   fetchOptions = fetchOptions || {cache:'no-store'};
   // Simplified: require the server to return a valid JSON payload. If parsing
-  // fails, propagate the error to callers instead of attempting fragile
-  // salvage heuristics.
+  // fails, attempt to salvage the last top-level JSON object/array from the
+  // response text. This makes the UI tolerant to wrappers or logging lines
+  // prepended/appended by some embedded systems.
   return fetch('/status', fetchOptions).then(function(r){
     if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
-    return r.json();
+    return r.text();
+  }).then(function(text){
+    // Try a direct parse first
+    try { return JSON.parse(text); } catch (e) {
+      // Fallback: scan the text for the last complete top-level JSON object
+      // or array and parse that. This is defensive and intentionally forgiving.
+      function extractLastTopLevelJSON(s) {
+        if (!s || !s.length) return null;
+        var lastParsed = null;
+        var len = s.length;
+        for (var i = 0; i < len; i++) {
+          var ch = s[i];
+          if (ch !== '{' && ch !== '[') continue;
+          var open = ch; var close = (open === '{') ? '}' : ']';
+          var depth = 1;
+          for (var j = i + 1; j < len; j++) {
+            var cj = s[j];
+            if (cj === open) depth++;
+            else if (cj === close) depth--;
+            if (depth === 0) {
+              var cand = s.substring(i, j + 1);
+              try {
+                var obj = JSON.parse(cand);
+                lastParsed = obj;
+              } catch (err) {
+                /* ignore parse errors for this candidate */
+              }
+              break; // continue scanning after this object
+            }
+          }
+        }
+        return lastParsed;
+      }
+      var recovered = extractLastTopLevelJSON(text);
+      if (recovered !== null) return recovered;
+      throw new Error('Invalid JSON from /status');
+    }
   });
 }
 
