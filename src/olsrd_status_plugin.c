@@ -1297,8 +1297,9 @@ static int devices_from_arp_json(char **out, size_t *outlen) {
       if(!first) json_buf_append(&buf,&len,&cap,",");
       first=0;
       json_buf_append(&buf,&len,&cap,"{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,ip);
-      json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
-      json_buf_append(&buf,&len,&cap,",\"hostname\":\"\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\"}");
+  json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
+  /* ARP-derived entries: no hostname/product; mark source explicitly */
+  json_buf_append(&buf,&len,&cap,",\"hostname\":\"\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\",\"source\":\"arp\"}");
     }
   }
   fclose(f); json_buf_append(&buf,&len,&cap,"]"); *out=buf; *outlen=len; return 0;
@@ -2008,7 +2009,8 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
   json_buf_append(&buf,&len,&cap, ",\"signal\":"); json_append_escaped(&buf,&len,&cap, signal);
   json_buf_append(&buf,&len,&cap, ",\"tx_rate\":"); json_append_escaped(&buf,&len,&cap, tx_rate);
   json_buf_append(&buf,&len,&cap, ",\"rx_rate\":"); json_append_escaped(&buf,&len,&cap, rx_rate);
-      json_buf_append(&buf,&len,&cap, "}");
+      /* mark provenance explicitly for normalized ubnt-discover entries */
+      json_buf_append(&buf,&len,&cap, ",\"source\":\"ubnt-discover\"}");
 
       q = r; continue;
     }
@@ -2884,9 +2886,94 @@ static int h_status_lite(http_request_t *r) {
   APP_L(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev);
   APP_L(",\"hostname\":"); json_append_escaped(&buf,&len,&cap,def_hostname);
   APP_L("},");
-  /* devices */
+  /* devices: merge ubnt-discover normalized devices with ARP-derived devices so UI always sees both sources */
   {
-    char *ud=NULL; size_t udn=0; if(ubnt_discover_output(&ud,&udn)==0 && ud){ char *normalized=NULL; size_t nlen=0; if(normalize_ubnt_devices(ud,&normalized,&nlen)==0 && normalized){ APP_L("\"devices\":%s,", normalized); free(normalized);} else APP_L("\"devices\":[],"); free(ud);} else APP_L("\"devices\":[],");
+    char *ud = NULL; size_t udn = 0;
+    char *arp = NULL; size_t arpn = 0;
+    char *normalized = NULL; size_t nlen = 0;
+    int have_ud = 0, have_arp = 0;
+    if (ubnt_discover_output(&ud, &udn) == 0 && ud) {
+      if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
+        have_ud = 1;
+      } else {
+        if (normalized) { free(normalized); normalized = NULL; nlen = 0; }
+      }
+      free(ud); ud = NULL; udn = 0;
+    }
+    if (devices_from_arp_json(&arp, &arpn) == 0 && arp && arpn > 0) {
+      have_arp = 1;
+    }
+    /* build merged array: [ <normalized...>, <arp...> ] taking care of brackets/comma */
+    if (!have_ud && !have_arp) {
+      APP_L("\"devices\":[],");
+    } else {
+      /* write opening */
+      APP_L("\"devices\":[");
+      int first = 1;
+      if (have_ud && normalized) {
+        /* normalized is a JSON array like [obj,obj]; emit contents without surrounding [] */
+        const char *s = normalized;
+        while (*s && isspace((unsigned char)*s)) s++;
+        if (*s == '[') s++;
+        const char *e = normalized + nlen;
+        /* find trailing ] */
+        while (e > s && isspace((unsigned char)*(e-1))) e--;
+        if (e > s && *(e-1) == ']') e--;
+        /* copy entries */
+        const char *p = s;
+        while (p < e) {
+          /* skip leading whitespace or commas */
+          while (p < e && isspace((unsigned char)*p)) p++;
+          if (p < e && *p == ',') { p++; continue; }
+          if (p >= e) break;
+          /* find next object end by simple brace counting */
+          if (*p == '{') {
+            const char *q = p; int depth = 0;
+            while (q < e) { if (*q == '{') depth++; else if (*q == '}') { depth--; if (depth == 0) { q++; break; } } q++; }
+            if (q <= p) break;
+            if (!first) APP_L(",");
+            /* append raw substring */
+            size_t chunk = (size_t)(q - p);
+            http_write(r, p, chunk);
+            first = 0;
+            p = q;
+            continue;
+          }
+          /* otherwise advance */
+          p++;
+        }
+      }
+      if (have_arp && arp) {
+        /* arp is JSON array; append comma if needed then its entries */
+        const char *s = arp;
+        while (*s && isspace((unsigned char)*s)) s++;
+        if (*s == '[') s++;
+        const char *e = arp + arpn;
+        while (e > s && isspace((unsigned char)*(e-1))) e--;
+        if (e > s && *(e-1) == ']') e--;
+        const char *p = s;
+        while (p < e) {
+          while (p < e && isspace((unsigned char)*p)) p++;
+          if (p < e && *p == ',') { p++; continue; }
+          if (p >= e) break;
+          if (*p == '{') {
+            const char *q = p; int depth = 0;
+            while (q < e) { if (*q == '{') depth++; else if (*q == '}') { depth--; if (depth == 0) { q++; break; } } q++; }
+            if (q <= p) break;
+            if (!first) APP_L(",");
+            http_write(r, p, (size_t)(q - p));
+            first = 0;
+            p = q;
+            continue;
+          }
+          p++;
+        }
+      }
+      /* close array */
+      APP_L("],");
+      if (normalized) free(normalized);
+      if (arp) free(arp);
+    }
   }
   /* airos data minimal */
   if(path_exists("/tmp/10-all.json")){ char *ar=NULL; size_t an=0; if(util_read_file("/tmp/10-all.json",&ar,&an)==0 && ar){ APP_L("\"airosdata\":%s,", ar); free(ar);} else APP_L("\"airosdata\":{},"); } else APP_L("\"airosdata\":{},");

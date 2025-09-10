@@ -446,7 +446,14 @@ function populateDevicesTable(devices, airos) {
   // compute and persist source for display/sorting
   device.source = computeDeviceSource(device);
   tr.appendChild(td(wireless));
-  tr.appendChild(td(device.source || ''));
+  // create Source cell with colored dot + label (for visual clarity)
+  var srcTd = document.createElement('td');
+  var srcWrap = document.createElement('span');
+  var scls = 'device-source src-' + (device.source ? device.source.replace(/[^a-z0-9\-]/gi,'') : 'unknown');
+  srcWrap.className = scls;
+  var dot = document.createElement('span'); dot.className = 'dot';
+  var lbl = document.createElement('span'); lbl.className = 'lbl small'; lbl.innerText = device.source || 'unknown';
+  srcWrap.appendChild(dot); srcWrap.appendChild(lbl); srcTd.appendChild(srcWrap); tr.appendChild(srcTd);
   tbody.appendChild(tr);
   });
   var table = document.getElementById('devicesTable');

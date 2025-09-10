@@ -127,3 +127,12 @@
 .status-dropdown-menu[aria-hidden="false"] { display:block; }
 .status-badges .badge { transition: box-shadow 200ms ease, background-color 200ms ease; }
 .status-badges .badge.clickable { cursor:pointer; }
+
+/* Source column: small colored dot + label */
+.device-source { display:flex; align-items:center; gap:8px; }
+.device-source .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; }
+.device-source .lbl { font-size:12px; color:#333; }
+.device-source .src-arp .dot { background:#9b59b6; } /* purple for ARP */
+.device-source .src-ubnt-discover .dot { background:#2b9af3; } /* blue for ubnt-discover */
+.device-source .src-unknown .dot { background:#ccc; }
+.device-source .lbl.small { font-size:11px; color:#666; }
