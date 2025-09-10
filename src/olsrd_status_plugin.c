@@ -558,15 +558,16 @@ static void fetch_discover_once(void) {
   if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
     char *normalized = NULL; size_t nlen = 0;
     if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
-      /* transform to legacy to keep h_status_compat expectations */
-      char *legacy = NULL; size_t legacy_len = 0;
-      if (transform_devices_to_legacy(normalized, &legacy, &legacy_len) == 0 && legacy) {
-        pthread_mutex_lock(&g_devices_cache_lock);
-        if (g_devices_cache) free(g_devices_cache);
-        g_devices_cache = legacy; g_devices_cache_len = legacy_len; g_devices_cache_ts = time(NULL);
-        pthread_mutex_unlock(&g_devices_cache_lock);
-      } else { if (legacy) free(legacy); }
-      free(normalized);
+      /* Cache the normalized devices JSON so the UI sees the same schema as
+       * the inline discovery path (frontend expects objects with ipv4, hwaddr,
+       * hostname, product, etc.). Storing normalized JSON avoids mismatches
+       * between cached and inline responses.
+       */
+      pthread_mutex_lock(&g_devices_cache_lock);
+      if (g_devices_cache) free(g_devices_cache);
+      g_devices_cache = normalized; g_devices_cache_len = nlen; g_devices_cache_ts = time(NULL);
+      pthread_mutex_unlock(&g_devices_cache_lock);
+      /* note: do not free(normalized) here as ownership moved into g_devices_cache */
     }
   }
   if (ud) free(ud);
