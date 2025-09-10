@@ -2807,96 +2807,189 @@ function renderConnectionsTable(c, nodedb) {
 
 function renderVersionsPanel(v) {
   var wrap = document.getElementById('versions-wrap'); if(!wrap) return; wrap.innerHTML='';
-  if(!v) { wrap.textContent = 'No versions data'; return; }
+  if(!v) { wrap.innerHTML = '<div class="alert alert-warning"><i class="glyphicon glyphicon-exclamation-sign"></i> No versions data available</div>'; return; }
 
-  // Top-level header with hostname and small badges
-  var header = document.createElement('div'); header.className = 'row';
-  var hleft = document.createElement('div'); hleft.className = 'col-sm-8';
-  var htitle = document.createElement('h4'); htitle.innerHTML = '<span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span> Versions & System Info';
-  hleft.appendChild(htitle);
-  var hright = document.createElement('div'); hright.className = 'col-sm-4 text-right';
-  var hostSpan = document.createElement('div'); hostSpan.className = 'small-muted'; hostSpan.style.marginTop='8px'; hostSpan.textContent = (v.hostname?('Host: '+v.hostname):'');
-  hright.appendChild(hostSpan);
-  header.appendChild(hleft); header.appendChild(hright);
-  wrap.appendChild(header);
+  // Main container with improved styling
+  var container = document.createElement('div');
+  container.className = 'versions-container';
 
-  // Create two columns: System / Software
-  var row = document.createElement('div'); row.className = 'row';
+  // Header section with system overview
+  var headerCard = document.createElement('div');
+  headerCard.className = 'panel panel-primary';
+  var headerBody = document.createElement('div');
+  headerBody.className = 'panel-body';
 
-  var col1 = document.createElement('div'); col1.className = 'col-sm-6';
-  var panel1 = document.createElement('div'); panel1.className = 'panel panel-default';
-  var panel1b = document.createElement('div'); panel1b.className = 'panel-body';
-  panel1b.innerHTML = '<h5><span class="glyphicon glyphicon-hdd" aria-hidden="true"></span> System</h5>';
-  var tbl1 = document.createElement('table'); tbl1.className = 'table table-condensed';
-  function rowKV(icon, label, value) {
-    var tr = document.createElement('tr');
-    var th = document.createElement('th'); th.style.width='35%'; th.style.fontWeight='600'; th.innerHTML = (icon?('<span class="glyphicon '+icon+'" aria-hidden="true"></span> '):'') + label;
-    var td = document.createElement('td'); td.innerHTML = value===undefined || value===null ? '<span class="text-muted">-</span>' : String(value);
-    tr.appendChild(th); tr.appendChild(td); return tr;
+  var headerRow = document.createElement('div');
+  headerRow.className = 'row';
+
+  // Left side - System info
+  var leftCol = document.createElement('div');
+  leftCol.className = 'col-md-6';
+  var systemInfo = document.createElement('div');
+  systemInfo.innerHTML = '<h4><i class="glyphicon glyphicon-hdd"></i> ' + (v.hostname || 'System') + '</h4>';
+  systemInfo.innerHTML += '<p class="text-muted">' + (v.system || 'Unknown system') + ' • ' + (v.ipv4 || 'No IP') + '</p>';
+  leftCol.appendChild(systemInfo);
+
+  // Right side - Status badges
+  var rightCol = document.createElement('div');
+  rightCol.className = 'col-md-6 text-right';
+  var badgeContainer = document.createElement('div');
+  badgeContainer.style.marginTop = '10px';
+
+  // Status badges with better styling
+  function createStatusBadge(label, value, type) {
+    var badge = document.createElement('span');
+    badge.className = 'badge status-badge status-' + type;
+    badge.innerHTML = '<i class="glyphicon glyphicon-' + (type === 'success' ? 'ok' : type === 'danger' ? 'remove' : 'info-sign') + '"></i> ' + label + ': ' + value;
+    return badge;
   }
-  tbl1.appendChild(rowKV('glyphicon-tag','System', v.system || '-'));
-  tbl1.appendChild(rowKV('glyphicon-info-sign','Model', v.model || v.product || '-'));
-  // Kernel: prefer common fields, fall back to nested/system hints
-  var kernelVal = v.kernel || v.kernel_version || v.os_kernel || (v.system && v.system.kernel) || (v.system_info && v.system_info.kernel) || '-';
-  tbl1.appendChild(rowKV('glyphicon-tasks','Kernel', kernelVal));
-  if (v.local_ips) tbl1.appendChild(rowKV('glyphicon-globe','Local IPs', Array.isArray(v.local_ips)?v.local_ips.join(', '):String(v.local_ips)));
-  panel1b.appendChild(tbl1); panel1.appendChild(panel1b); col1.appendChild(panel1);
 
-  var col2 = document.createElement('div'); col2.className = 'col-sm-6';
-  var panel2 = document.createElement('div'); panel2.className = 'panel panel-default';
-  var panel2b = document.createElement('div'); panel2b.className = 'panel-body';
-  panel2b.innerHTML = '<h5><span class="glyphicon glyphicon-cloud" aria-hidden="true"></span> Software</h5>';
-  var tbl2 = document.createElement('table'); tbl2.className = 'table table-condensed';
-  // prefer common fields
-  function addSoftRow(key, label) {
-    if (v[key] !== undefined) tbl2.appendChild(rowKV('glyphicon-cog', label||key, (typeof v[key] === 'object')?JSON.stringify(v[key]):v[key]));
+  if (v.olsrd_running !== undefined) {
+    badgeContainer.appendChild(createStatusBadge('OLSRd', v.olsrd_running ? 'Running' : 'Stopped', v.olsrd_running ? 'success' : 'danger'));
   }
-  addSoftRow('olsrd', 'OLSRd');
-  addSoftRow('olsr2', 'OLSRv2');
-  addSoftRow('firmware','Firmware');
-  addSoftRow('bmk_webstatus','BMK Webstatus');
-  addSoftRow('autoupdate','AutoUpdate');
-  // detailed olsrd fields
-  if (v.olsrd_details) {
-    var d = v.olsrd_details;
-    tbl2.appendChild(rowKV('glyphicon-screenshot','OLSRd Version', d.version || (v.olsrd||'-')));
-    tbl2.appendChild(rowKV('glyphicon-list-alt','OLSRd Description', d.description || '-'));
-    tbl2.appendChild(rowKV('glyphicon-phone','OLSRd Device', d.device || '-'));
-    tbl2.appendChild(rowKV('glyphicon-calendar','OLSRd Build Date', d.date || '-'));
-    tbl2.appendChild(rowKV('glyphicon-flag','OLSRd Release', d.release || '-'));
-    tbl2.appendChild(rowKV('glyphicon-file','OLSRd Source', d.source || '-'));
+  if (v.olsr2_running !== undefined) {
+    badgeContainer.appendChild(createStatusBadge('OLSRv2', v.olsr2_running ? 'Running' : 'Stopped', v.olsr2_running ? 'success' : 'danger'));
   }
-  else {
-    // Fallbacks when detailed olsrd info isn't present: try common top-level keys
-    if (v.olsrd !== undefined) tbl2.appendChild(rowKV('glyphicon-screenshot','OLSRd Version', v.olsrd));
-    if (v.olsrd_release !== undefined) tbl2.appendChild(rowKV('glyphicon-flag','OLSRd Release', v.olsrd_release));
-    if (v.olsrd_build_date !== undefined) tbl2.appendChild(rowKV('glyphicon-calendar','OLSRd Build Date', v.olsrd_build_date));
-    if (v.olsrd_source !== undefined) tbl2.appendChild(rowKV('glyphicon-file','OLSRd Source', v.olsrd_source));
+
+  rightCol.appendChild(badgeContainer);
+  headerRow.appendChild(leftCol);
+  headerRow.appendChild(rightCol);
+  headerBody.appendChild(headerRow);
+  headerCard.appendChild(headerBody);
+  container.appendChild(headerCard);
+
+  // Information cards in a grid
+  var infoGrid = document.createElement('div');
+  infoGrid.className = 'row';
+  infoGrid.style.marginTop = '20px';
+
+  // System Information Card
+  var systemCard = createInfoCard('System Information', 'hdd', [
+    { label: 'System Type', value: v.system || 'Unknown', icon: 'tag' },
+    { label: 'Hostname', value: v.hostname || 'Unknown', icon: 'user' },
+    { label: 'IPv4 Address', value: v.ipv4 || 'Not available', icon: 'globe' },
+    { label: 'IPv6 Address', value: v.ipv6 || 'Not available', icon: 'globe' },
+    { label: 'Link Serial', value: v.linkserial || 'Not available', icon: 'link' }
+  ]);
+  infoGrid.appendChild(systemCard);
+
+  // OLSR Information Card
+  var olsrCard = createInfoCard('OLSR Routing', 'transfer', [
+    { label: 'OLSRd Status', value: v.olsrd_running ? '<span class="text-success">Running</span>' : '<span class="text-danger">Stopped</span>', icon: 'play-circle' },
+    { label: 'OLSRv2 Status', value: v.olsr2_running ? '<span class="text-success">Running</span>' : '<span class="text-danger">Stopped</span>', icon: 'play-circle' },
+    { label: 'OLSRd Version', value: v.olsrd_details ? v.olsrd_details.version : (v.olsrd || 'Unknown'), icon: 'info-sign' },
+    { label: 'Watchdog', value: v.olsrd4watchdog ? '<span class="text-success">Active</span>' : '<span class="text-muted">Inactive</span>', icon: 'eye-open' }
+  ]);
+  infoGrid.appendChild(olsrCard);
+
+  // Software Information Card
+  var softwareItems = [
+    { label: 'BMK Webstatus', value: v.bmk_webstatus || 'Not available', icon: 'cloud' },
+    { label: 'AutoUpdate Wizards', value: v.autoupdate_wizards_installed || 'Not installed', icon: 'refresh' }
+  ];
+
+  if (v.olsrd_details && v.olsrd_details.description) {
+    softwareItems.push({ label: 'OLSRd Description', value: v.olsrd_details.description, icon: 'file' });
   }
-  // Show where version info originated (edge/router/container/local) when available
-  var srcHint = v.source || (v.is_edgerouter? 'EdgeRouter' : (v.is_linux_container? 'Linux/container' : (v.host_platform || 'local')));
-  if (srcHint) tbl1.appendChild(rowKV('glyphicon-map-marker','Info source', srcHint));
-  // wizards may be an object/array
-  if (v.wizards) tbl2.appendChild(rowKV('glyphicon-education','Wizards', (typeof v.wizards==='object')?JSON.stringify(v.wizards):v.wizards));
-  if (v.bootimage && v.bootimage.md5) tbl2.appendChild(rowKV('glyphicon-lock','Boot image MD5', v.bootimage.md5));
-  panel2b.appendChild(tbl2); panel2.appendChild(panel2b); col2.appendChild(panel2);
 
-  row.appendChild(col1); row.appendChild(col2); wrap.appendChild(row);
+  if (v.bootimage && v.bootimage.md5 && v.bootimage.md5 !== 'n/a') {
+    softwareItems.push({ label: 'Boot Image MD5', value: v.bootimage.md5, icon: 'lock' });
+  }
 
-  // Small summary badges row
-  var badgeRow = document.createElement('div'); badgeRow.className = 'row'; badgeRow.style.marginTop='6px';
-  var brc = document.createElement('div'); brc.className = 'col-sm-12';
-  var badges = document.createElement('div');
-  function addBadge(label, val, cls) { var s = document.createElement('span'); s.className = 'label '+(cls||'label-default'); s.style.marginRight='6px'; s.textContent = label+': '+String(val); badges.appendChild(s); }
-  if (v.system) addBadge('System', v.system, 'label-primary');
-  if (v.olsrd_running !== undefined) addBadge('OLSRd', v.olsrd_running?'running':'stopped', v.olsrd_running?'label-success':'label-danger');
-  if (v.olsr2_running !== undefined) addBadge('OLSRv2', v.olsr2_running?'running':'stopped', v.olsr2_running?'label-success':'label-danger');
-  if (v.autoupdate_wizards_installed) addBadge('AutoUpdate wizards', v.autoupdate_wizards_installed, 'label-info');
-  brc.appendChild(badges); badgeRow.appendChild(brc); wrap.appendChild(badgeRow);
+  var softwareCard = createInfoCard('Software & Updates', 'cog', softwareItems);
+  infoGrid.appendChild(softwareCard);
 
-  // Full JSON dump (collapsible)
-  var pre = document.createElement('pre'); pre.style.maxHeight='260px'; pre.style.overflow='auto'; pre.style.marginTop='10px'; pre.textContent = JSON.stringify(v,null,2);
-  wrap.appendChild(pre);
+  // AutoUpdate Settings Card (if available)
+  if (v.autoupdate_settings) {
+    var autoupdateItems = [];
+    Object.keys(v.autoupdate_settings).forEach(function(key) {
+      var value = v.autoupdate_settings[key];
+      var displayValue = typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : String(value);
+      autoupdateItems.push({
+        label: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        value: displayValue,
+        icon: value ? 'ok' : 'remove'
+      });
+    });
+    var autoupdateCard = createInfoCard('AutoUpdate Configuration', 'wrench', autoupdateItems);
+    infoGrid.appendChild(autoupdateCard);
+  }
+
+  container.appendChild(infoGrid);
+
+  // Collapsible raw data section
+  var rawDataSection = document.createElement('div');
+  rawDataSection.className = 'panel panel-default';
+  rawDataSection.style.marginTop = '20px';
+
+  var rawDataHeader = document.createElement('div');
+  rawDataHeader.className = 'panel-heading';
+  rawDataHeader.innerHTML = '<h4 class="panel-title"><a data-toggle="collapse" href="#rawVersionsData"><i class="glyphicon glyphicon-chevron-down"></i> Raw Version Data</a></h4>';
+  rawDataSection.appendChild(rawDataHeader);
+
+  var rawDataBody = document.createElement('div');
+  rawDataBody.id = 'rawVersionsData';
+  rawDataBody.className = 'panel-collapse collapse';
+  var rawDataContent = document.createElement('div');
+  rawDataContent.className = 'panel-body';
+  var pre = document.createElement('pre');
+  pre.style.maxHeight = '300px';
+  pre.style.overflow = 'auto';
+  pre.className = 'json-data';
+  pre.textContent = JSON.stringify(v, null, 2);
+  rawDataContent.appendChild(pre);
+  rawDataBody.appendChild(rawDataContent);
+  rawDataSection.appendChild(rawDataBody);
+
+  container.appendChild(rawDataSection);
+
+  // Add custom CSS for better styling
+  if (!document.getElementById('versions-custom-css')) {
+    var style = document.createElement('style');
+    style.id = 'versions-custom-css';
+    style.textContent = `
+      .versions-container .panel { margin-bottom: 15px; }
+      .versions-container .info-item { margin-bottom: 8px; padding: 8px; border-radius: 4px; background: #f8f9fa; }
+      .versions-container .info-item:hover { background: #e9ecef; }
+      .versions-container .info-label { font-weight: 600; color: #495057; }
+      .versions-container .info-value { color: #6c757d; word-break: break-all; }
+      .versions-container .status-badge { font-size: 12px; margin-right: 8px; margin-bottom: 4px; }
+      .versions-container .json-data { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px; }
+      .versions-container .panel-primary .panel-heading { background: linear-gradient(135deg, #007bff, #0056b3); }
+    `;
+    document.head.appendChild(style);
+  }
+
+  wrap.appendChild(container);
+
+  // Helper function to create info cards
+  function createInfoCard(title, icon, items) {
+    var col = document.createElement('div');
+    col.className = 'col-md-6';
+
+    var card = document.createElement('div');
+    card.className = 'panel panel-info';
+
+    var cardHeader = document.createElement('div');
+    cardHeader.className = 'panel-heading';
+    cardHeader.innerHTML = '<h5><i class="glyphicon glyphicon-' + icon + '"></i> ' + title + '</h5>';
+    card.appendChild(cardHeader);
+
+    var cardBody = document.createElement('div');
+    cardBody.className = 'panel-body';
+
+    items.forEach(function(item) {
+      var itemDiv = document.createElement('div');
+      itemDiv.className = 'info-item';
+      itemDiv.innerHTML = '<div class="info-label"><i class="glyphicon glyphicon-' + item.icon + '"></i> ' + item.label + '</div>' +
+                         '<div class="info-value">' + item.value + '</div>';
+      cardBody.appendChild(itemDiv);
+    });
+
+    card.appendChild(cardBody);
+    col.appendChild(card);
+    return col;
+  }
 }
 
 function sortTableByColumn(key) {
