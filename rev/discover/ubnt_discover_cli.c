@@ -18,9 +18,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
-#include <sys/time.h>
 
-#include "ubnt_discover.h"
+#include "../src/ubnt_discover.h"
 
 int main(void) {
     int sock = ubnt_open_broadcast_socket(0);
