@@ -237,23 +237,15 @@ function setHTML(id, html) {
 // Robustly fetch /status/lite and parse the last top-level JSON object from the
 // response text. Returns a Promise that resolves to the parsed object or
 // rejects on network/error conditions.
-function safeFetchStatus(fetchOptions) {
-  fetchOptions = fetchOptions || {cache:'no-store'};
-  // Simplified: require the server to return a valid JSON payload. If parsing
-  // fails, attempt to salvage the last top-level JSON object/array from the
-  // response text. This makes the UI tolerant to wrappers or logging lines
-  // prepended/appended by some embedded systems.
-  return fetch('/status/lite', fetchOptions).then(function(r){
-    if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
-    return r.text();
-  }).then(function(text){
+function safeFetchStatus(fetchOptionsOrText) {
+  // If caller provided a pre-fetched text (string), parse it directly and
+  // avoid making a network request. Otherwise treat the argument as fetch
+  // options and perform a fetch to /status/lite.
+  function parseStatusText(text) {
     // Try a direct parse first
     try { return JSON.parse(text); } catch (e) {
       // Fallback: extract all complete top-level JSON objects/arrays and
-      // choose the most appropriate candidate. This mirrors the tolerant
-      // parsing used elsewhere and avoids selecting small fragments like
-      // an isolated empty devices array that may appear earlier in the
-      // response.
+      // choose the most appropriate candidate.
       function extractAllTopLevelJSON(s) {
         var out = [];
         if (!s || !s.length) return out;
@@ -319,6 +311,22 @@ function safeFetchStatus(fetchOptions) {
         throw new Error('Invalid JSON from /status/lite');
       }
     }
+  }
+
+  // If a string was provided, parse immediately
+  if (typeof fetchOptionsOrText === 'string') {
+    return new Promise(function(resolve, reject){
+      try { resolve(parseStatusText(fetchOptionsOrText)); } catch (e) { reject(e); }
+    });
+  }
+
+  var fetchOptions = fetchOptionsOrText || {cache:'no-store'};
+  // Perform the network fetch when no pre-fetched text is available
+  return fetch('/status/lite', fetchOptions).then(function(r){
+    if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
+    return r.text();
+  }).then(function(text){
+    return parseStatusText(text);
   });
 }
 
@@ -1642,6 +1650,9 @@ function detectPlatformAndLoad() {
   // emit concatenated top-level JSON fragments). We try to keep the fast-path
   // but avoid r.json() which will throw on non-strict JSON streams.
   try {
+    // Fast-path: fetch a lightweight summary text and render immediately.
+    // Keep the raw text so we can pass it to safeFetchStatus and avoid a
+    // second network request when the full parsing happens below.
     fetch('/status/lite', {cache: 'no-store'}).then(function(r){ return r.text(); }).then(function(t){
       try {
         var s = safeParse('status-lite', t) || {};
@@ -1650,12 +1661,16 @@ function detectPlatformAndLoad() {
         if (s.uptime_linux) { data.uptime_linux = s.uptime_linux; }
         updateUI(data);
       } catch(e) { /* ignore fast-path errors */ }
+      // store the fast text so the robust parser can reuse it without re-fetching
+      data._fast_status_text = t;
     }).catch(function(){});
   } catch(e) {}
   // Fetch remaining heavier status in background (full status still used for deep data)
   // Use safeFetchStatus which already implements robust extraction of the
-  // last/top-level JSON object and candidate selection.
-  safeFetchStatus({cache: 'no-store'})
+  // last/top-level JSON object and candidate selection. If we have the
+  // fast-path text available, pass it in to avoid a duplicate network request.
+  var maybeText = data._fast_status_text;
+  safeFetchStatus(maybeText || {cache: 'no-store'})
         .then(function(status) {
           // status is already parsed or null on failure
           if (!status) return; // abort if irreparable
