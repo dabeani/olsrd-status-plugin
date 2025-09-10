@@ -1483,7 +1483,42 @@ function detectPlatformAndLoad() {
   function safeParse(label, text) {
     try { return JSON.parse(text); }
     catch(e) {
-      try { console.error(label + ' JSON parse failed', e, text.slice(0,400)); } catch(_e) {}
+      try { console.error(label + ' JSON parse failed', e); } catch(_e) {}
+      // Fallback: attempt to extract the last complete top-level JSON object
+      // or array from the provided text. This mirrors the recovery logic used
+      // in safeFetchStatus and makes the parser tolerant to concatenated
+      // objects or surrounding log/wrapper text emitted by some devices.
+      function extractLastTopLevelJSON(s) {
+        if (!s || !s.length) return null;
+        var lastParsed = null;
+        var len = s.length;
+        for (var i = 0; i < len; i++) {
+          var ch = s[i];
+          if (ch !== '{' && ch !== '[') continue;
+          var open = ch; var close = (open === '{') ? '}' : ']';
+          var depth = 1;
+          for (var j = i + 1; j < len; j++) {
+            var cj = s[j];
+            if (cj === open) depth++;
+            else if (cj === close) depth--;
+            if (depth === 0) {
+              var cand = s.substring(i, j + 1);
+              try {
+                var obj = JSON.parse(cand);
+                lastParsed = obj;
+              } catch (err) {
+                /* ignore parse errors for this candidate */
+              }
+              break; // continue scanning after this object
+            }
+          }
+        }
+        return lastParsed;
+      }
+      try {
+        var recovered = extractLastTopLevelJSON(String(text || ''));
+        if (recovered !== null) return recovered;
+      } catch(_e) {}
       return null;
     }
   }
