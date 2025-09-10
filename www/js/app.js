@@ -1579,18 +1579,26 @@ function detectPlatformAndLoad() {
   var data = { hostname: '', ip: '', uptime: '', devices: [], airos: {}, olsr2_on: false, olsrd_on: false, olsr2info: '', admin: null };
   // Fetch nodedb early so we can enrich hostnames when rendering
   try { fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ window._nodedb_cache = nb || {}; }).catch(function(){}); } catch(e){}
-  // Fetch summary first for fast paint
-    fetch('/status/lite',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
+  // Fetch summary first for fast paint (use tolerant parser because some devices
+  // emit concatenated top-level JSON fragments). We try to keep the fast-path
+  // but avoid r.json() which will throw on non-strict JSON streams.
+  try {
+    fetch('/status/lite', {cache: 'no-store'}).then(function(r){ return r.text(); }).then(function(t){
+      try {
+        var s = safeParse('status-lite', t) || {};
         if (s.hostname) data.hostname = s.hostname;
         if (s.ip) data.ip = s.ip;
         if (s.uptime_linux) { data.uptime_linux = s.uptime_linux; }
         updateUI(data);
-      }).catch(function(){});
+      } catch(e) { /* ignore fast-path errors */ }
+    }).catch(function(){});
+  } catch(e) {}
   // Fetch remaining heavier status in background (full status still used for deep data)
-  fetch('/status/lite', {cache: 'no-store'})
-        .then(function(r) { return r.text(); })
-        .then(function(statusText) {
-          var status = safeParse('status', statusText);
+  // Use safeFetchStatus which already implements robust extraction of the
+  // last/top-level JSON object and candidate selection.
+  safeFetchStatus({cache: 'no-store'})
+        .then(function(status) {
+          // status is already parsed or null on failure
           if (!status) return; // abort if irreparable
             try { if (status.fetch_stats) populateFetchStats(status.fetch_stats); else populateFetchStats({}); } catch(e){}
           data.hostname = status.hostname || '';
