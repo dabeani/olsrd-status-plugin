@@ -702,7 +702,7 @@ static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_reques
 static int h_olsr_links_debug(http_request_t *r);
 static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
 static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r); static int h_olsrd(http_request_t *r);
-static int h_discover(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
+static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
 static int h_fetch_metrics(http_request_t *r);
@@ -4251,6 +4251,8 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/olsrd",    &h_olsrd);
   http_server_register_handler("/olsr2",    &h_olsrd);
   http_server_register_handler("/discover", &h_discover);
+  /* Trigger a full per-interface UBNT discovery and return JSON results. */
+  http_server_register_handler("/discover/ubnt", &h_discover_ubnt);
   http_server_register_handler("/js/app.js", &h_embedded_appjs);
   http_server_register_handler("/js/jquery.min.js", &h_emb_jquery);
   http_server_register_handler("/js/bootstrap.min.js", &h_emb_bootstrap);
@@ -4596,6 +4598,29 @@ static int h_discover(http_request_t *r) {
   } else {
     send_json(r, "{}");
   }
+  return 0;
+}
+
+/* HTTP handler: trigger per-interface UBNT discovery and return JSON.
+ * Behavior: try immediate internal discovery; if it fails, enqueue a discovery
+ * request and wait briefly for the worker to complete, then return cached result.
+ */
+static int h_discover_ubnt(http_request_t *r) {
+  char *out = NULL; size_t n = 0;
+  if (ubnt_discover_output(&out, &n) == 0 && out && n > 0) {
+    send_json(r, out); free(out); return 0;
+  }
+  /* Attempt to enqueue a discovery job and wait for it to finish (short). */
+  enqueue_fetch_request(1, 1, FETCH_TYPE_DISCOVER);
+  pthread_mutex_lock(&g_devices_cache_lock);
+  if (g_devices_cache && g_devices_cache_len > 0) {
+    send_json(r, g_devices_cache);
+    pthread_mutex_unlock(&g_devices_cache_lock);
+    return 0;
+  }
+  pthread_mutex_unlock(&g_devices_cache_lock);
+  /* fallback: empty object */
+  send_json(r, "{}");
   return 0;
 }
 
