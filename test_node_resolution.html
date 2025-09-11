@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Node Resolution</title>
+    <script src="www/js/app.js"></script>
+</head>
+<body>
+    <h1>Test Node Resolution</h1>
+    
+    <h2>OLSR Links Test</h2>
+    <div id="olsr-links-test">
+        <table id="olsrLinksTable">
+            <thead>
+                <tr>
+                    <th>Intf</th>
+                    <th>Local</th>
+                    <th>Remote</th>
+                    <th>Remote Host</th>
+                    <th>Node</th>
+                    <th>LQ</th>
+                    <th>NLQ</th>
+                    <th>Cost</th>
+                    <th>ETX</th>
+                    <th>Routes</th>
+                    <th>Nodes</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <h2>Connections Test</h2>
+    <div id="connections-test">
+        <table id="connectionsTable">
+            <thead>
+                <tr>
+                    <th>Port</th>
+                    <th>Bridge</th>
+                    <th>MACs</th>
+                    <th>IPs</th>
+                    <th>Hostname</th>
+                    <th>Node</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script>
+        // Mock data that simulates the problem
+        window._nodedb_cache = {
+            "193.238.158.170": {
+                "n": "2345falke",
+                "d": "bcrc1",
+                "h": "193.238.158.170"
+            },
+            "193.238.156.86": {
+                "n": "falke-bb", 
+                "d": "ge2-rn01falke",
+                "h": "193.238.156.86"
+            },
+            "193.238.158.33": {
+                "n": "2345falke",
+                "d": "vbmk-rt-03", 
+                "h": "193.238.158.33"
+            }
+        };
+
+        // Test OLSR Links with problematic data
+        const testOlsrLinks = [
+            {
+                intf: "eth0",
+                local: "193.238.158.74",
+                remote: "193.238.158.170",
+                remote_host: "bcrc1.2345falke.wien.funkfeuer.at",
+                node_names: "eno", // This is wrong - should be "2345falke"
+                lq: "1.000",
+                nlq: "1.000",
+                cost: "1000"
+            },
+            {
+                intf: "eth0", 
+                local: "193.238.158.74",
+                remote: "193.238.156.86",
+                remote_host: "ge2-rn01falke.falke-bb.wien.funkfeuer.at",
+                node_names: "ramp8", // This is wrong - should be "falke-bb"
+                lq: "1.000",
+                nlq: "1.000", 
+                cost: "1000"
+            },
+            {
+                intf: "eth0",
+                local: "193.238.158.74", 
+                remote: "193.238.158.33",
+                remote_host: "vbmk-rt-03.2345falke.wien.funkfeuer.at",
+                node_names: "2345falke", // This is correct
+                lq: "1.000",
+                nlq: "1.000",
+                cost: "1000"
+            }
+        ];
+
+        // Test Connections with same data structure
+        const testConnections = {
+            ports: [
+                {
+                    port: "eth0.100",
+                    bridge: "br-lan",
+                    macs: ["aa:bb:cc:dd:ee:01"],
+                    ips: ["193.238.158.170"]
+                },
+                {
+                    port: "eth0.200",
+                    bridge: "br-lan", 
+                    macs: ["aa:bb:cc:dd:ee:02"],
+                    ips: ["193.238.156.86"]
+                },
+                {
+                    port: "eth0.300",
+                    bridge: "br-lan",
+                    macs: ["aa:bb:cc:dd:ee:03"], 
+                    ips: ["193.238.158.33"]
+                }
+            ]
+        };
+
+        // Test both implementations
+        console.log("Testing OLSR Links node resolution:");
+        populateOlsrLinksTable(testOlsrLinks);
+
+        console.log("Testing Connections node resolution:");
+        renderConnectionsTable(testConnections, window._nodedb_cache);
+
+        // Manual debugging of resolveNodeNameForLink
+        console.log("\nDebugging resolveNodeNameForLink:");
+        testOlsrLinks.forEach((link, i) => {
+            console.log(`\nLink ${i+1}: ${link.remote} -> ${link.remote_host}`);
+            
+            // Enable debug mode
+            window._uiDebug = true;
+            
+            // Test the function manually if it exists
+            if (typeof resolveNodeNameForLink !== 'undefined') {
+                const result = resolveNodeNameForLink(link);
+                console.log(`Resolved: ${result.name} (reason: ${result.reason})`);
+            }
+            
+            // Test getNodeNameForIp
+            if (typeof getNodeNameForIp !== 'undefined') {
+                const nodeFromIp = getNodeNameForIp(link.remote);
+                console.log(`getNodeNameForIp(${link.remote}): ${nodeFromIp}`);
+            }
+        });
+    </script>
+</body>
+</html>
