@@ -948,30 +948,30 @@ function showNodesFor(remoteIp, nodeNames) {
         return 0;
       });
     }
-    var html = '';
+    // build rows via DOM for safety and attach handlers directly
+    tbody.innerHTML = '';
     for (var i=0;i<arr.length;i++) {
-      var n = arr[i];
-      var rowId = 'node-row-' + i;
-      html += '<tr id="'+rowId+'">'+
-        '<td style="font-family:monospace">'+ (n.ip||'') +'</td>'+
-        '<td>' + (n.n || '') + '</td>'+
-        '<td>' + (n.i || '') + '</td>'+
-        '<td>' + (n.d || '') + '</td>'+
-        '<td>' + (n.h || '') + '</td>'+
-        '<td>' + (n.m || '') + '</td>'+
-        '<td>' +
-          '<button class="btn btn-xs btn-default node-copy-row" data-idx="'+i+'" title="Copy row"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button> '+
-          '<button class="btn btn-xs btn-default node-expand-row" data-idx="'+i+'" title="Show details"><span class="glyphicon glyphicon-resize-full" aria-hidden="true"></span></button>'+
-        '</td>'+
-        '</tr>';
+      (function(i){
+        var n = arr[i];
+        var rowId = 'node-row-' + i;
+        var tr = document.createElement('tr'); tr.id = rowId;
+        var tdIp = document.createElement('td'); tdIp.style.fontFamily='monospace'; tdIp.textContent = n.ip || ''; tr.appendChild(tdIp);
+        var tdN = document.createElement('td'); tdN.textContent = n.n || ''; tr.appendChild(tdN);
+        var tdI = document.createElement('td'); tdI.textContent = n.i || ''; tr.appendChild(tdI);
+        var tdD = document.createElement('td'); tdD.textContent = n.d || ''; tr.appendChild(tdD);
+        var tdH = document.createElement('td'); tdH.textContent = n.h || ''; tr.appendChild(tdH);
+        var tdM = document.createElement('td'); tdM.textContent = n.m || ''; tr.appendChild(tdM);
+        var tdActions = document.createElement('td');
+        var btnCopy = document.createElement('button'); btnCopy.className='btn btn-xs btn-default node-copy-row'; btnCopy.setAttribute('data-idx', i); btnCopy.title='Copy row'; var ic1 = document.createElement('span'); ic1.className='glyphicon glyphicon-copy'; ic1.setAttribute('aria-hidden','true'); btnCopy.appendChild(ic1);
+        var btnExp = document.createElement('button'); btnExp.className='btn btn-xs btn-default node-expand-row'; btnExp.setAttribute('data-idx', i); btnExp.title='Show details'; var ic2 = document.createElement('span'); ic2.className='glyphicon glyphicon-resize-full'; ic2.setAttribute('aria-hidden','true'); btnExp.appendChild(ic2);
+        tdActions.appendChild(btnCopy); tdActions.appendChild(document.createTextNode(' ')); tdActions.appendChild(btnExp);
+        tr.appendChild(tdActions);
+        tbody.appendChild(tr);
+        // attach handlers
+        btnCopy.addEventListener('click', function(){ try{ var item = arr[i]; var txt = JSON.stringify(item); if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt); btnCopy.classList.add('btn-success'); setTimeout(function(){ btnCopy.classList.remove('btn-success'); },900);} else { var ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);} }catch(e){} });
+        btnExp.addEventListener('click', function(){ try{ var item = arr[i]; if (bodyPre) { bodyPre.style.display='block'; bodyPre.textContent = JSON.stringify(item, null, 2); bodyPre.scrollTop = 0; } var prev = document.querySelector('#node-modal-tbody tr.success'); if (prev) prev.classList.remove('success'); var row = document.getElementById('node-row-'+i); if (row) row.classList.add('success'); }catch(e){} });
+      })(i);
     }
-    tbody.innerHTML = html;
-    // attach per-row handlers
-    var copies = document.querySelectorAll('.node-copy-row');
-    copies.forEach(function(btn){ btn.addEventListener('click', function(){ var idx = parseInt(btn.getAttribute('data-idx'),10); var item = arr[idx]; try{ var txt = JSON.stringify(item); if(navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt); btn.classList.add('btn-success'); setTimeout(function(){ btn.classList.remove('btn-success'); },900);} else { var ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);} }catch(e){} }); });
-    var expands = document.querySelectorAll('.node-expand-row');
-    expands.forEach(function(btn){ btn.addEventListener('click', function(){ var idx = parseInt(btn.getAttribute('data-idx'),10); var item = arr[idx]; try{ if (bodyPre) { bodyPre.style.display='block'; bodyPre.textContent = JSON.stringify(item, null, 2); bodyPre.scrollTop = 0; } // highlight row
-          var prev = document.querySelector('#node-modal-tbody tr.success'); if (prev) prev.classList.remove('success'); var row = document.getElementById('node-row-'+idx); if (row) row.classList.add('success'); }catch(e){} }); });
   }
 
   function applyFilter(list){
@@ -1081,21 +1081,18 @@ function showRoutesFor(remoteIp) {
     if (_routeSort.key) {
       arr2.sort(function(a,b){ var ka=(a[_routeSort.key]||'').toString().toLowerCase(); var kb=(b[_routeSort.key]||'').toString().toLowerCase(); if(ka<kb) return _routeSort.asc?-1:1; if(ka>kb) return _routeSort.asc?1:-1; return 0; });
     }
-    var html='';
+    tbody.innerHTML = '';
     for (var i=0;i<arr2.length;i++) {
       var r = arr2[i];
       var rid = 'route-row-'+i;
-      html += '<tr id="'+rid+'" title="'+ (r.raw||'') +'">'+
-        '<td style="font-family:monospace">'+ r.destination +'</td>'+
-        '<td>'+ (r.device||'') +'</td>'+
-        '<td>'+ (r.metric||'') +'</td>'+
-        '<td style="font-family:monospace; color:#666">'+ r.raw +'</td>'+
-      '</tr>';
+      var tr = document.createElement('tr'); tr.id = rid; if (r.raw) tr.title = r.raw;
+      var tdDest = document.createElement('td'); tdDest.style.fontFamily='monospace'; tdDest.textContent = r.destination || ''; tr.appendChild(tdDest);
+      var tdDev = document.createElement('td'); tdDev.textContent = r.device || ''; tr.appendChild(tdDev);
+      var tdMetric = document.createElement('td'); tdMetric.textContent = r.metric || ''; tr.appendChild(tdMetric);
+      var tdRaw = document.createElement('td'); tdRaw.style.fontFamily='monospace'; tdRaw.style.color='#666'; tdRaw.textContent = r.raw || ''; tr.appendChild(tdRaw);
+      tr.tabIndex = 0; tr.style.cursor = 'pointer';
+      tbody.appendChild(tr);
     }
-    tbody.innerHTML = html;
-    // make rows focusable for keyboard nav
-    var rows = tbody.querySelectorAll('tr');
-    rows.forEach(function(r){ r.tabIndex = 0; r.style.cursor='pointer'; });
   }
   function applyFilter(){
     var q = (filterInput && filterInput.value || '').trim().toLowerCase();
