@@ -798,38 +798,42 @@ function populateOlsrLinksTable(links) {
         tr.appendChild(td(''));
       }
     } catch(e){ tr.appendChild(td(l.remote_host || '')); }
-  // attempt to resolve a primary node name for the remote IP using cached nodedb
-  var nodeName = '';
-  try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
-  // prefer a name from l.node_names that maps to the remote IP in the nodedb.
-  var primary = '';
-  try {
+  // Resolve node name with multiple heuristics and return reason for diagnostics
+  function resolveNodeNameForLink(link) {
+    var remote = link && link.remote ? String(link.remote) : '';
     var parts = [];
-    if (l.node_names && typeof l.node_names === 'string') parts = l.node_names.split(',').map(function(s){return s.trim();}).filter(function(x){return x.length});
-    // if nodedb exists, search for a part whose nodedb entry points to this remote IP
+    if (link.node_names && typeof link.node_names === 'string') parts = link.node_names.split(',').map(function(s){ return s.trim(); }).filter(function(x){ return x.length; });
+    var resolved = null; var reason = 'none';
+    // 1) Prefer explicit node_names that exactly match nodedb entries mapped to this remote
     if (parts.length && window._nodedb_cache) {
-      for (var pi=0; pi<parts.length; pi++) {
-        var pname = parts[pi];
-        // scan nodedb for an entry whose name equals pname and whose ip/host/match contains l.remote
-        var foundMatch = false;
-        Object.keys(window._nodedb_cache).some(function(k){
-          var v = window._nodedb_cache[k]; if (!v) return false;
+      for (var i=0;i<parts.length;i++) {
+        var pname = parts[i];
+        var found = false;
+        Object.keys(window._nodedb_cache).some(function(k){ var v = window._nodedb_cache[k]; if(!v) return false; try {
           if (v.n === pname) {
-            // direct key/host/match equality
-            if (k === l.remote || (v.h && v.h === l.remote) || (v.m && v.m === l.remote)) { foundMatch = true; return true; }
-            // also accept CIDR or other nodedb mappings that resolve this remote IP to pname
-            try { if (typeof getNodeNameForIp === 'function' && getNodeNameForIp(l.remote) === pname) { foundMatch = true; return true; } } catch(e) {}
+            if (k === remote || v.h === remote || v.m === remote) { found = true; return true; }
+            try { if (typeof getNodeNameForIp === 'function' && getNodeNameForIp(remote) === pname) { found = true; return true; } } catch(e) {}
           }
-          return false;
-        });
-        if (foundMatch) { primary = pname; break; }
+        } catch(e){} return false; });
+        if (found) { resolved = pname; reason = 'node_names->nodedb-match'; break; }
       }
     }
-    // if we didn't find a part matching nodedb, but getNodeNameForIp returned a name that's in parts, prefer it
-    if (!primary && nodeName && parts.indexOf(nodeName) !== -1) primary = nodeName;
-    // otherwise fallback: prefer nodeName (resolved from nodedb by IP), then first part
-    if (!primary) primary = nodeName || (parts.length ? parts[0] : '');
-  } catch(e) { primary = nodeName || (l.node_names ? String(l.node_names).split(',')[0] : ''); }
+    // 2) If not found, try resolving by IP/CIDR via nodedb
+    if (!resolved && typeof getNodeNameForIp === 'function') {
+      try { var nn = getNodeNameForIp(remote); if (nn) { resolved = nn; reason = 'nodedb-cidr-or-key'; } } catch(e){}
+    }
+    // 3) If still not resolved, prefer first node_names entry
+    if (!resolved && parts.length) { resolved = parts[0]; reason = 'first-node_names-fallback'; }
+    // 4) Prefer remote_host if available
+    if (!resolved && link.remote_host) { resolved = link.remote_host; reason = 'remote_host-fallback'; }
+    // 5) final fallback: remote IP string
+    if (!resolved) { resolved = remote; reason = 'ip-fallback'; }
+    return { name: resolved, reason: reason, parts: parts };
+  }
+  var rn = resolveNodeNameForLink(l);
+  var primary = rn.name || '';
+  // Attach diagnostic tooltip when UI debug enabled
+  try { if (window._uiDebug && rn) console.debug('OLSR link node resolution', { remote: l.remote, node_names: l.node_names, resolved: rn.name, reason: rn.reason, parts: rn.parts }); } catch(e) {}
   var nodeTd = td(primary);
   if (l.node_names) { nodeTd.title = l.node_names; }
   tr.appendChild(nodeTd);

@@ -44,17 +44,17 @@
   },
   {
     "type": "response",
-    "url": "http://193.238.158.74/js/app.js",
-    "status": 200,
-    "method": "GET",
-    "resourceType": "script"
-  },
-  {
-    "type": "response",
     "url": "http://193.238.158.74/css/custom.css",
     "status": 200,
     "method": "GET",
     "resourceType": "stylesheet"
+  },
+  {
+    "type": "response",
+    "url": "http://193.238.158.74/js/app.js",
+    "status": 200,
+    "method": "GET",
+    "resourceType": "script"
   },
   {
     "type": "response",
@@ -90,13 +90,6 @@
     "resourceType": "fetch"
   },
   {
-    "type": "response",
-    "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/fonts/glyphicons-halflings-regular.woff2",
-    "status": 200,
-    "method": "GET",
-    "resourceType": "font"
-  },
-  {
     "type": "request",
     "url": "http://193.238.158.74/status/ping",
     "method": "GET",
@@ -119,6 +112,13 @@
     "url": "http://193.238.158.74/status/stats",
     "method": "GET",
     "resourceType": "fetch"
+  },
+  {
+    "type": "response",
+    "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/fonts/glyphicons-halflings-regular.woff2",
+    "status": 200,
+    "method": "GET",
+    "resourceType": "font"
   },
   {
     "type": "request",
