@@ -1,0 +1,12 @@
+{
+  "name": "olsrd-status-plugin-ui-test",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node run-test.js"
+  },
+  "dependencies": {
+    "jsdom": "^22.1.0",
+    "whatwg-fetch": "^3.6.2"
+  }
+}
