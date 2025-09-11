@@ -166,6 +166,15 @@ if (!window.fetch) {
   };
 }
 
+// Global td helper: create a TD element. By default it sets textContent to avoid HTML injection.
+// Pass second argument `true` to allow HTML (kept for legacy call-sites that expect innerHTML).
+function td(val, allowHtml) {
+  var td = document.createElement('td');
+  if (allowHtml) td.innerHTML = val || '';
+  else td.textContent = (typeof val === 'undefined' || val === null) ? '' : String(val);
+  return td;
+}
+
 // Footer pending-request counter: show the number of in-flight fetches
 (function(){
   var _pendingFetches = 0;
@@ -530,8 +539,8 @@ function populateDevicesTable(devices, airos) {
   // diagnostics: lightweight logging to help trace empty tabs issue
   try { if (window._uiDebug) console.debug('populateDevicesTable called, devices=', (devices && devices.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   tbody.innerHTML = '';
-  // Ensure parent pane is not accidentally hidden (help with intermittent empty-tab issue)
-  try { var pane = document.getElementById('tab-status'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e) {}
+    // Ensure parent pane is not accidentally hidden (help with intermittent empty-tab issue)
+    try { var pane = document.getElementById('tab-status'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e) {}
   // Note: we no longer filter out ARP-like entries here. Instead compute a
   // `source` field per device and render it in the new Source column so users
   // can distinguish devices originating from ubnt-discover vs ARP vs unknown.
@@ -555,7 +564,12 @@ function populateDevicesTable(devices, airos) {
   }
   if (!devices || !Array.isArray(devices) || devices.length === 0) {
     var tbody = document.querySelector('#devicesTable tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-muted">No devices found</td></tr>';
+    if (tbody) {
+      tbody.innerHTML = '';
+      var tr = document.createElement('tr');
+      var tdNo = document.createElement('td'); tdNo.colSpan = 12; tdNo.className = 'text-muted'; tdNo.textContent = 'No devices found';
+      tr.appendChild(tdNo); tbody.appendChild(tr);
+    }
     return;
   }
   // Ensure we expose a source and wireless property on each device so sorting
@@ -604,7 +618,7 @@ function populateDevicesTable(devices, airos) {
   // Display all devices provided by the backend (e.g. ubnt discover output)
   devices.forEach(function(device) {
     var tr = document.createElement('tr');
-    function td(val) { var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
+  // use global td(val, allowHtml) helper
     // Local IP with HW Address (smaller font)
     var localIpCell = '<div style="font-size:60%">' + (device.ipv4 || '') + '<br>' + (device.hwaddr || '') + '</div>';
     var localIpTd = document.createElement('td');
@@ -707,7 +721,12 @@ function populateOlsrLinksTable(links) {
   try { if (window._uiDebug) console.debug('populateOlsrLinksTable called, links=', (links && links.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   if (!links || !Array.isArray(links) || links.length === 0) {
     var tbody = document.querySelector('#olsrLinksTable tbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-muted">No links found</td></tr>';
+    if (tbody) {
+      tbody.innerHTML = '';
+      var tr = document.createElement('tr');
+      var tdNo = document.createElement('td'); tdNo.colSpan = 12; tdNo.className = 'text-muted'; tdNo.textContent = 'No links found';
+      tr.appendChild(tdNo); tbody.appendChild(tr);
+    }
     return;
   }
   // always refresh cached links to reflect latest server data
@@ -715,7 +734,7 @@ function populateOlsrLinksTable(links) {
   links.forEach(function(l){
     var tr = document.createElement('tr');
     if (l.is_default) { tr.style.backgroundColor = '#fff8d5'; }
-    function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
+  // use global td(val, allowHtml) helper
     tr.appendChild(td(l.intf));
     tr.appendChild(td(l.local));
     tr.appendChild(td(l.remote));
@@ -904,14 +923,21 @@ function showNodesFor(remoteIp, nodeNames) {
   var copyBtn = document.getElementById('node-copy');
   if (title) title.textContent = 'Nodes via ' + remoteIp;
   if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
-  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading...</td></tr>';
+  if (tbody) {
+    tbody.innerHTML = '';
+    var tr = document.createElement('tr'); var tdLoad = document.createElement('td'); tdLoad.colSpan = 6; tdLoad.className = 'text-muted'; tdLoad.textContent = 'Loading...'; tr.appendChild(tdLoad); tbody.appendChild(tr);
+  }
   if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
 
   // sorting state for node modal
   var _nodeSort = { key: null, asc: true };
   function renderRows(list) {
     if (!tbody) return;
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-muted">No nodes found</td></tr>'; return; }
+    if (!list.length) {
+      tbody.innerHTML = '';
+      var tr = document.createElement('tr'); var tdNo = document.createElement('td'); tdNo.colSpan = 7; tdNo.className = 'text-muted'; tdNo.textContent = 'No nodes found'; tr.appendChild(tdNo); tbody.appendChild(tr);
+      return;
+    }
     var arr = list.slice();
     if (_nodeSort.key) {
       arr.sort(function(a,b){
@@ -1037,13 +1063,20 @@ function showRoutesFor(remoteIp) {
   var copyBtn = document.getElementById('route-copy');
   if (title) title.textContent = 'Routes via ' + remoteIp;
   if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
-  if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Loading...</td></tr>';
+  if (tbody) {
+    tbody.innerHTML = '';
+    var tr = document.createElement('tr'); var tdLoad = document.createElement('td'); tdLoad.colSpan = 4; tdLoad.className = 'text-muted'; tdLoad.textContent = 'Loading...'; tr.appendChild(tdLoad); tbody.appendChild(tr);
+  }
   if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
   var allRoutes = [];
   var _routeSort = { key: null, asc: true };
   function renderTable(arr){
     if (!tbody) return;
-    if (!arr.length) { tbody.innerHTML='<tr><td colspan="4" class="text-muted">No matching routes</td></tr>'; return; }
+    if (!arr.length) {
+      tbody.innerHTML = '';
+      var tr = document.createElement('tr'); var tdNo = document.createElement('td'); tdNo.colSpan = 4; tdNo.className = 'text-muted'; tdNo.textContent = 'No matching routes'; tr.appendChild(tdNo); tbody.appendChild(tr);
+      return;
+    }
     var arr2 = arr.slice();
     if (_routeSort.key) {
       arr2.sort(function(a,b){ var ka=(a[_routeSort.key]||'').toString().toLowerCase(); var kb=(b[_routeSort.key]||'').toString().toLowerCase(); if(ka<kb) return _routeSort.asc?-1:1; if(ka>kb) return _routeSort.asc?1:-1; return 0; });
@@ -1160,12 +1193,15 @@ function populateNeighborsTable(neighbors) {
   if (!tbody) return; tbody.innerHTML = '';
   if (!neighbors || !Array.isArray(neighbors) || neighbors.length === 0) {
     var tbody = document.querySelector('#neighborsTable tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-muted">No neighbors found</td></tr>';
+    if (tbody) {
+      tbody.innerHTML = '';
+      var tr = document.createElement('tr'); var tdNo = document.createElement('td'); tdNo.colSpan = 7; tdNo.className = 'text-muted'; tdNo.textContent = 'No neighbors found'; tr.appendChild(tdNo); tbody.appendChild(tr);
+    }
     return;
   }
   neighbors.forEach(function(n){
     var tr = document.createElement('tr');
-    function td(val){ var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
+  // use global td(val, allowHtml) helper
     tr.appendChild(td(n.originator));
     tr.appendChild(td(n.hostname));
     tr.appendChild(td(n.bindto));
@@ -1251,7 +1287,12 @@ function updateUI(data) {
   // Show loading row while fetching the full table
   try {
     var tbody = document.querySelector('#devicesTable tbody');
-    if (tbody) tbody.innerHTML = '<tr id="devices-loading"><td colspan="12" class="text-muted">Loading devices…</td></tr>';
+    if (tbody) {
+      tbody.innerHTML = '';
+      var tr = document.createElement('tr'); tr.id = 'devices-loading';
+      var tdLoad = document.createElement('td'); tdLoad.colSpan = 12; tdLoad.className = 'text-muted'; tdLoad.textContent = 'Loading devices…';
+      tr.appendChild(tdLoad); tbody.appendChild(tr);
+    }
     fetch('/devices.json', {cache: 'no-store'}).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function(d){ try { if (d && Array.isArray(d.devices)) populateDevicesTable(d.devices, d.airos || {}); } catch(e){} }).catch(function(){ try { if (window._devices_data && Array.isArray(window._devices_data)) populateDevicesTable(window._devices_data, data.airos); } catch(e){} }).finally(function(){ var el = document.getElementById('devices-loading'); if (el) el.parentNode.removeChild(el); });
   } catch(e){}
   if (data.olsr2_on) {
@@ -2405,16 +2446,17 @@ document.addEventListener('DOMContentLoaded', function() {
           var needFetch = !window._olsrLoaded || !olsrtbody || (olsrtbody && olsrtbody.querySelectorAll('tr').length === 0);
           console.log('OLSR tab - needFetch:', needFetch, 'tbody exists:', !!olsrtbody, 'current rows:', olsrtbody ? olsrtbody.querySelectorAll('tr').length : 0);
           if (needFetch) {
-            try { if (olsrtbody) { olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">Loading…</td></tr>'; } } catch(e){}
-            console.log('Fetching /olsr/links API...');
-            fetch('/olsr/links', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(o){ try { if (o && o.links) { console.log('OLSR links received:', o.links.length, 'links'); window._olsr_links = o.links.slice(); populateOlsrLinksTable(window._olsr_links); setTabLoaded('tab-olsr'); } window._olsrLoaded = true; } catch(e){ setTabError('tab-olsr'); } }).catch(function(){
-              // Show fallback content when API fails
-              console.error('Failed to fetch OLSR links');
-              if (olsrtbody) {
-                olsrtbody.innerHTML = '<tr><td colspan="12" class="text-muted">No OLSR data available. This tab requires a running OLSR daemon.</td></tr>';
-              }
-              setTabError('tab-olsr');
-            });
+            try { if (olsrtbody) { olsrtbody.innerHTML = ''; var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=12; td.className='text-muted'; td.textContent='Loading…'; tr.appendChild(td); olsrtbody.appendChild(tr); } } catch(e){}
+            // Fetch status to populate OLSR links
+            safeFetchStatus({cache:'no-store'}).then(function(st){
+              try {
+                if (st && st.links && Array.isArray(st.links) && st.links.length) {
+                  try { window._olsr_links = st.links.slice(); populateOlsrLinksTable(window._olsr_links); } catch(e){}
+                }
+                window._olsrLoaded = true;
+                setTabLoaded('tab-olsr');
+              } catch(e) { setTabError('tab-olsr'); }
+            }).catch(function(){ setTabError('tab-olsr'); });
           } else {
             console.log('OLSR links already loaded');
             setTabLoaded('tab-olsr');
@@ -2432,7 +2474,7 @@ document.addEventListener('DOMContentLoaded', function() {
               console.error('Failed to fetch connections data');
               var tbody = document.querySelector('#connectionsTable tbody');
               if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No connection data available. This tab requires backend API access.</td></tr>';
+                tbody.innerHTML = ''; var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=6; td.className='text-muted'; td.textContent='No connection data available. This tab requires backend API access.'; tr.appendChild(td); tbody.appendChild(tr);
               }
               setTabError('tab-connections');
             });
@@ -2498,7 +2540,7 @@ document.addEventListener('DOMContentLoaded', function() {
               var hasRows = tbody && tbody.querySelectorAll && tbody.querySelectorAll('tr').length > 0;
               if (!hasRows) {
                 if (tbody) {
-                  tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Traceroute data not available. This tab requires backend API access.</td></tr>';
+                  tbody.innerHTML = ''; var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=4; td.className='text-muted'; td.textContent='Traceroute data not available. This tab requires backend API access.'; tr.appendChild(td); tbody.appendChild(tr);
                 }
               }
             });
@@ -2509,7 +2551,7 @@ document.addEventListener('DOMContentLoaded', function() {
           // Show fallback content for neighbors tab
           var tbody = document.querySelector('#neighborsTable tbody');
           if (tbody && tbody.querySelectorAll('tr').length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Neighbor data not available. This tab requires a running OLSR daemon.</td></tr>';
+            tbody.innerHTML = ''; var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=7; td.className='text-muted'; td.textContent='Neighbor data not available. This tab requires a running OLSR daemon.'; tr.appendChild(td); tbody.appendChild(tr);
           }
         } catch(e) {}
       }
@@ -2739,7 +2781,9 @@ function disableVirtualLogs() {
         var table = document.createElement('table');
         table.className = 'table table-condensed';
         table.id = 'log-table';
-        table.innerHTML = '<thead><tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr></thead><tbody id="log-tbody"><tr><td colspan="3" class="text-muted" style="padding:12px">(no log lines)</td></tr></tbody>';
+  var thead = document.createElement('thead'); thead.innerHTML = '<tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr></thead>';
+  var tbodyInner = document.createElement('tbody'); tbodyInner.id = 'log-tbody'; var tr = document.createElement('tr'); var tdEmpty = document.createElement('td'); tdEmpty.colSpan = 3; tdEmpty.className = 'text-muted'; tdEmpty.style.padding = '12px'; tdEmpty.textContent = '(no log lines)'; tr.appendChild(tdEmpty); tbodyInner.appendChild(tr);
+  table.appendChild(thead); table.appendChild(tbodyInner);
         body.appendChild(table);
       }
     });
@@ -3010,7 +3054,7 @@ function renderConnectionsTable(c, nodedb) {
   }
   c.ports.forEach(function(p){
     var tr = document.createElement('tr');
-    function td(val){ var td=document.createElement('td'); td.innerHTML = val || ''; return td; }
+  // use global td(val, allowHtml) helper
     tr.appendChild(td(p.port));
     tr.appendChild(td(p.bridge || ''));
     tr.appendChild(td((p.macs || []).join('<br>')));
@@ -3375,7 +3419,7 @@ function populateTracerouteTable(tracerouteData) {
   if (!tracerouteData || !Array.isArray(tracerouteData)) return;
   tracerouteData.forEach(function(hop) {
     var tr = document.createElement('tr');
-    function td(val) { var td = document.createElement('td'); td.innerHTML = val || ''; return td; }
+  // use global td(val, allowHtml) helper
     var ip = hop.ip || '';
     var hostname = hop.hostname || hop.host || '';
     // if hostname empty but ip looks like a hostname? leave blank; if ip not numeric maybe treat as hostname
