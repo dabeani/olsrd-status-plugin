@@ -724,6 +724,12 @@ static void *fetch_worker_thread(void *arg) {
   DEBUG_INC_PROCESSED();
   if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_PROCESSED_NODEDB();
   if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_PROCESSED_DISCOVER();
+  /* Only emit verbose queue processing info when logging is enabled. We also
+   * emit a concise success/failure line after the fetch completes if the
+   * operation actually updated the cache or if logging is forced via
+   * g_fetch_log_force. This reduces noise from frequent, successful no-op
+   * fetches when cache is still fresh.
+   */
   if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
     /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
      * same retry/backoff logic so they benefit from the same robustness.
@@ -755,6 +761,25 @@ static void *fetch_worker_thread(void *arg) {
     }
 
     if (succeeded) { METRIC_INC_SUCCESS(); }
+
+    /* Emit a concise post-fetch line only when the fetch actually succeeded
+     * (i.e., updated the cached data) or when fetch logging is forcibly
+     * enabled. This keeps normal periodic refreshes quiet while preserving
+     * visibility when something changes or when troubleshooting is needed.
+     */
+    if (succeeded || g_fetch_log_force) {
+      if (rq->type & FETCH_TYPE_DISCOVER) {
+        if (succeeded)
+          fprintf(stderr, "[status-plugin] fetch: discovery updated devices cache (ts=%ld)\n", (long)g_devices_cache_ts);
+        else
+          fprintf(stderr, "[status-plugin] fetch: discovery completed (no change)\n");
+      } else {
+        if (succeeded)
+          fprintf(stderr, "[status-plugin] fetch: node DB updated (ts=%ld)\n", (long)g_nodedb_last_fetch);
+        else
+          fprintf(stderr, "[status-plugin] fetch: node DB fetch completed (no change)\n");
+      }
+    }
 
   /* Notify any waiter(s) attached to this request */
     pthread_mutex_lock(&rq->m);
