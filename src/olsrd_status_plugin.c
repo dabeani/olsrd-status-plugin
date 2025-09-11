@@ -140,6 +140,11 @@ static int g_cfg_devices_discover_interval_set = 0;
  * via PlParam 'ubnt_probe_window_ms' or env OLSRD_STATUS_UBNT_PROBE_WINDOW_MS. */
 static int g_ubnt_probe_window_ms = 1000;
 static int g_cfg_ubnt_probe_window_ms_set = 0;
+/* UBNT discover cache TTL in seconds. Default 300s. Configurable via
+ * PlParam 'ubnt_cache_ttl_s' or env OLSRD_STATUS_UBNT_CACHE_TTL_S.
+ */
+static int g_ubnt_cache_ttl_s = 300;
+static int g_cfg_ubnt_cache_ttl_s_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
@@ -1885,9 +1890,11 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
 static int ubnt_discover_output(char **out, size_t *outlen) {
   if (!out || !outlen) return -1;
   *out = NULL; *outlen = 0;
-  static char *cache_buf = NULL; static size_t cache_len = 0; static time_t cache_time = 0; const int CACHE_TTL = 20; /* seconds */
+  static char *cache_buf = NULL; static size_t cache_len = 0; static time_t cache_time = 0; /* cache TTL controlled by g_ubnt_cache_ttl_s */
   time_t nowt = time(NULL);
-  if (cache_buf && cache_len > 0 && nowt - cache_time < CACHE_TTL) {
+  if (cache_buf && cache_len > 0 && nowt - cache_time < g_ubnt_cache_ttl_s) {
+    int ttl_left = (int)(g_ubnt_cache_ttl_s - (nowt - cache_time)); if (ttl_left < 0) ttl_left = 0;
+    fprintf(stderr, "[status-plugin] ubnt-discover cache hit: %zu bytes, ttl_left=%ds\n", cache_len, ttl_left);
     *out = malloc(cache_len+1); if(!*out) return -1; memcpy(*out, cache_buf, cache_len+1); *outlen = cache_len; return 0;
   }
   /* Skip external tool - use internal broadcast discovery only.
@@ -4472,6 +4479,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   /* discovery tuning */
   { .name = "discover_interval", .set_plugin_parameter = &set_int_param, .data = &g_devices_discover_interval, .addon = {0} },
   { .name = "ubnt_probe_window_ms", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_probe_window_ms, .addon = {0} },
+  { .name = "ubnt_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_cache_ttl_s, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -4663,7 +4671,7 @@ int olsrd_plugin_init(void) {
       }
     }
 
-    /* ubnt probe window override (milliseconds) */
+  /* ubnt probe window override (milliseconds) */
     if (!g_cfg_ubnt_probe_window_ms_set) {
       const char *env_pw = getenv("OLSRD_STATUS_UBNT_PROBE_WINDOW_MS");
       if (env_pw && env_pw[0]) {
@@ -4672,6 +4680,17 @@ int olsrd_plugin_init(void) {
           g_ubnt_probe_window_ms = (int)v;
           fprintf(stderr, "[status-plugin] setting ubnt probe window from env: %d ms\n", g_ubnt_probe_window_ms);
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_PROBE_WINDOW_MS value: %s (ignored)\n", env_pw);
+      }
+    }
+    /* ubnt discover cache TTL override (seconds) */
+    if (!g_cfg_ubnt_cache_ttl_s_set) {
+      const char *env_ct = getenv("OLSRD_STATUS_UBNT_CACHE_TTL_S");
+      if (env_ct && env_ct[0]) {
+        char *endptr = NULL; long v = strtol(env_ct, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 1 && v <= 86400) {
+          g_ubnt_cache_ttl_s = (int)v;
+          fprintf(stderr, "[status-plugin] setting ubnt cache ttl from env: %d s\n", g_ubnt_cache_ttl_s);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_CACHE_TTL_S value: %s (ignored)\n", env_ct);
       }
     }
   }
