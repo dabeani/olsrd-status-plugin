@@ -57,6 +57,16 @@ static int resolve_ip_to_hostname(const char *ip, char *out, size_t outlen) {
   return 0;
 }
 
+/* Runtime check for UBNT debug env var. Prefer environment toggle so operators
+ * can enable verbose UBNT discovery traces without recompiling. Returns 1 when
+ * OLSRD_STATUS_UBNT_DEBUG is truthy (1,y,Y), otherwise 0.
+ */
+static int ubnt_debug_enabled(void) {
+  const char *e = getenv("OLSRD_STATUS_UBNT_DEBUG");
+  if (!e) return 0;
+  return (*e == '1' || *e == 'y' || *e == 'Y');
+}
+
 #if __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
 # include <stdatomic.h>
 # define HAVE_C11_ATOMICS 1
@@ -695,7 +705,7 @@ static void fetch_discover_once(void) {
   g_devices_cache = normalized; g_devices_cache_len = nlen; g_devices_cache_ts = time(NULL);
   pthread_mutex_unlock(&g_devices_cache_lock);
   /* Also emit into the UBNT/trace ring so runtime ubnt-debug consumers see it */
-  if (UBNT_DEBUG) plugin_log_trace("ubnt: got device data from ubnt-discover (worker %zu bytes)", nlen);
+  if (ubnt_debug_enabled()) plugin_log_trace("ubnt: got device data from ubnt-discover (worker %zu bytes)", nlen);
       /* note: do not free(normalized) here as ownership moved into g_devices_cache */
     }
   }
@@ -2673,7 +2683,7 @@ static int h_status(http_request_t *r) {
       if (ubnt_discover_output(&ud, &udn) == 0 && ud && udn > 0) {
         fprintf(stderr, "[status-plugin] got device data from ubnt-discover (inline %zu bytes)\n", udn);
         /* Mirror message into ubnt debug channel for parity with background worker */
-        if (UBNT_DEBUG) plugin_log_trace("ubnt: got device data from ubnt-discover (inline %zu bytes)", udn);
+    if (ubnt_debug_enabled()) plugin_log_trace("ubnt: got device data from ubnt-discover (inline %zu bytes)", udn);
         char *normalized = NULL; size_t nlen = 0;
         if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
           APPEND("\"devices\":%s,", normalized);

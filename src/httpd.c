@@ -111,7 +111,7 @@ int http_allow_cidr(const char *cidr_or_addr_mask) {
   cidr_entry_t *e = calloc(1, sizeof(*e)); if (!e) return -1;
   e->addr = a; e->prefix = p; e->next = g_allowed; g_allowed = e;
   if (was_empty) {
-    fprintf(stderr, "[httpd] access restricted: Net parameter(s) found, only allowed networks will have access\n");
+  if (g_log_access) fprintf(stderr, "[httpd] access restricted: Net parameter(s) found, only allowed networks will have access\n");
   }
   /* Optional debug: print each added entry in readable form when requested */
   const char *dbg = getenv("OLSR_DEBUG_ALLOWLIST");
@@ -153,7 +153,7 @@ int http_is_client_allowed(const char *client_ip) {
   int debug = (dbg && dbg[0]=='1') ? 1 : 0;
   if (debug) {
     char cip[64]; snprintf(cip, sizeof(cip), "%s", client_ip);
-    fprintf(stderr, "[httpd][debug] checking client IP %s against %s allow-list entries\n", cip, g_allowed?"current":"none");
+  if (g_log_access) fprintf(stderr, "[httpd][debug] checking client IP %s against %s allow-list entries\n", cip, g_allowed?"current":"none");
   }
   for (cidr_entry_t *e = g_allowed; e; e = e->next) {
     if (debug) {
@@ -163,7 +163,7 @@ int http_is_client_allowed(const char *client_ip) {
       } else {
         if (inet_ntop(AF_INET6, &e->addr, buf, sizeof(buf)) == NULL) snprintf(buf, sizeof(buf), "<inet_ntop_fail>");
       }
-      fprintf(stderr, "[httpd][debug] testing entry %s (prefix=%d)\n", buf, e->prefix);
+  if (g_log_access) fprintf(stderr, "[httpd][debug] testing entry %s (prefix=%d)\n", buf, e->prefix);
     }
     if (addr_prefix_match(&a, &e->addr, e->prefix)) return 1;
   }
@@ -177,8 +177,8 @@ void http_clear_allowlist(void) {
 }
 
 void http_log_allowlist(void) {
-  if (!g_allowed) { fprintf(stderr, "[httpd] allow-list is empty (no restrictions)\n"); return; }
-  fprintf(stderr, "[httpd] configured allow-list entries:\n");
+  if (!g_allowed) { if (g_log_access) fprintf(stderr, "[httpd] allow-list is empty (no restrictions)\n"); return; }
+  if (g_log_access) fprintf(stderr, "[httpd] configured allow-list entries:\n");
   for (cidr_entry_t *e = g_allowed; e; e = e->next) {
     char buf[128];
     if (e->addr.s6_addr[10] == 0xff && e->addr.s6_addr[11] == 0xff) {
@@ -186,7 +186,7 @@ void http_log_allowlist(void) {
     } else {
       if (inet_ntop(AF_INET6, &e->addr, buf, sizeof(buf)) == NULL) snprintf(buf, sizeof(buf), "<inet_ntop_fail>");
     }
-    fprintf(stderr, "  - %s (prefix=%d)\n", buf, e->prefix);
+  if (g_log_access) fprintf(stderr, "  - %s (prefix=%d)\n", buf, e->prefix);
   }
 }
 
@@ -426,7 +426,7 @@ static void *connection_worker(void *arg) {
    * emit an abbreviated line for GET /status/stats requests to help diagnosing UI fetches.
    */
   if (g_log_request_debug && strcmp(r->method, "GET") == 0 && strcmp(r->path, "/status/stats") == 0) {
-    fprintf(stderr, "[httpd][debug] request: %s %s from %s\n", r->method, r->path, r->client_ip);
+    if (g_log_access) fprintf(stderr, "[httpd][debug] request: %s %s from %s\n", r->method, r->path, r->client_ip);
   }
 
   /* Enforce allow-list even for static assets */
@@ -604,7 +604,17 @@ static void *server_thread(void *arg) {
 
 int http_server_start(const char *bind_ip, int port, const char *asset_root) {
   if (asset_root) snprintf(g_asset_root, sizeof(g_asset_root), "%s", asset_root);
-  const char *alog = getenv("OLSRD_STATUS_ACCESS_LOG"); if (alog && alog[0]=='0') g_log_access = 0; else g_log_access = 1;
+  /* Respect new env var OLSRD_STATUS_FETCH_LOG_QUEUE to silence fetch/request access logs
+   * If not present, fall back to the older OLSRD_STATUS_ACCESS_LOG for compatibility.
+   * Values: '0' disables access logging; any other value (or unset) enables it.
+   */
+  const char *fl = getenv("OLSRD_STATUS_FETCH_LOG_QUEUE");
+  if (fl && fl[0] == '0') {
+    g_log_access = 0;
+  } else {
+    const char *alog = getenv("OLSRD_STATUS_ACCESS_LOG");
+    if (alog && alog[0] == '0') g_log_access = 0; else g_log_access = 1;
+  }
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
   int one = 1;

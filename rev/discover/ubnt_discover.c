@@ -73,6 +73,12 @@ static const char *tag_name(uint8_t t, int *is_str, int *is_ipv4, int *is_mac, i
 /* helper removed (previously used to validate printable TLV strings) */
 
 void ubnt_hexdump(const void *buf, size_t len) {
+    /* Only emit hexdump when UBNT debug is explicitly enabled via env */
+    int dbg = 0;
+    const char *e = getenv("OLSRD_STATUS_UBNT_DEBUG");
+    if (e && (*e=='1' || *e=='y' || *e=='Y')) dbg = 1;
+    if (!dbg) return;
+
     const unsigned char *p = (const unsigned char*)buf;
     for (size_t i=0;i<len;i+=16) {
         fprintf(stderr, "%04zx  ", i);
@@ -211,10 +217,13 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
     if (kv && cap) out = parse_tlv(buf, (size_t)n, kv, cap);
     if (kvcount) *kvcount = out;
 
-    // If nothing parsed, dump raw for debugging
+    /* If nothing parsed, dump raw for debugging only when env debug is set */
     if (out == 0) {
-        fprintf(stderr, "UBNT reply from %s, %zd bytes (unparsed):\n", ip?ip:"?", n);
-        ubnt_hexdump(buf, (size_t)n);
+        const char *e = getenv("OLSRD_STATUS_UBNT_DEBUG");
+        if (e && (*e=='1' || *e=='y' || *e=='Y')) {
+            fprintf(stderr, "UBNT reply from %s, %zd bytes (unparsed):\n", ip?ip:"?", n);
+            ubnt_hexdump(buf, (size_t)n);
+        }
     }
     return (int)n;
 }
