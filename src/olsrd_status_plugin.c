@@ -1938,20 +1938,20 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
                     }
                   }
                   else if (strncmp(kv[i].key, "str_", 4) == 0) {
-                    const char *s = kv[i].value;
-                    size_t sl = s ? strlen(s) : 0;
+                    const char *strval = kv[i].value;
+                    size_t sl = strval ? strlen(strval) : 0;
                     /* prefer hostname if looks like hostname (no spaces, contains dash or dot, reasonable length) */
-                    if (!devices[idx].have_hostname && sl >= 3 && sl < (sizeof(devices[idx].hostname)-1) && strchr(s,' ') == NULL && (strchr(s,'-') || strchr(s,'.'))) {
-                      snprintf(devices[idx].hostname, sizeof(devices[idx].hostname), "%s", s); devices[idx].have_hostname = 1;
+                    if (!devices[idx].have_hostname && sl >= 3 && sl < (sizeof(devices[idx].hostname)-1) && strchr(strval,' ') == NULL && (strchr(strval,'-') || strchr(strval,'.'))) {
+                      snprintf(devices[idx].hostname, sizeof(devices[idx].hostname), "%s", strval); devices[idx].have_hostname = 1;
                     }
                     /* product heuristics: contains common product tokens */
-                    if (!devices[idx].have_product && (strstr(s,"EdgeRouter") || strstr(s,"ER-") || strstr(s,"ER-X") || strstr(s,"ERX") || strstr(s,"ER"))) {
-                      snprintf(devices[idx].product, sizeof(devices[idx].product), "%s", s); devices[idx].have_product = 1;
+                    if (!devices[idx].have_product && (strstr(strval,"EdgeRouter") || strstr(strval,"ER-") || strstr(strval,"ER-X") || strstr(strval,"ERX") || strstr(strval,"ER"))) {
+                      snprintf(devices[idx].product, sizeof(devices[idx].product), "%s", strval); devices[idx].have_product = 1;
                     }
                     /* firmware heuristics: contains 'v' followed by digit */
-                    if (!devices[idx].have_firmware && strstr(s, "v") && (strpbrk(s, "0123456789") != NULL)) {
+                    if (!devices[idx].have_firmware && strstr(strval, "v") && (strpbrk(strval, "0123456789") != NULL)) {
                       /* accept if looks like version string */
-                      if (sl < sizeof(devices[idx].firmware)-1) { snprintf(devices[idx].firmware, sizeof(devices[idx].firmware), "%s", s); devices[idx].have_firmware = 1; }
+                      if (sl < sizeof(devices[idx].firmware)-1) { snprintf(devices[idx].firmware, sizeof(devices[idx].firmware), "%s", strval); devices[idx].have_firmware = 1; }
                     }
                   }
                 }
