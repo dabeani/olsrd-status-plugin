@@ -801,7 +801,16 @@ function populateOlsrLinksTable(links) {
         var pname = parts[pi];
         // scan nodedb for an entry whose name equals pname and whose ip/host/match contains l.remote
         var foundMatch = false;
-        Object.keys(window._nodedb_cache).some(function(k){ var v = window._nodedb_cache[k]; if (!v) return false; if (v.n === pname) { if (k === l.remote || (v.h && v.h === l.remote) || (v.m && v.m === l.remote)) { foundMatch = true; return true; } } return false; });
+        Object.keys(window._nodedb_cache).some(function(k){
+          var v = window._nodedb_cache[k]; if (!v) return false;
+          if (v.n === pname) {
+            // direct key/host/match equality
+            if (k === l.remote || (v.h && v.h === l.remote) || (v.m && v.m === l.remote)) { foundMatch = true; return true; }
+            // also accept CIDR or other nodedb mappings that resolve this remote IP to pname
+            try { if (typeof getNodeNameForIp === 'function' && getNodeNameForIp(l.remote) === pname) { foundMatch = true; return true; } } catch(e) {}
+          }
+          return false;
+        });
         if (foundMatch) { primary = pname; break; }
       }
     }

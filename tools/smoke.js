@@ -71,12 +71,14 @@ async function run(url) {
       function tableToArray(sel){
         const t = document.querySelector(sel); if(!t) return null;
         const rows = Array.from(t.querySelectorAll('tbody tr'));
-        return rows.map(r => Array.from(r.querySelectorAll('td')).map(td=>td.textContent.trim()));
+        // use innerHTML to preserve any HTML fragments in cells
+        return rows.map(r => Array.from(r.querySelectorAll('td')).map(td=> (td.innerHTML || '').trim()));
       }
       return {
         neighbors: tableToArray('#neighborsTable'),
         connections: tableToArray('#connectionsTable'),
-        traceroute: tableToArray('#tracerouteTable')
+        traceroute: tableToArray('#tracerouteTable'),
+        olsrLinks: tableToArray('#olsrLinksTable')
       };
     });
     const outConsole = { events: consoleEvents, extractedTables: extracted };
