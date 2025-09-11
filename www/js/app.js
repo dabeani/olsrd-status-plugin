@@ -170,7 +170,25 @@ if (!window.fetch) {
 // Pass second argument `true` to allow HTML (legacy) - but we now avoid innerHTML and always create safe text nodes.
 function td(val/*, allowHtml - legacy */) {
   var td = document.createElement('td');
-  if (typeof val === 'undefined' || val === null) td.textContent = ''; else td.textContent = String(val);
+  if (typeof val === 'undefined' || val === null) {
+    td.textContent = '';
+    return td;
+  }
+  // If caller passed an HTML fragment (legacy behavior), parse it safely and
+  // append nodes instead of assigning innerHTML. We detect HTML heuristically
+  // by looking for angle-brackets. This preserves previous behavior where
+  // certain call-sites passed '<a..>' or '<span..>' strings.
+  if (typeof val === 'string' && /<[^>]+>/.test(val)) {
+    try {
+      var parser = new DOMParser();
+      var doc = parser.parseFromString(val || '', 'text/html');
+      Array.prototype.slice.call(doc.body.childNodes).forEach(function(n){ td.appendChild(n.cloneNode(true)); });
+      return td;
+    } catch(e) {
+      // fallthrough to textContent fallback
+    }
+  }
+  td.textContent = String(val);
   return td;
 }
 
@@ -275,7 +293,8 @@ function setText(id, text) {
     } else if (typeof el.innerText !== 'undefined') {
       el.innerText = text;
     } else {
-      el.innerHTML = text;
+  // fallback: remove children and append text node
+  try { while (el.firstChild) el.removeChild(el.firstChild); el.appendChild(document.createTextNode(String(text))); } catch(e) { el.textContent = String(text); }
     }
     // If we're setting the hostname, attempt to replace the literal token 'nodename'
     // with the real nodename from the cached nodedb (if available). This ensures
@@ -313,7 +332,17 @@ function setText(id, text) {
 
 function setHTML(id, html) {
   var el = document.getElementById(id);
-  if (el) el.innerHTML = html;
+  if (!el) return;
+  clearChildren(el);
+  try {
+    // parse the provided HTML string and append nodes safely
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(html || '', 'text/html');
+    Array.prototype.slice.call(doc.body.childNodes).forEach(function(n){ el.appendChild(n.cloneNode(true)); });
+  } catch(e) {
+    // fallback to text
+    el.textContent = String(html);
+  }
 }
 
 // Robustly fetch /status/lite and parse the last top-level JSON object from the
@@ -542,7 +571,7 @@ function populateDevicesTable(devices, airos) {
   var tbody = document.querySelector('#devicesTable tbody');
   // diagnostics: lightweight logging to help trace empty tabs issue
   try { if (window._uiDebug) console.debug('populateDevicesTable called, devices=', (devices && devices.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
-  tbody.innerHTML = '';
+  clearChildren(tbody);
     // Ensure parent pane is not accidentally hidden (help with intermittent empty-tab issue)
     try { var pane = document.getElementById('tab-status'); if (pane) { pane.classList.remove('hidden'); pane.style.display = ''; } } catch(e) {}
   // Note: we no longer filter out ARP-like entries here. Instead compute a
@@ -569,7 +598,7 @@ function populateDevicesTable(devices, airos) {
   if (!devices || !Array.isArray(devices) || devices.length === 0) {
     var tbody = document.querySelector('#devicesTable tbody');
     if (tbody) {
-      tbody.innerHTML = '';
+      clearChildren(tbody);
       var tr = document.createElement('tr');
       var tdNo = document.createElement('td'); tdNo.colSpan = 12; tdNo.className = 'text-muted'; tdNo.textContent = 'No devices found';
       tr.appendChild(tdNo); tbody.appendChild(tr);
@@ -722,13 +751,13 @@ function populateDevicesTable(devices, airos) {
 
 function populateOlsrLinksTable(links) {
   var tbody = document.querySelector('#olsrLinksTable tbody');
-  if (!tbody) return; tbody.innerHTML = '';
+  if (!tbody) return; clearChildren(tbody);
   // diagnostics: lightweight logging to help trace empty tabs issue
   try { if (window._uiDebug) console.debug('populateOlsrLinksTable called, links=', (links && links.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   if (!links || !Array.isArray(links) || links.length === 0) {
     var tbody = document.querySelector('#olsrLinksTable tbody');
     if (tbody) {
-      tbody.innerHTML = '';
+  clearChildren(tbody);
       var tr = document.createElement('tr');
       var tdNo = document.createElement('td'); tdNo.colSpan = 12; tdNo.className = 'text-muted'; tdNo.textContent = 'No links found';
       tr.appendChild(tdNo); tbody.appendChild(tr);
@@ -748,7 +777,12 @@ function populateOlsrLinksTable(links) {
     try {
       if (l.remote_host && String(l.remote_host).trim() && String(l.remote_host).trim() !== String(l.remote).trim()) {
         var linkHtml = '<a target="_blank" href="https://' + l.remote_host + '">' + l.remote_host + '</a>';
-        tr.appendChild(td(linkHtml));
+        try {
+          var tmpTd = document.createElement('td');
+          var p = new DOMParser(); var doc = p.parseFromString(linkHtml || '', 'text/html');
+          Array.prototype.slice.call(doc.body.childNodes).forEach(function(n){ tmpTd.appendChild(n.cloneNode(true)); });
+          tr.appendChild(tmpTd);
+        } catch(e) { tr.appendChild(td('')); }
       } else {
         tr.appendChild(td(''));
       }
@@ -797,7 +831,11 @@ function populateOlsrLinksTable(links) {
       return '<span class="lq-badge '+cls+'">'+String(val)+'</span>';
     }
     tr.appendChild(td(mkLqBadge(l.lq)));
-    tr.appendChild(td(mkLqBadge(l.nlq)));
+    try {
+      var nlqTd = document.createElement('td');
+      nlqTd.appendChild(td(mkLqBadge(l.nlq)));
+      tr.appendChild(nlqTd);
+    } catch(e) { tr.appendChild(td(mkLqBadge(l.nlq))); }
     // cost numeric rendering
     var costVal = l.cost || '';
     var costNum = parseFloat(String(costVal).replace(/[^0-9\.\-]/g,''));
@@ -805,7 +843,12 @@ function populateOlsrLinksTable(links) {
     if (!isNaN(costNum)) {
       costHtml = '<span class="metric-badge small" style="background:#5a9bd8;">'+costNum+'</span>';
     }
-    tr.appendChild(td(costHtml));
+    try {
+      var costTd = document.createElement('td');
+      var costSpan = document.createElement('span'); costSpan.className = 'metric-badge small'; costSpan.style.background = (!isNaN(costNum) ? '#5a9bd8' : '#888');
+      costSpan.textContent = (isNaN(costNum) ? (costVal||'') : costNum);
+      costTd.appendChild(costSpan); tr.appendChild(costTd);
+    } catch(e) { tr.appendChild(td(costVal||'')); }
     // ETX rendering: prefer explicit etx field, otherwise compute from cost/lq where possible
     try {
       var etxVal = null;
@@ -823,7 +866,11 @@ function populateOlsrLinksTable(links) {
         var etxCls = (etxVal <= 1.5) ? 'etx-good' : (etxVal <= 3.0 ? 'etx-med' : 'etx-bad');
         etxHtml = '<span class="etx-badge '+etxCls+'">'+(Math.round(etxVal*100)/100) +'</span>';
       }
-      tr.appendChild(td(etxHtml));
+        try {
+          var etxTd = document.createElement('td');
+          var etxSpan = document.createElement('span'); etxSpan.className = 'etx-badge ' + etxCls; etxSpan.textContent = (etxVal === null || !isFinite(etxVal) ? 'n/a' : (Math.round(etxVal*100)/100));
+          etxTd.appendChild(etxSpan); tr.appendChild(etxTd);
+        } catch(e) { tr.appendChild(td('')); }
     } catch(e) { tr.appendChild(td('')); }
     var routesCell = td(l.routes || '');
     if (l.routes && parseInt(l.routes,10) > 0) {
@@ -836,8 +883,7 @@ function populateOlsrLinksTable(links) {
       badgeSpan.className = 'metric-badge routes small';
       badgeSpan.style.marginLeft = '6px';
       badgeSpan.textContent = 'R:' + (l.routes || '0');
-      // append without clobbering existing content
-  try { routesCell.appendChild(badgeSpan); } catch(e) { /* fallback: append text node */ try { var fb = document.createElement('span'); fb.className='metric-badge routes small'; fb.style.marginLeft='6px'; fb.textContent = 'R:' + (l.routes || '0'); routesCell.appendChild(fb); } catch(e2){} }
+      routesCell.appendChild(badgeSpan);
     } catch(e){}
     tr.appendChild(routesCell);
     // nodes column: show numeric count and tooltip with names (avoid duplicating long text in table)
@@ -947,7 +993,7 @@ function showNodesFor(remoteIp, nodeNames) {
   if (title) title.textContent = 'Nodes via ' + remoteIp;
   if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
   if (tbody) {
-    tbody.innerHTML = '';
+  clearChildren(tbody);
     var tr = document.createElement('tr'); var tdLoad = document.createElement('td'); tdLoad.colSpan = 6; tdLoad.className = 'text-muted'; tdLoad.textContent = 'Loading...'; tr.appendChild(tdLoad); tbody.appendChild(tr);
   }
   if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
@@ -957,7 +1003,7 @@ function showNodesFor(remoteIp, nodeNames) {
   function renderRows(list) {
     if (!tbody) return;
     if (!list.length) {
-      tbody.innerHTML = '';
+  clearChildren(tbody);
       var tr = document.createElement('tr'); var tdNo = document.createElement('td'); tdNo.colSpan = 7; tdNo.className = 'text-muted'; tdNo.textContent = 'No nodes found'; tr.appendChild(tdNo); tbody.appendChild(tr);
       return;
     }
@@ -972,7 +1018,7 @@ function showNodesFor(remoteIp, nodeNames) {
       });
     }
     // build rows via DOM for safety and attach handlers directly
-    tbody.innerHTML = '';
+  clearChildren(tbody);
     for (var i=0;i<arr.length;i++) {
       (function(i){
         var n = arr[i];
@@ -1087,7 +1133,7 @@ function showRoutesFor(remoteIp) {
   if (title) title.textContent = 'Routes via ' + remoteIp;
   if (countBadge) { countBadge.style.display='none'; countBadge.textContent=''; }
   if (tbody) {
-    tbody.innerHTML = '';
+  clearChildren(tbody);
     var tr = document.createElement('tr'); var tdLoad = document.createElement('td'); tdLoad.colSpan = 4; tdLoad.className = 'text-muted'; tdLoad.textContent = 'Loading...'; tr.appendChild(tdLoad); tbody.appendChild(tr);
   }
   if (bodyPre) { bodyPre.style.display='none'; bodyPre.textContent='Loading...'; }
@@ -1189,7 +1235,7 @@ function showRoutesFor(remoteIp) {
         bodyPre.textContent = header + routesArr.join('\n');
       }
     })
-    .catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="4" class="text-danger">Error loading routes</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading routes'; });
+  .catch(function(){ if(tbody){ clearChildren(tbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=4; td.className='text-danger'; td.textContent='Error loading routes'; tr.appendChild(td); tbody.appendChild(tr);} if(bodyPre) bodyPre.textContent='Error loading routes'; });
   showModal('route-modal');
 }
 
@@ -1210,11 +1256,11 @@ var _nodeModalKeyHandler = null;
 
 function populateNeighborsTable(neighbors) {
   var tbody = document.querySelector('#neighborsTable tbody');
-  if (!tbody) return; tbody.innerHTML = '';
+  if (!tbody) return; clearChildren(tbody);
   if (!neighbors || !Array.isArray(neighbors) || neighbors.length === 0) {
     var tbody = document.querySelector('#neighborsTable tbody');
     if (tbody) {
-      tbody.innerHTML = '';
+      clearChildren(tbody);
       var tr = document.createElement('tr'); var tdNo = document.createElement('td'); tdNo.colSpan = 7; tdNo.className = 'text-muted'; tdNo.textContent = 'No neighbors found'; tr.appendChild(tdNo); tbody.appendChild(tr);
     }
     return;
@@ -2782,8 +2828,12 @@ function enableVirtualLogs() {
         var table = document.createElement('table');
         table.className = 'table table-condensed';
         table.id = 'log-table-virtual';
-        var thead = document.createElement('thead');
-        thead.innerHTML = '<tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr>';
+  var thead = document.createElement('thead');
+  var trh = document.createElement('tr');
+  var th1 = document.createElement('th'); th1.style.width = '160px'; th1.textContent = 'Timestamp';
+  var th2 = document.createElement('th'); th2.style.width = '100px'; th2.textContent = 'Level';
+  var th3 = document.createElement('th'); th3.textContent = 'Message';
+  trh.appendChild(th1); trh.appendChild(th2); trh.appendChild(th3); thead.appendChild(trh);
         table.appendChild(thead);
         var tbody = document.createElement('tbody');
         tbody.id = 'log-virtual-tbody';
@@ -2822,7 +2872,7 @@ function disableVirtualLogs() {
         var table = document.createElement('table');
         table.className = 'table table-condensed';
         table.id = 'log-table';
-  var thead = document.createElement('thead'); thead.innerHTML = '<tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr></thead>';
+  var thead = document.createElement('thead'); var trh=document.createElement('tr'); var thh1=document.createElement('th'); thh1.style.width='160px'; thh1.textContent='Timestamp'; var thh2=document.createElement('th'); thh2.style.width='100px'; thh2.textContent='Level'; var thh3=document.createElement('th'); thh3.textContent='Message'; trh.appendChild(thh1); trh.appendChild(thh2); trh.appendChild(thh3); thead.appendChild(trh);
   var tbodyInner = document.createElement('tbody'); tbodyInner.id = 'log-tbody'; var tr = document.createElement('tr'); var tdEmpty = document.createElement('td'); tdEmpty.colSpan = 3; tdEmpty.className = 'text-muted'; tdEmpty.style.padding = '12px'; tdEmpty.textContent = '(no log lines)'; tr.appendChild(tdEmpty); tbodyInner.appendChild(tr);
   table.appendChild(thead); table.appendChild(tbodyInner);
         body.appendChild(table);
@@ -2896,13 +2946,13 @@ function refreshLog() {
         if (status) status.textContent = '';
       } catch(e) {
         var tbody = document.getElementById('log-tbody');
-        if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error rendering log</td></tr>';
+        if (tbody) { clearChildren(tbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=3; td.className='text-danger'; td.textContent='Error rendering log'; tr.appendChild(td); tbody.appendChild(tr); }
         if (status) status.textContent = 'Error';
       }
     })
     .catch(function(e){
       var tbody = document.getElementById('log-tbody');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Error loading /log: '+escapeHtml(String(e))+'</td></tr>';
+  if (tbody) { clearChildren(tbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=3; td.className='text-danger'; td.textContent='Error loading /log: ' + escapeHtml(String(e)); tr.appendChild(td); tbody.appendChild(tr); }
       if (status) status.textContent = 'Error';
     })
     .finally(function(){
