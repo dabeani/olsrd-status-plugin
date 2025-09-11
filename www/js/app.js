@@ -1363,6 +1363,39 @@ function renderLineGraph(canvasId, series, color, yLabel) {
   ctx.fillText(maxY, 2, pad+4);
 }
 
+// Generic card renderer: renders a Bootstrap-style panel into a container.
+// opts: { container: (id|string|element), title, subtitle, smallHelp, render: function(bodyEl, headerRightEl) }
+function renderCard(opts) {
+  try {
+    var container = null;
+    if (!opts) return;
+    if (typeof opts.container === 'string') container = document.getElementById(opts.container);
+    else container = opts.container || null;
+    if (!container) return;
+    // clear
+    container.innerHTML = '';
+    // panel
+    var panel = document.createElement('div'); panel.className = opts.panelClass || 'panel panel-default';
+    var heading = document.createElement('div'); heading.className = 'panel-heading'; heading.style.display = 'flex'; heading.style.justifyContent = 'space-between'; heading.style.alignItems = 'center';
+    var titleWrap = document.createElement('div');
+    var title = document.createElement('div'); title.style.fontWeight = '600'; title.style.marginBottom = '4px'; title.textContent = opts.title || '';
+    titleWrap.appendChild(title);
+    if (opts.subtitle) { var sub = document.createElement('div'); sub.style.fontSize = '12px'; sub.style.color = '#666'; sub.textContent = opts.subtitle; titleWrap.appendChild(sub); }
+    heading.appendChild(titleWrap);
+    var headerRight = document.createElement('div'); headerRight.style.display = 'flex'; headerRight.style.gap = '8px'; headerRight.style.alignItems = 'center'; heading.appendChild(headerRight);
+    panel.appendChild(heading);
+    var body = document.createElement('div'); body.className = 'panel-body'; if (opts.bodyStyle) body.style.cssText = opts.bodyStyle;
+    panel.appendChild(body);
+    // allow render callback to populate body and headerRight
+    try { if (typeof opts.render === 'function') opts.render(body, headerRight); }
+    catch (e) { /* swallow UI render errors */ }
+    if (opts.smallHelp) {
+      var help = document.createElement('div'); help.className = 'small-muted'; help.style.marginTop = '8px'; help.innerHTML = opts.smallHelp; body.appendChild(help);
+    }
+    container.appendChild(panel);
+  } catch (e) { /* ignore */ }
+}
+
 // Top-level reusable card renderer
 function renderCard(opts) {
   // opts: { containerId, title, subtitle, contentHTML, smallHelp }
@@ -1559,69 +1592,54 @@ function populateFetchStats(fs) {
     var q_crit = thresholds.queue_crit || 200;
     var d_warn = thresholds.dropped_warn || 10;
 
-    // build panel using bootstrap styles
-    var html = '';
-    html += '<div class="panel panel-default">';
-    html += '<div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">';
-    html += '<div style="font-weight:600">Fetch Queue</div>';
-  html += '<div style="display:flex; gap:8px; align-items:center;">';
-  html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><i class="glyphicon glyphicon-refresh"></i></button>';
-  html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
-  // interval selector: persisted in localStorage as 'fetch_auto_interval_ms'
-  html += '<select id="fetch-stats-interval" class="input-sm form-control" style="width:120px; display:inline-block; margin-right:6px;">';
-  html += '<option value="0">Auto off</option>';
-  html += '<option value="5000">5s</option>';
-  html += '<option value="10000">10s</option>';
-  html += '<option value="15000">15s</option>';
-  html += '<option value="30000">30s</option>';
-  html += '<option value="60000">60s</option>';
-  html += '<option value="120000">2m</option>';
-  html += '<option value="300000">5m</option>';
-  html += '</select>';
-  html += '<button id="fetch-stats-autorefresh" class="btn btn-xs btn-default" title="Toggle auto-refresh">Auto</button>';
-  html += '</div></div>';
-    html += '<div class="panel-body" style="padding:10px">';
-    html += '<div class="row">';
-    // left: badges + progress
-    html += '<div class="col-xs-8">';
-    html += '<div style="margin-bottom:8px">';
-    function mkBadge(label, val, cls) { return '<span class="fetch-badge '+(cls||'')+'" style="margin-right:6px">'+label+': <strong style="margin-left:6px;">'+String(val)+'</strong></span>'; }
-    var qcls = queued >= q_crit ? 'crit' : (queued >= q_warn ? 'warn' : '');
-    var dcls = dropped >= d_warn ? 'warn' : '';
-    html += mkBadge('Queued', queued, qcls);
-    html += mkBadge('Processing', processing);
-    html += mkBadge('Dropped', dropped, dcls);
-    html += mkBadge('Retries', retries);
-    html += mkBadge('Processed', processed);
-    html += '</div>';
-  // progress bar: percent of queue_crit as a practical max
-  var denom = q_crit > 0 ? q_crit : 200;
-  var pct = Math.min(100, Math.round((queued / denom) * 100));
-  var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
-  // single progress bar (controls live in the header to avoid duplicate IDs)
-  html += '<div class="progress" style="height:16px; margin-bottom:6px">';
-  html += '<div class="progress-bar '+progClass+'" role="progressbar" aria-valuenow="'+pct+'" aria-valuemin="0" aria-valuemax="100" style="width:'+pct+'%;">'; // close left column only
-  html += '</div></div>';
-  html += '<div style="margin-top:4px">'+pct+'%</div>';
-    html += '</div>'; // close left column
-    // right: small table with values (inside same row)
-    html += '<div class="col-xs-4">';
-    html += '<table class="table table-condensed" style="margin:0">';
-    html += '<tbody>';
-    html += '<tr><th style="width:55%">Queued</th><td>'+queued+'</td></tr>';
-    html += '<tr><th>Processing</th><td>'+processing+'</td></tr>';
-    html += '<tr><th>Dropped</th><td>'+dropped+'</td></tr>';
-    html += '<tr><th>Retries</th><td>'+retries+'</td></tr>';
-    html += '<tr><th>Processed</th><td>'+processed+'</td></tr>';
-    html += '<tr><th>Successes</th><td>'+successes+'</td></tr>';
-    html += '</tbody></table>';
-  html += '</div>'; // col
-  html += '</div>'; // row
-  html += '<div class="small-muted">Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn+'</div>';
-  html += '</div>'; // panel-body
-  html += '</div>'; // panel
+    // Render using renderCard for consistent layout and easier reuse
+    renderCard({
+      container: container,
+      title: 'Fetch Queue',
+      panelClass: 'panel panel-default',
+      bodyStyle: 'padding:10px',
+      render: function(body, headerRight) {
+        // left column (badges + progress)
+        var left = document.createElement('div'); left.style.display='inline-block'; left.style.width='62%'; left.style.verticalAlign='top';
+        var badges = document.createElement('div'); badges.style.marginBottom='8px';
+        function mkBadgeNode(label, val, cls) { var sp=document.createElement('span'); sp.className='fetch-badge '+(cls||''); sp.style.marginRight='6px'; sp.innerHTML = label+': <strong style="margin-left:6px;">'+String(val)+'</strong>'; return sp; }
+        var qcls = queued >= q_crit ? 'crit' : (queued >= q_warn ? 'warn' : '');
+        var dcls = dropped >= d_warn ? 'warn' : '';
+        badges.appendChild(mkBadgeNode('Queued', queued, qcls));
+        badges.appendChild(mkBadgeNode('Processing', processing));
+        badges.appendChild(mkBadgeNode('Dropped', dropped, dcls));
+        badges.appendChild(mkBadgeNode('Retries', retries));
+        badges.appendChild(mkBadgeNode('Processed', processed));
+        left.appendChild(badges);
+        var denom = q_crit > 0 ? q_crit : 200;
+        var pct = Math.min(100, Math.round((queued / denom) * 100));
+        var prog = document.createElement('div'); prog.className='progress'; prog.style.height='16px'; prog.style.marginBottom='6px';
+        var progBar = document.createElement('div'); var progClass = pct >= 100 ? 'progress-bar-danger' : (pct >= Math.round((q_warn/denom)*100) ? 'progress-bar-warning' : 'progress-bar-success');
+        progBar.className = 'progress-bar '+progClass; progBar.setAttribute('role','progressbar'); progBar.setAttribute('aria-valuenow', String(pct)); progBar.setAttribute('aria-valuemin','0'); progBar.setAttribute('aria-valuemax','100'); progBar.style.width = pct + '%';
+        prog.appendChild(progBar); left.appendChild(prog);
+        var pctNode = document.createElement('div'); pctNode.style.marginTop='4px'; pctNode.textContent = pct + '%'; left.appendChild(pctNode);
+        body.appendChild(left);
 
-    container.innerHTML = html;
+        // right column (small table)
+        var right = document.createElement('div'); right.style.display='inline-block'; right.style.width='36%'; right.style.paddingLeft='10px'; right.style.verticalAlign='top';
+        var table = document.createElement('table'); table.className = 'table table-condensed'; table.style.margin='0';
+        var tb = document.createElement('tbody');
+        function mkRow(k,v){ var r=document.createElement('tr'); var th=document.createElement('th'); if (k==='Queued') th.style.width='55%'; th.textContent = k; var td=document.createElement('td'); td.textContent = String(v); r.appendChild(th); r.appendChild(td); return r; }
+        tb.appendChild(mkRow('Queued', queued)); tb.appendChild(mkRow('Processing', processing)); tb.appendChild(mkRow('Dropped', dropped)); tb.appendChild(mkRow('Retries', retries)); tb.appendChild(mkRow('Processed', processed)); tb.appendChild(mkRow('Successes', successes));
+        table.appendChild(tb); right.appendChild(table); body.appendChild(right);
+
+        // headerRight controls (preserve element IDs for existing wiring)
+        var refreshBtn = document.createElement('button'); refreshBtn.id='fetch-stats-refresh'; refreshBtn.className='btn btn-xs btn-default'; refreshBtn.innerHTML = '<i class="glyphicon glyphicon-refresh"></i>';
+        var debugBtn = document.createElement('button'); debugBtn.id='fetch-stats-debug'; debugBtn.className='btn btn-xs btn-default'; debugBtn.textContent='Debug';
+        var sel = document.createElement('select'); sel.id='fetch-stats-interval'; sel.className='input-sm form-control'; sel.style.width='120px'; sel.style.display='inline-block'; sel.style.marginRight='6px';
+        [['0','Auto off'],['5000','5s'],['10000','10s'],['15000','15s'],['30000','30s'],['60000','60s'],['120000','2m'],['300000','5m']].forEach(function(o){ var opt=document.createElement('option'); opt.value=o[0]; opt.textContent=o[1]; sel.appendChild(opt); });
+        var autoBtn = document.createElement('button'); autoBtn.id='fetch-stats-autorefresh'; autoBtn.className='btn btn-xs btn-default'; autoBtn.title='Toggle auto-refresh'; autoBtn.textContent='Auto';
+        headerRight.appendChild(refreshBtn); headerRight.appendChild(debugBtn); headerRight.appendChild(sel); headerRight.appendChild(autoBtn);
+
+        // thresholds footer
+        var thr = document.createElement('div'); thr.className='small-muted'; thr.style.marginTop='8px'; thr.innerHTML = 'Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn; body.appendChild(thr);
+      }
+    });
 
     // wire actions: refresh
     var ref = document.getElementById('fetch-stats-refresh');
