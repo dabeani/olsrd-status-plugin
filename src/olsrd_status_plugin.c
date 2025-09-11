@@ -2069,13 +2069,22 @@ static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char 
     if (keybuf[0] >= '0' && keybuf[0] <= '9') {
       /* parse key as ip[/mask] */
       char addrpart[64]; int maskbits = 32;
-      char *s = strchr(keybuf, '/'); if (s) {
-        size_t L = (size_t)(s - keybuf); if (L >= sizeof(addrpart)) { p = objend; continue; }
-        memcpy(addrpart, keybuf, L); addrpart[L] = '\0'; maskbits = atoi(s + 1);
-      } else { snprintf(addrpart, sizeof(addrpart), "%s", keybuf); }
+      char *s = strchr(keybuf, '/');
+      if (s) {
+        size_t L = (size_t)(s - keybuf);
+        if (L >= sizeof(addrpart)) { p = objend; continue; }
+        memcpy(addrpart, keybuf, L);
+        addrpart[L] = '\0';
+        maskbits = atoi(s + 1);
+      } else {
+        /* copy safely and ensure null-termination; keybuf may be longer than addrpart */
+        strncpy(addrpart, keybuf, sizeof(addrpart) - 1);
+        addrpart[sizeof(addrpart) - 1] = '\0';
+      }
       struct in_addr ina_k; if (!inet_aton(addrpart, &ina_k)) { p = objend; continue; }
       uint32_t net = ntohl(ina_k.s_addr);
-      if (maskbits < 0) maskbits = 0; if (maskbits > 32) maskbits = 32;
+  if (maskbits < 0) maskbits = 0;
+  if (maskbits > 32) maskbits = 32;
       uint32_t mask = (maskbits == 0) ? 0 : ((maskbits == 32) ? 0xFFFFFFFFu : (~((1u << (32 - maskbits)) - 1u)));
       if ((dest & mask) != (net & mask)) { p = objend; continue; }
       /* matched by key; extract "n"/"name"/"hostname" value inside object */
