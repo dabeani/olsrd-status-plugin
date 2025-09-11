@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test OLSR Links Node Resolution Fix</title>
+    <script src="www/js/app.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-case { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .pass { background-color: #d4edda; border-color: #c3e6cb; }
+        .fail { background-color: #f8d7da; border-color: #f5c6cb; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Test OLSR Links Node Resolution Fix</h1>
+    
+    <div id="test-container">
+        <table id="olsrLinksTable" style="display: none;">
+            <thead>
+                <tr>
+                    <th>Intf</th>
+                    <th>Local</th>
+                    <th>Remote</th>
+                    <th>Remote Host</th>
+                    <th>Node</th>
+                    <th>LQ</th>
+                    <th>NLQ</th>
+                    <th>Cost</th>
+                    <th>ETX</th>
+                    <th>Routes</th>
+                    <th>Nodes</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // Mock the nodedb cache with the problem scenario data
+        window._nodedb_cache = {
+            "193.238.158.170": {
+                "n": "2345falke",     // Correct node name
+                "d": "bcrc1",         // Device name that was showing incorrectly
+                "h": "193.238.158.170"
+            },
+            "193.238.156.86": {
+                "n": "falke-bb",      // Correct node name  
+                "d": "ge2-rn01falke", // Device name that was showing incorrectly
+                "h": "193.238.156.86"
+            },
+            "193.238.158.33": {
+                "n": "2345falke",     // Correct node name
+                "d": "vbmk-rt-03",    // Device name
+                "h": "193.238.158.33"
+            }
+        };
+
+        // Test data simulating the problematic OLSR links
+        const testLinks = [
+            {
+                intf: "eth0",
+                local: "193.238.158.74",
+                remote: "193.238.158.170",
+                remote_host: "bcrc1.2345falke.wien.funkfeuer.at", 
+                node_names: "eno",  // This was the wrong value from backend
+                lq: "1.000",
+                nlq: "1.000",
+                cost: "1000",
+                routes: "5",
+                nodes: "1"
+            },
+            {
+                intf: "eth0",
+                local: "193.238.158.74", 
+                remote: "193.238.156.86",
+                remote_host: "ge2-rn01falke.falke-bb.wien.funkfeuer.at",
+                node_names: "ramp8", // This was the wrong value from backend
+                lq: "1.000",
+                nlq: "1.000",
+                cost: "1000", 
+                routes: "3",
+                nodes: "1"
+            },
+            {
+                intf: "eth0",
+                local: "193.238.158.74",
+                remote: "193.238.158.33", 
+                remote_host: "vbmk-rt-03.2345falke.wien.funkfeuer.at",
+                node_names: "2345falke", // This was already correct
+                lq: "1.000",
+                nlq: "1.000",
+                cost: "1000",
+                routes: "2", 
+                nodes: "1"
+            }
+        ];
+
+        function runTest() {
+            const resultsDiv = document.getElementById('results');
+            
+            // First, populate the table with the test data
+            populateOlsrLinksTable(testLinks);
+            
+            // Now check what node names are actually displayed
+            const tbody = document.querySelector('#olsrLinksTable tbody');
+            const rows = tbody.querySelectorAll('tr');
+            
+            let results = '<h2>Test Results</h2>';
+            let allPassed = true;
+            
+            const expected = [
+                { ip: "193.238.158.170", expected: "2345falke", description: "bcrc1.2345falke.wien.funkfeuer.at should show 2345falke" },
+                { ip: "193.238.156.86", expected: "falke-bb", description: "ge2-rn01falke.falke-bb.wien.funkfeuer.at should show falke-bb" },
+                { ip: "193.238.158.33", expected: "2345falke", description: "vbmk-rt-03.2345falke.wien.funkfeuer.at should show 2345falke" }
+            ];
+            
+            rows.forEach((row, i) => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length >= 5) {
+                    const remote = cells[2].textContent.trim();     // Remote IP
+                    const remoteHost = cells[3].textContent.trim(); // Remote Host
+                    const actualNode = cells[4].textContent.trim(); // Node (this is what we're testing)
+                    
+                    const exp = expected[i];
+                    const passed = actualNode === exp.expected;
+                    allPassed = allPassed && passed;
+                    
+                    results += `<div class="test-case ${passed ? 'pass' : 'fail'}">`;
+                    results += `<h3>Test ${i + 1}: ${exp.description}</h3>`;
+                    results += `<p><strong>Remote IP:</strong> ${remote}</p>`;
+                    results += `<p><strong>Remote Host:</strong> ${remoteHost}</p>`;
+                    results += `<p><strong>Expected Node:</strong> ${exp.expected}</p>`;
+                    results += `<p><strong>Actual Node:</strong> ${actualNode}</p>`;
+                    results += `<p><strong>Result:</strong> ${passed ? '✅ PASS' : '❌ FAIL'}</p>`;
+                    results += '</div>';
+                }
+            });
+            
+            results += `<div class="test-case ${allPassed ? 'pass' : 'fail'}">`;
+            results += `<h3>Overall Result</h3>`;
+            results += `<p>${allPassed ? '✅ ALL TESTS PASSED' : '❌ SOME TESTS FAILED'}</p>`;
+            results += '</div>';
+            
+            // Show the actual table for manual verification
+            results += '<h3>Generated OLSR Links Table (for manual verification)</h3>';
+            document.getElementById('olsrLinksTable').style.display = 'table';
+            
+            resultsDiv.innerHTML = results;
+            
+            console.log('Test completed. All passed:', allPassed);
+            
+            return allPassed;
+        }
+
+        // Wait for page to load, then run the test
+        window.addEventListener('load', function() {
+            setTimeout(runTest, 500);
+        });
+    </script>
+</body>
+</html>
