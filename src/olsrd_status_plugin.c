@@ -131,9 +131,9 @@ static pthread_t g_fetch_report_thread = 0;
 /* Auto-refresh interval (milliseconds) suggested for UI. 0 means disabled. Can be set via PlParam 'fetch_auto_refresh_ms' or env OLSRD_STATUS_FETCH_AUTO_REFRESH_MS */
 static int g_fetch_auto_refresh_ms = 15000; /* default 15s */
 static int g_cfg_fetch_auto_refresh_set = 0;
-/* Automatic devices discovery interval (seconds). Default 60s; configurable via
+/* Automatic devices discovery interval (seconds). Default 300s; configurable via
  * PlParam 'discover_interval' or env OLSRD_STATUS_DISCOVER_INTERVAL. */
-static int g_devices_discover_interval = 60;
+static int g_devices_discover_interval = 300;
 static int g_cfg_devices_discover_interval_set = 0;
 
 /* UBNT probe per-interface window in milliseconds. Default 1000 ms. Configurable
