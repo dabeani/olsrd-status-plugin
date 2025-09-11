@@ -772,7 +772,7 @@ static void *fetch_worker_thread(void *arg) {
      * enabled. This keeps normal periodic refreshes quiet while preserving
      * visibility when something changes or when troubleshooting is needed.
      */
-    if (succeeded || g_fetch_log_force) {
+  if ((succeeded && g_fetch_log_queue) || g_fetch_log_force) {
       if (rq->type & FETCH_TYPE_DISCOVER) {
         if (succeeded)
           fprintf(stderr, "[status-plugin] fetch: discovery updated devices cache (ts=%ld)\n", (long)g_devices_cache_ts);
@@ -1857,8 +1857,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   static char *cache_buf = NULL; static size_t cache_len = 0; static time_t cache_time = 0; /* cache TTL controlled by g_ubnt_cache_ttl_s */
   time_t nowt = time(NULL);
   if (cache_buf && cache_len > 0 && nowt - cache_time < g_ubnt_cache_ttl_s) {
-    int ttl_left = (int)(g_ubnt_cache_ttl_s - (nowt - cache_time)); if (ttl_left < 0) ttl_left = 0;
-    fprintf(stderr, "[status-plugin] ubnt-discover cache hit: %zu bytes, ttl_left=%ds\n", cache_len, ttl_left);
+  int ttl_left = (int)(g_ubnt_cache_ttl_s - (nowt - cache_time)); if (ttl_left < 0) ttl_left = 0;
+  if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] ubnt-discover cache hit: %zu bytes, ttl_left=%ds\n", cache_len, ttl_left);
     *out = malloc(cache_len+1); if(!*out) return -1; memcpy(*out, cache_buf, cache_len+1); *outlen = cache_len; return 0;
   }
   /* Skip external tool - use internal broadcast discovery only.
