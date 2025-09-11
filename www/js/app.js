@@ -1285,13 +1285,41 @@ function pushStat(seriesName, value) {
 // renderSparkline removed: replaced with a no-op to keep callers safe
 // Render a simple line graph in a canvas for the last 10 datapoints
 function renderLineGraph(canvasId, series, color, yLabel) {
-  var canvas = document.getElementById(canvasId);
+  // If an <svg> with this id exists, render a sparkline there for crisper scaling.
+  var el = document.getElementById(canvasId);
+  var data = (series || []).slice(-10);
+  if (!data || !data.length) return;
+  if (el && el.tagName && el.tagName.toLowerCase() === 'svg') {
+    var svg = el;
+    var viewW = 320, viewH = 100;
+    svg.setAttribute('viewBox', '0 0 ' + viewW + ' ' + viewH);
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
+    if (minY === maxY) { minY = 0; maxY = maxY + 1; }
+    var pad = 12;
+    var points = data.map(function(v, i){
+      var x = pad + ((viewW-2*pad) * i/(data.length-1));
+      var y = viewH - pad - ((viewH-2*pad) * (v - minY)/(maxY - minY));
+      return [x,y];
+    });
+    var areaPts = points.map(function(p){ return p[0]+','+p[1]; }).join(' ');
+    var area = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    area.setAttribute('points', pad+','+(viewH-pad)+' '+ areaPts +' '+(viewW-pad)+','+(viewH-pad));
+    area.setAttribute('fill', color); area.setAttribute('fill-opacity', '0.08'); svg.appendChild(area);
+    var pathD = points.map(function(p,i){ return (i===0? 'M':'L') + p[0] + ' ' + p[1]; }).join(' ');
+    var path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d', pathD); path.setAttribute('stroke', color); path.setAttribute('stroke-width','2'); path.setAttribute('fill','none'); svg.appendChild(path);
+    points.forEach(function(p){ var c = document.createElementNS('http://www.w3.org/2000/svg','circle'); c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r','3'); c.setAttribute('fill', color); svg.appendChild(c); });
+    var txtMin = document.createElementNS('http://www.w3.org/2000/svg','text'); txtMin.setAttribute('x', 4); txtMin.setAttribute('y', viewH-pad); txtMin.setAttribute('fill','#666'); txtMin.setAttribute('font-size','10'); txtMin.textContent = String(Math.round(minY)); svg.appendChild(txtMin);
+    var txtMax = document.createElementNS('http://www.w3.org/2000/svg','text'); txtMax.setAttribute('x', 4); txtMax.setAttribute('y', pad+8); txtMax.setAttribute('fill','#666'); txtMax.setAttribute('font-size','10'); txtMax.textContent = String(Math.round(maxY)); svg.appendChild(txtMax);
+    return;
+  }
+  // Fallback: draw to canvas if present
+  var canvas = el && el.getContext ? el : document.getElementById(canvasId);
   if (!canvas || !canvas.getContext) return;
   var ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   var w = canvas.width, h = canvas.height;
-  var data = series.slice(-10); // last 10 points
-  if (!data.length) return;
   var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
   if (minY === maxY) { minY = 0; maxY = maxY + 1; }
   var pad = 12;
@@ -1302,13 +1330,10 @@ function renderLineGraph(canvasId, series, color, yLabel) {
     var yy = pad + ((h-2*pad) * gy/3);
     ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(w-pad, yy); ctx.stroke();
   }
-  // Axes subtle lines
   ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad); ctx.stroke();
-  // Y axis label
   ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
   ctx.fillText(yLabel, 4, pad+6);
-  // Draw line
   ctx.strokeStyle = color || '#0074d9';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -1318,7 +1343,6 @@ function renderLineGraph(canvasId, series, color, yLabel) {
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.stroke();
-  // Fill area under curve for better visibility
   ctx.globalAlpha = 0.08; ctx.fillStyle = color || '#0074d9';
   ctx.beginPath();
   for (var i=0; i<data.length; i++) {
@@ -1328,18 +1352,38 @@ function renderLineGraph(canvasId, series, color, yLabel) {
   }
   ctx.lineTo(w-pad, h-pad); ctx.lineTo(pad, h-pad); ctx.closePath(); ctx.fill();
   ctx.globalAlpha = 1.0;
-  // Draw points
   ctx.fillStyle = color || '#0074d9';
   for (var i=0; i<data.length; i++) {
     var x = pad + ((w-2*pad) * i/(data.length-1));
     var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
     ctx.beginPath(); ctx.arc(x, y, 3, 0, 2*Math.PI); ctx.fill();
   }
-  // Y axis ticks
-  ctx.fillStyle = '#666';
-  ctx.font = '10px sans-serif';
+  ctx.fillStyle = '#666'; ctx.font = '10px sans-serif';
   ctx.fillText(minY, 2, h-pad);
   ctx.fillText(maxY, 2, pad+4);
+}
+
+// Top-level reusable card renderer
+function renderCard(opts) {
+  // opts: { containerId, title, subtitle, contentHTML, smallHelp }
+  try {
+    var container = document.getElementById(opts.containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    var title = document.createElement('div'); title.style.fontWeight = '600'; title.style.marginBottom = '6px'; title.textContent = opts.title || '';
+    var wrap = document.createElement('div'); wrap.style.display = 'flex'; wrap.style.flexDirection = 'column'; wrap.style.gap = '8px';
+    if (opts.subtitle) {
+      var sub = document.createElement('div'); sub.style.fontSize='12px'; sub.style.color='#666'; sub.textContent = opts.subtitle; container.appendChild(sub);
+    }
+    container.appendChild(title);
+    if (opts.contentHTML) {
+      var content = document.createElement('div'); content.innerHTML = opts.contentHTML; wrap.appendChild(content);
+    }
+    if (opts.smallHelp) {
+      var help = document.createElement('div'); help.style.fontSize='11px'; help.style.color='#666'; help.innerHTML = opts.smallHelp; wrap.appendChild(help);
+    }
+    container.appendChild(wrap);
+  } catch(e) {}
 }
 
 // Hook into updateUI to sample stats when status payload contains them
@@ -1641,68 +1685,44 @@ function populateFetchStats(fs) {
     });
 
   // Update top header/nav indicator based on severity
-    try {
+    {
   // (status-summary card removed; fetch stats now live in the Fetch Queue tab)
       var hostEl = document.getElementById('nav-host');
       if (hostEl) {
-        var hostnameSpan = document.getElementById('hostname');
-        var hostText = hostnameSpan ? hostnameSpan.textContent : hostEl.textContent;
-        // build icon HTML
-        var iconHtml = '';
-        if (qcls === 'crit') {
-          iconHtml = '<span class="text-danger" style="margin-right:6px;"><span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span></span>';
-          hostEl.style.background = '#ffecec';
-          hostEl.classList.add('fetch-crit-blink');
-        } else if (qcls === 'warn') {
-          iconHtml = '<span class="text-warning" style="margin-right:6px;"><span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span></span>';
-          hostEl.style.background = '#fff6e5';
-          hostEl.classList.remove('fetch-crit-blink');
-        } else {
-          // clear any previous highlight
-          hostEl.style.background = '';
-          hostEl.classList.remove('fetch-crit-blink');
-        }
-        // update hostname span and optional icon wrapper (do not clobber children)
-        var prefix = '- ';
-        var hostnameSpanEl = hostEl.querySelector('#hostname');
-        if (!hostnameSpanEl) { hostnameSpanEl = document.createElement('span'); hostnameSpanEl.id = 'hostname'; hostEl.appendChild(hostnameSpanEl); }
-        hostnameSpanEl.textContent = hostText || '';
-        // manage small icon wrapper
-        if (iconHtml) {
-          var iconWrap = hostEl.querySelector('.fetch-icon');
-          if (!iconWrap) { iconWrap = document.createElement('span'); iconWrap.className = 'fetch-icon'; hostEl.insertBefore(iconWrap, hostnameSpanEl); }
-          iconWrap.innerHTML = iconHtml;
-        } else {
-          var iconWrap = hostEl.querySelector('.fetch-icon'); if (iconWrap) iconWrap.parentNode.removeChild(iconWrap);
-        }
-        hostEl.title = 'Fetch queue: queued=' + queued + ', dropped=' + dropped + ', retries=' + retries;
-        // when crit, show toast with short message
-        try {
-          var toast = document.getElementById('fetch-toast');
-          var toastMsg = document.getElementById('fetch-toast-msg');
-          if (qcls === 'crit') {
-            if (toast && toastMsg) {
-              toastMsg.textContent = 'Queued=' + queued + ', Dropped=' + dropped + ', Retries=' + retries;
-              toast.style.display = 'block';
-            }
-          } else {
-            if (toast) toast.style.display = 'none';
-          }
-        } catch(e){}
-  // Note: header-wide click removed to preserve other controls; use debug button instead
-      }
-    } catch(e) { /* ignore header update errors */ }
+      
 
-  } catch(e) { /* ignore UI errors */ }
-}
-
-function detectPlatformAndLoad() {
-  try {
-  // helper safe JSON parser
-  function safeParse(label, text) {
-    try { return JSON.parse(text); }
-    catch(e) {
-      try { console.error(label + ' JSON parse failed', e); } catch(_e) {}
+      // Render a small SVG sparkline into an <svg> element with given id
+      function renderSparkline(svgId, series, color) {
+        var svg = document.getElementById(svgId);
+        if (!svg) return;
+        var viewW = 320, viewH = 100;
+        svg.setAttribute('viewBox', '0 0 ' + viewW + ' ' + viewH);
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        var data = (series || []).slice(-10);
+        if (!data.length) return;
+        var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
+        if (minY === maxY) { minY = 0; maxY = maxY + 1; }
+        var pad = 12;
+        var points = data.map(function(v, i){
+          var x = pad + ((viewW-2*pad) * i/(data.length-1));
+          var y = viewH - pad - ((viewH-2*pad) * (v - minY)/(maxY - minY));
+          return [x,y];
+        });
+        // background polyline area
+        var areaPts = points.map(function(p){ return p[0]+','+p[1]; }).join(' ');
+        var area = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+        area.setAttribute('points', pad+','+(viewH-pad)+' '+ areaPts +' '+(viewW-pad)+','+(viewH-pad));
+        area.setAttribute('fill', color); area.setAttribute('fill-opacity', '0.08'); svg.appendChild(area);
+        // line path
+        var pathD = points.map(function(p,i){ return (i===0? 'M':'L') + p[0] + ' ' + p[1]; }).join(' ');
+        var path = document.createElementNS('http://www.w3.org/2000/svg','path');
+        path.setAttribute('d', pathD); path.setAttribute('stroke', color); path.setAttribute('stroke-width','2'); path.setAttribute('fill','none'); svg.appendChild(path);
+        // points
+        points.forEach(function(p){ var c = document.createElementNS('http://www.w3.org/2000/svg','circle'); c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r','3'); c.setAttribute('fill', color); svg.appendChild(c); });
+        // min/max labels
+        var txtMin = document.createElementNS('http://www.w3.org/2000/svg','text'); txtMin.setAttribute('x', 4); txtMin.setAttribute('y', viewH-pad); txtMin.setAttribute('fill','#666'); txtMin.setAttribute('font-size','10'); txtMin.textContent = String(Math.round(minY)); svg.appendChild(txtMin);
+        var txtMax = document.createElementNS('http://www.w3.org/2000/svg','text'); txtMax.setAttribute('x', 4); txtMax.setAttribute('y', pad+8); txtMax.setAttribute('fill','#666'); txtMax.setAttribute('font-size','10'); txtMax.textContent = String(Math.round(maxY)); svg.appendChild(txtMax);
+  }
       function extractAllTopLevelJSON(s) {
         var out = [];
         if (!s || !s.length) return out;
