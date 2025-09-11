@@ -619,10 +619,12 @@ function populateDevicesTable(devices, airos) {
   devices.forEach(function(device) {
     var tr = document.createElement('tr');
   // use global td(val, allowHtml) helper
-    // Local IP with HW Address (smaller font)
-    var localIpCell = '<div style="font-size:60%">' + (device.ipv4 || '') + '<br>' + (device.hwaddr || '') + '</div>';
-    var localIpTd = document.createElement('td');
-    localIpTd.innerHTML = localIpCell;
+  // Local IP with HW Address (smaller font) - build DOM safely
+  var localIpTd = document.createElement('td');
+  var localWrap = document.createElement('div'); localWrap.style.fontSize = '60%';
+  var ipSpan = document.createElement('div'); ipSpan.textContent = device.ipv4 || '';
+  var hwSpan = document.createElement('div'); hwSpan.textContent = device.hwaddr || '';
+  localWrap.appendChild(ipSpan); localWrap.appendChild(hwSpan); localIpTd.appendChild(localWrap);
     tr.appendChild(localIpTd);
     tr.appendChild(td(device.hostname));
     tr.appendChild(td(device.product));
@@ -669,7 +671,7 @@ function populateDevicesTable(devices, airos) {
   if (warn_frequency && table) {
     var warn = document.createElement('div');
     warn.className = 'alert alert-warning';
-    warn.innerHTML = 'Warnung: Frequenzüberlappung erkannt!';
+    warn.textContent = 'Warnung: Frequenzüberlappung erkannt!';
     table.parentNode.insertBefore(warn, table);
   }
   // attach header sort clicks to sort the provided devices array and re-render
@@ -814,7 +816,7 @@ function populateOlsrLinksTable(links) {
       badgeSpan.style.marginLeft = '6px';
       badgeSpan.textContent = 'R:' + (l.routes || '0');
       // append without clobbering existing content
-      try { routesCell.appendChild(badgeSpan); } catch(e) { /* fallback to innerHTML */ routesCell.innerHTML = (routesCell.innerHTML || '') + ('<span class="metric-badge routes small" style="margin-left:6px;">R:'+ (l.routes || '0') +'</span>'); }
+  try { routesCell.appendChild(badgeSpan); } catch(e) { /* fallback: append text node */ try { var fb = document.createElement('span'); fb.className='metric-badge routes small'; fb.style.marginLeft='6px'; fb.textContent = 'R:' + (l.routes || '0'); routesCell.appendChild(fb); } catch(e2){} }
     } catch(e){}
     tr.appendChild(routesCell);
     // nodes column: show numeric count and tooltip with names (avoid duplicating long text in table)
@@ -1347,11 +1349,14 @@ function renderLineGraph(canvasId, series, color, yLabel) {
     var viewW = 320, viewH = 100;
     svg.setAttribute('viewBox', '0 0 ' + viewW + ' ' + viewH);
     while (svg.firstChild) svg.removeChild(svg.firstChild);
-    var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
+    // normalize numeric values and guard against degenerate series (length===1)
+    var norm = data.map(function(v){ return Number(v) || 0; });
+    var minY = Math.min.apply(null, norm), maxY = Math.max.apply(null, norm);
     if (minY === maxY) { minY = 0; maxY = maxY + 1; }
     var pad = 12;
-    var points = data.map(function(v, i){
-      var x = pad + ((viewW-2*pad) * i/(data.length-1));
+    var denomX = (norm.length - 1) || 1;
+    var points = norm.map(function(v, i){
+      var x = pad + ((viewW-2*pad) * i/denomX);
       var y = viewH - pad - ((viewH-2*pad) * (v - minY)/(maxY - minY));
       return [x,y];
     });
@@ -1373,7 +1378,8 @@ function renderLineGraph(canvasId, series, color, yLabel) {
   var ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   var w = canvas.width, h = canvas.height;
-  var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
+  var norm = data.map(function(v){ return Number(v) || 0; });
+  var minY = Math.min.apply(null, norm), maxY = Math.max.apply(null, norm);
   if (minY === maxY) { minY = 0; maxY = maxY + 1; }
   var pad = 12;
   // Draw background grid lines
@@ -1390,25 +1396,26 @@ function renderLineGraph(canvasId, series, color, yLabel) {
   ctx.strokeStyle = color || '#0074d9';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  for (var i=0; i<data.length; i++) {
-    var x = pad + ((w-2*pad) * i/(data.length-1));
-    var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
+  var denomX2 = (norm.length - 1) || 1;
+  for (var i=0; i<norm.length; i++) {
+    var x = pad + ((w-2*pad) * i/denomX2);
+    var y = h-pad - ((h-2*pad) * (norm[i]-minY)/(maxY-minY));
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.stroke();
   ctx.globalAlpha = 0.08; ctx.fillStyle = color || '#0074d9';
   ctx.beginPath();
-  for (var i=0; i<data.length; i++) {
-    var x = pad + ((w-2*pad) * i/(data.length-1));
-    var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
+  for (var i=0; i<norm.length; i++) {
+    var x = pad + ((w-2*pad) * i/denomX2);
+    var y = h-pad - ((h-2*pad) * (norm[i]-minY)/(maxY-minY));
     if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
   }
   ctx.lineTo(w-pad, h-pad); ctx.lineTo(pad, h-pad); ctx.closePath(); ctx.fill();
   ctx.globalAlpha = 1.0;
   ctx.fillStyle = color || '#0074d9';
   for (var i=0; i<data.length; i++) {
-    var x = pad + ((w-2*pad) * i/(data.length-1));
-    var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
+  var x = pad + ((w-2*pad) * i/denomX2);
+  var y = h-pad - ((h-2*pad) * (norm[i]-minY)/(maxY-minY));
     ctx.beginPath(); ctx.arc(x, y, 3, 0, 2*Math.PI); ctx.fill();
   }
   ctx.fillStyle = '#666'; ctx.font = '10px sans-serif';
@@ -1648,7 +1655,7 @@ function populateFetchStats(fs) {
         // left column (badges + progress)
         var left = document.createElement('div'); left.style.display='inline-block'; left.style.width='62%'; left.style.verticalAlign='top';
         var badges = document.createElement('div'); badges.style.marginBottom='8px';
-        function mkBadgeNode(label, val, cls) { var sp=document.createElement('span'); sp.className='fetch-badge '+(cls||''); sp.style.marginRight='6px'; sp.innerHTML = label+': <strong style="margin-left:6px;">'+String(val)+'</strong>'; return sp; }
+  function mkBadgeNode(label, val, cls) { var sp=document.createElement('span'); sp.className='fetch-badge '+(cls||''); sp.style.marginRight='6px'; var lbl=document.createElement('span'); lbl.textContent = label + ':'; var strong=document.createElement('strong'); strong.style.marginLeft='6px'; strong.textContent = String(val); sp.appendChild(lbl); sp.appendChild(strong); return sp; }
         var qcls = queued >= q_crit ? 'crit' : (queued >= q_warn ? 'warn' : '');
         var dcls = dropped >= d_warn ? 'warn' : '';
         badges.appendChild(mkBadgeNode('Queued', queued, qcls));
@@ -1675,7 +1682,7 @@ function populateFetchStats(fs) {
         table.appendChild(tb); right.appendChild(table); body.appendChild(right);
 
         // headerRight controls (preserve element IDs for existing wiring)
-        var refreshBtn = document.createElement('button'); refreshBtn.id='fetch-stats-refresh'; refreshBtn.className='btn btn-xs btn-default'; refreshBtn.innerHTML = '<i class="glyphicon glyphicon-refresh"></i>';
+  var refreshBtn = document.createElement('button'); refreshBtn.id='fetch-stats-refresh'; refreshBtn.className='btn btn-xs btn-default'; var refreshI=document.createElement('i'); refreshI.className='glyphicon glyphicon-refresh'; refreshBtn.appendChild(refreshI);
         var debugBtn = document.createElement('button'); debugBtn.id='fetch-stats-debug'; debugBtn.className='btn btn-xs btn-default'; debugBtn.textContent='Debug';
         var sel = document.createElement('select'); sel.id='fetch-stats-interval'; sel.className='input-sm form-control'; sel.style.width='120px'; sel.style.display='inline-block'; sel.style.marginRight='6px';
         [['0','Auto off'],['5000','5s'],['10000','10s'],['15000','15s'],['30000','30s'],['60000','60s'],['120000','2m'],['300000','5m']].forEach(function(o){ var opt=document.createElement('option'); opt.value=o[0]; opt.textContent=o[1]; sel.appendChild(opt); });
@@ -1683,7 +1690,7 @@ function populateFetchStats(fs) {
         headerRight.appendChild(refreshBtn); headerRight.appendChild(debugBtn); headerRight.appendChild(sel); headerRight.appendChild(autoBtn);
 
         // thresholds footer
-        var thr = document.createElement('div'); thr.className='small-muted'; thr.style.marginTop='8px'; thr.innerHTML = 'Thresholds: warn='+q_warn+' &nbsp; crit='+q_crit+' &nbsp; dropped_warn='+d_warn; body.appendChild(thr);
+  var thr = document.createElement('div'); thr.className='small-muted'; thr.style.marginTop='8px'; thr.textContent = 'Thresholds: warn=' + q_warn + '  crit=' + q_crit + '  dropped_warn=' + d_warn; body.appendChild(thr);
       }
     });
 
@@ -2555,6 +2562,22 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch(e) {}
   }
 
+  // Try to detect platform-specific endpoints and perform any platform-specific
+  // initialization. This was previously missing and caused a runtime error.
+  function detectPlatformAndLoad() {
+    try {
+      // Simple heuristic: if /platform.json exists, fetch it to learn capabilities
+      fetch('/platform.json', {cache:'no-store'}).then(function(r){ if(!r || !r.ok) return; return r.json(); }).then(function(p){
+        try {
+          window._platform_info = p || {};
+          // if a platform-specific loader exists globally (e.g. loadForUbiquiti), call it
+          if (window.loadForPlatform && typeof window.loadForPlatform === 'function') {
+            try { window.loadForPlatform(window._platform_info); } catch(e){}
+          }
+        } catch(e){}
+      }).catch(function(){ /* ignore - no platform.json available */ });
+    } catch(e){}
+  }
   detectPlatformAndLoad();
   try { _startStatsPoll(); } catch(e) {}
   // Badge interactivity: clicking a badge forces a stats refresh and shows timestamp
@@ -2975,7 +2998,12 @@ function populateNavHost(host, ip) {
         // insert before hostnameSpan if possible
         el.insertBefore(iconWrap, hostnameSpan);
       }
-      iconWrap.innerHTML = iconHtml;
+      // replace raw HTML insertion with safe DOM parse via a template
+      try {
+        iconWrap.innerHTML = '';
+        var tmp = document.createElement('div'); tmp.innerHTML = iconHtml || '';
+        while (tmp.firstChild) iconWrap.appendChild(tmp.firstChild);
+      } catch(e) { iconWrap.textContent = iconHtml || ''; }
     } else {
       var iconWrapRem = el.querySelector('.fetch-icon'); if (iconWrapRem) iconWrapRem.parentNode.removeChild(iconWrapRem);
     }
@@ -3112,7 +3140,7 @@ function renderConnectionsTable(c, nodedb) {
 }
 
 function renderVersionsPanel(v) {
-  var wrap = document.getElementById('versions-wrap'); if(!wrap) return; wrap.innerHTML='';
+  var wrap = document.getElementById('versions-wrap'); if(!wrap) return; while(wrap.firstChild) wrap.removeChild(wrap.firstChild);
   if(!v) {
     var alert = document.createElement('div'); alert.className = 'alert alert-warning';
     var icon = document.createElement('i'); icon.className = 'glyphicon glyphicon-exclamation-sign'; alert.appendChild(icon);
@@ -3235,7 +3263,7 @@ function renderVersionsPanel(v) {
   try {
     if (globalHeader) {
       // Clear any previous content and append the header card
-      globalHeader.innerHTML = '';
+  while(globalHeader.firstChild) globalHeader.removeChild(globalHeader.firstChild);
       globalHeader.appendChild(headerCard);
     } else {
       // Fallback: keep header in the versions container if placeholder is missing
@@ -3312,7 +3340,8 @@ function renderVersionsPanel(v) {
 
   var rawDataHeader = document.createElement('div');
   rawDataHeader.className = 'panel-heading';
-  rawDataHeader.innerHTML = '<h4 class="panel-title"><a data-toggle="collapse" href="#rawVersionsData"><i class="glyphicon glyphicon-chevron-down"></i> Raw Version Data</a></h4>';
+  rawDataHeader.innerHTML = '';
+  var h4 = document.createElement('h4'); h4.className = 'panel-title'; var a = document.createElement('a'); a.setAttribute('data-toggle','collapse'); a.setAttribute('href','#rawVersionsData'); var i = document.createElement('i'); i.className='glyphicon glyphicon-chevron-down'; a.appendChild(i); a.appendChild(document.createTextNode(' Raw Version Data')); h4.appendChild(a); rawDataHeader.appendChild(h4);
   rawDataSection.appendChild(rawDataHeader);
 
   var rawDataBody = document.createElement('div');
@@ -3431,7 +3460,10 @@ function populateTracerouteTable(tracerouteData) {
         if (hnObj) {
           // prefer the human name field (.n), then hostname/h, then fallback to string
           var resolvedName = (typeof hnObj === 'string') ? hnObj : (hnObj.n || hnObj.hostname || hnObj.h || null);
-          if (resolvedName) hostnameCell.innerHTML = '<a href="https://' + resolvedName + '" target="_blank">' + resolvedName + '</a>';
+          if (resolvedName) {
+            hostnameCell.textContent = '';
+            var a = document.createElement('a'); a.href = 'https://' + resolvedName; a.target = '_blank'; a.textContent = resolvedName; hostnameCell.appendChild(a);
+          }
         }
       } catch(e){}
     }
@@ -3479,7 +3511,8 @@ function populateTracerouteTable(tracerouteData) {
                   if (obj) {
                     var name = (typeof obj === 'string') ? obj : (obj.n || obj.hostname || obj.h || null);
                     if (name) {
-                      hostCell.innerHTML = '<a href="https://' + name + '" target="_blank">' + name + '</a>';
+                      hostCell.textContent = '';
+                      var a2 = document.createElement('a'); a2.href = 'https://' + name; a2.target = '_blank'; a2.textContent = name; hostCell.appendChild(a2);
                     }
                   }
                 }
