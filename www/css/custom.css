@@ -181,3 +181,8 @@
 .footer-latency-ok { color: #2ecc71; }
 .footer-latency-warn { color: #f0ad4e; }
 .footer-latency-bad { color: #e74c3c; }
+
+/* Trend indicators for statistics tab */
+.trend-up { color: #2ecc71; font-weight:700; }
+.trend-down { color: #e74c3c; font-weight:700; }
+.trend-flat { color: #999; }

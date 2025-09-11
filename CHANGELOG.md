@@ -39,3 +39,6 @@ Usage notes:
 - fix: Silence compiler warnings and free temporary gw_stats allocation
 - perf: Replace ad-hoc lookups with consistent node_db resolution for both routing-table fan-out and topology parsing
 
+- feature: Add PlParam `log_request_debug` and env var `OLSRD_STATUS_LOG_REQUEST_DEBUG` (alias `OLSRD_LOG_REQ_DBG`) to enable concise per-request debug logging for UI fetch endpoints (default off).
+- ui: Redesigned Statistics tab (improved graphs and summaries; removed small 'dot' indicators) - work-in-progress
+

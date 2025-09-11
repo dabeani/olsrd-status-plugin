@@ -4589,7 +4589,9 @@ int olsrd_plugin_init(void) {
 
   /* request debug logging toggle via env (0=off,1=on) */
   if (!g_cfg_log_request_debug_set) {
-    const char *env_rd = getenv("OLSRD_STATUS_LOG_REQUEST_DEBUG");
+  /* Check full-name env var first, then accept a shorter alias OLSRD_LOG_REQ_DBG for convenience */
+  const char *env_rd = getenv("OLSRD_STATUS_LOG_REQUEST_DEBUG");
+  if ((!env_rd || !env_rd[0]) && getenv("OLSRD_LOG_REQ_DBG")) env_rd = getenv("OLSRD_LOG_REQ_DBG");
     if (env_rd && env_rd[0]) {
       char *endptr = NULL; long v = strtol(env_rd, &endptr, 10);
       if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {

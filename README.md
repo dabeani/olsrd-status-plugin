@@ -192,6 +192,14 @@ Additional runtime tuning (PlParam names available in `olsrd.conf` plugin block)
 export OLSRD_STATUS_FETCH_QUEUE_MAX=8
 ```
 
+* `log_request_debug` (PlParam) / `OLSRD_STATUS_LOG_REQUEST_DEBUG` or short alias `OLSRD_LOG_REQ_DBG` (env) – optional toggle (0/1) to emit concise per-request debug messages for some endpoints (useful to trace UI fetches like `/status/stats`). Default: 0 (off).
+
+Example (env):
+
+```bash
+export OLSRD_LOG_REQ_DBG=1
+```
+
 * `OLSRD_STATUS_FETCH_RETRIES` / PlParam `fetch_retries` – number of retry attempts the background fetch worker will make on transient failures. Default: 3.
 
 ```bash

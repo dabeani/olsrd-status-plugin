@@ -1360,15 +1360,43 @@ updateUI = function(data) {
         // Draw graphs
         renderLineGraph('routes-graph', routesArr, '#0074d9', 'Routes');
         renderLineGraph('nodes-graph', nodesArr, '#2ecc40', 'Nodes');
-        // set live-dot to updating briefly
-        var routesDot = document.getElementById('routes-live'); if (routesDot) { routesDot.classList.remove('live-dot-stale'); routesDot.classList.add('live-dot-updating'); clearTimeout(routesDot._staleTO); routesDot._staleTO = setTimeout(function(){ try{ routesDot.classList.remove('live-dot-updating'); routesDot.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
-        var nodesDot = document.getElementById('nodes-live'); if (nodesDot) { nodesDot.classList.remove('live-dot-stale'); nodesDot.classList.add('live-dot-updating'); clearTimeout(nodesDot._staleTO); nodesDot._staleTO = setTimeout(function(){ try{ nodesDot.classList.remove('live-dot-updating'); nodesDot.classList.add('live-dot-stale'); }catch(e){} }, 2000); }
-        // update small timestamp next to live dots (human and title tooltip)
+        // compute min/avg/max and trend for routes and nodes
         try {
-          var now = new Date();
-          var iso = now.toLocaleTimeString();
-          var routesTs = document.getElementById('routes-ts'); if (routesTs) { routesTs.textContent = iso; routesTs.title = now.toString(); }
-          var nodesTs = document.getElementById('nodes-ts'); if (nodesTs) { nodesTs.textContent = iso; nodesTs.title = now.toString(); }
+          function statsFromArr(arr) {
+            if (!arr || !arr.length) return { min:0, max:0, avg:0, trend:0 };
+            var min = Math.min.apply(null, arr);
+            var max = Math.max.apply(null, arr);
+            var sum = arr.reduce(function(a,b){return a+(Number(b)||0);},0);
+            var avg = sum / arr.length;
+            var trend = 0;
+            if (arr.length >= 2) {
+              var last = Number(arr[arr.length-1])||0;
+              var prior = Number(arr[Math.max(0, arr.length-6)])||0; // compare against ~6 samples ago
+              trend = last - prior;
+            }
+            return { min: Math.round(min), max: Math.round(max), avg: Math.round(avg*10)/10, trend: Math.round(trend) };
+          }
+          var rStats = statsFromArr(routesArr.slice(-10));
+          var nStats = statsFromArr(nodesArr.slice(-10));
+          var routesMinEl = document.getElementById('routes-min'); if (routesMinEl) routesMinEl.textContent = String(rStats.min);
+          var routesAvgEl = document.getElementById('routes-avg'); if (routesAvgEl) routesAvgEl.textContent = String(rStats.avg);
+          var routesMaxEl = document.getElementById('routes-max'); if (routesMaxEl) routesMaxEl.textContent = String(rStats.max);
+          var nodesMinEl = document.getElementById('nodes-min'); if (nodesMinEl) nodesMinEl.textContent = String(nStats.min);
+          var nodesAvgEl = document.getElementById('nodes-avg'); if (nodesAvgEl) nodesAvgEl.textContent = String(nStats.avg);
+          var nodesMaxEl = document.getElementById('nodes-max'); if (nodesMaxEl) nodesMaxEl.textContent = String(nStats.max);
+          // trend arrows
+          var routesTrendEl = document.getElementById('routes-trend'); if (routesTrendEl) {
+            routesTrendEl.className = '';
+            if (rStats.trend > 0) { routesTrendEl.textContent = '▲ ' + String(rStats.trend); routesTrendEl.classList.add('trend-up'); }
+            else if (rStats.trend < 0) { routesTrendEl.textContent = '▼ ' + String(Math.abs(rStats.trend)); routesTrendEl.classList.add('trend-down'); }
+            else { routesTrendEl.textContent = '◦'; routesTrendEl.classList.add('trend-flat'); }
+          }
+          var nodesTrendEl = document.getElementById('nodes-trend'); if (nodesTrendEl) {
+            nodesTrendEl.className = '';
+            if (nStats.trend > 0) { nodesTrendEl.textContent = '▲ ' + String(nStats.trend); nodesTrendEl.classList.add('trend-up'); }
+            else if (nStats.trend < 0) { nodesTrendEl.textContent = '▼ ' + String(Math.abs(nStats.trend)); nodesTrendEl.classList.add('trend-down'); }
+            else { nodesTrendEl.textContent = '◦'; nodesTrendEl.classList.add('trend-flat'); }
+          }
         } catch(e) {}
       } catch(e) {}
   } catch(e) {}

@@ -143,8 +143,12 @@
                 <canvas id="nodes-graph" width="320" height="100" style="background:#fafafa; border:1px solid #eee; border-radius:4px;"></canvas>
                 <div style="font-size:12px; color:#666;">X: Last 10 samples &nbsp; Y: Node count</div>
                 <div style="font-size:11px; color:#333;">Current: <span id="nodes-cur">-</span></div>
-                <span class="spark-ts" id="nodes-ts" title="">-</span>
-                <div id="nodes-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                <div style="display:flex; gap:12px; align-items:center;">
+                  <div style="font-size:11px; color:#333;">Min: <span id="nodes-min">-</span></div>
+                  <div style="font-size:11px; color:#333;">Avg: <span id="nodes-avg">-</span></div>
+                  <div style="font-size:11px; color:#333;">Max: <span id="nodes-max">-</span></div>
+                  <div id="nodes-trend" style="font-size:14px; color:#666;">-</div>
+                </div>
               </div>
             </div>
             <div id="stats-graph-routes" style="flex:1; min-width:220px;">
@@ -153,8 +157,12 @@
                 <canvas id="routes-graph" width="320" height="100" style="background:#fafafa; border:1px solid #eee; border-radius:4px;"></canvas>
                 <div style="font-size:12px; color:#666;">X: Last 10 samples &nbsp; Y: Route count</div>
                 <div style="font-size:11px; color:#333;">Current: <span id="routes-cur">-</span></div>
-                <span class="spark-ts" id="routes-ts" title="">-</span>
-                <div id="routes-live" style="width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 4px rgba(0,0,0,0.1);"></div>
+                <div style="display:flex; gap:12px; align-items:center;">
+                  <div style="font-size:11px; color:#333;">Min: <span id="routes-min">-</span></div>
+                  <div style="font-size:11px; color:#333;">Avg: <span id="routes-avg">-</span></div>
+                  <div style="font-size:11px; color:#333;">Max: <span id="routes-max">-</span></div>
+                  <div id="routes-trend" style="font-size:14px; color:#666;">-</div>
+                </div>
               </div>
             </div>
           </div>
