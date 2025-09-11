@@ -804,8 +804,12 @@ function populateOlsrLinksTable(links) {
     var parts = [];
     if (link.node_names && typeof link.node_names === 'string') parts = link.node_names.split(',').map(function(s){ return s.trim(); }).filter(function(x){ return x.length; });
     var resolved = null; var reason = 'none';
-    // 1) Prefer explicit node_names that exactly match nodedb entries mapped to this remote
-    if (parts.length && window._nodedb_cache) {
+    // 1) Try resolving by IP/CIDR via nodedb first (most authoritative)
+    if (typeof getNodeNameForIp === 'function') {
+      try { var nn = getNodeNameForIp(remote); if (nn) { resolved = nn; reason = 'nodedb-cidr-or-key'; } } catch(e){}
+    }
+    // 2) Prefer explicit node_names that exactly match nodedb entries mapped to this remote
+    if (!resolved && parts.length && window._nodedb_cache) {
       for (var i=0;i<parts.length;i++) {
         var pname = parts[i];
         var found = false;
@@ -818,13 +822,16 @@ function populateOlsrLinksTable(links) {
         if (found) { resolved = pname; reason = 'node_names->nodedb-match'; break; }
       }
     }
-    // 2) If not found, try resolving by IP/CIDR via nodedb
-    if (!resolved && typeof getNodeNameForIp === 'function') {
-      try { var nn = getNodeNameForIp(remote); if (nn) { resolved = nn; reason = 'nodedb-cidr-or-key'; } } catch(e){}
+    // 3) Check for explicit link fields that often carry node names
+    if (!resolved) {
+      var altFields = ['remote_node','remote_node_name','remote_name','node','node_name','name'];
+      for (var af=0; af<altFields.length; af++) {
+        var fld = altFields[af]; if (link[fld]) { resolved = link[fld]; reason = 'alt-field-'+fld; break; }
+      }
     }
-    // 3) If still not resolved, prefer first node_names entry
+    // 4) If still not resolved, prefer first node_names entry
     if (!resolved && parts.length) { resolved = parts[0]; reason = 'first-node_names-fallback'; }
-    // 4) Prefer remote_host if available
+    // 5) Prefer remote_host if available
     if (!resolved && link.remote_host) { resolved = link.remote_host; reason = 'remote_host-fallback'; }
     // 5) final fallback: remote IP string
     if (!resolved) { resolved = remote; reason = 'ip-fallback'; }

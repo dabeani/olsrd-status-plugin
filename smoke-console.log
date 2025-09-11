@@ -6,7 +6,7 @@
       "text": "Tab switched to: #tab-status",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2437,
+        "lineNumber": 2441,
         "columnNumber": 14
       }
     },
@@ -16,7 +16,7 @@
       "text": "Active pane: tab-status display: block classes: tab-pane active",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2438,
+        "lineNumber": 2442,
         "columnNumber": 14
       }
     },
@@ -26,7 +26,7 @@
       "text": "Loading content for tab: #tab-status",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2486,
+        "lineNumber": 2490,
         "columnNumber": 12
       }
     },
@@ -36,7 +36,7 @@
       "text": "Loading status tab content...",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2518,
+        "lineNumber": 2522,
         "columnNumber": 16
       }
     },
@@ -46,7 +46,7 @@
       "text": "Fetching /status/lite API...",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2522,
+        "lineNumber": 2526,
         "columnNumber": 20
       }
     },
@@ -56,7 +56,7 @@
       "text": "ensureTraceroutePreloaded: start",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2156,
+        "lineNumber": 2160,
         "columnNumber": 18
       }
     },
@@ -66,7 +66,7 @@
       "text": "Status data received: JSHandle@array",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2523,
+        "lineNumber": 2527,
         "columnNumber": 91
       }
     }
@@ -79,7 +79,7 @@
         "1",
         "<a href=\"https://193.238.156.86\" target=\"_blank\">193.238.156.86</a>",
         "<a href=\"https://ge2-rn01falke.falke-bb.wien.funkfeuer.at\" target=\"_blank\">ge2-rn01falke.falke-bb.wien.funkfeuer.at</a>",
-        "0.287ms"
+        "0.239ms"
       ]
     ],
     "olsrLinks": []

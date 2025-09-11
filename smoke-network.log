@@ -149,14 +149,14 @@
   },
   {
     "type": "response",
-    "url": "http://193.238.158.74/status/traceroute",
+    "url": "http://193.238.158.74/status/lite",
     "status": 200,
     "method": "GET",
     "resourceType": "fetch"
   },
   {
     "type": "response",
-    "url": "http://193.238.158.74/status/lite",
+    "url": "http://193.238.158.74/status/traceroute",
     "status": 200,
     "method": "GET",
     "resourceType": "fetch"

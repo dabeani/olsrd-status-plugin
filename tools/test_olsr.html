@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>OLSR Links Test</title>
+<style>table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px}</style>
+</head><body>
+<table id="olsrLinksTable"><thead><tr><th>Intf</th><th>Local</th><th>Remote</th><th>Remote Host</th><th>Node</th><th>LQ</th><th>NLQ</th><th>Cost</th><th>ETX</th><th>Routes</th><th>Nodes</th><th>Actions</th></tr></thead>
+<tbody></tbody></table>
+
+<script src="../www/js/app.js"></script>
+<script>
+  // sample nodedb mapping to exercise resolution logic
+  window._nodedb_cache = {
+    "198.51.100.5": { n: "NodeB", h: "198.51.100.5" },
+    "192.0.2.0/24": { n: "NodeA" },
+    "10.0.0.1": { n: "NodeC", host: "router.local" }
+  };
+
+  // sample links to reproduce edge cases
+  var sampleLinks = [
+    { intf: 'eth0', local: '10.0.0.2', remote: '198.51.100.5', remote_host: '', node_names: 'NodeB,OtherB', lq: '1', nlq: '1', cost: '100' },
+    { intf: 'wlan0', local: '10.0.0.2', remote: '192.0.2.45', remote_host: '', node_names: 'OtherA,NodeA', lq: '0.9', nlq: '0.9', cost: '150' },
+    { intf: 'eth1', local: '10.0.0.2', remote: '203.0.113.1', remote_host: 'host.example', node_names: '', lq: '0.8', nlq: '0.8', cost: '200' }
+  ];
+
+  // run the population and print table as JSON
+  try {
+    populateOlsrLinksTable(sampleLinks);
+    var rows = Array.from(document.querySelectorAll('#olsrLinksTable tbody tr'));
+    var out = rows.map(function(r){ return Array.from(r.querySelectorAll('td')).map(function(td){ return td.innerText.trim(); }); });
+    console.log('TEST_RESULT_TABLE', JSON.stringify(out));
+  } catch (e) { console.error('TEST_ERROR', e && e.stack ? e.stack : e); }
+</script>
+</body></html>
