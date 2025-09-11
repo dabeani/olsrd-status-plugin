@@ -151,6 +151,8 @@ static int g_cfg_fetch_log_queue_set = 0;
 /* Optional PlParam/env to force-enable fetch queue logging even when otherwise disabled */
 static int g_fetch_log_force = 0;
 static int g_cfg_fetch_log_force_set = 0;
+/* Allow ARP fallback when explicitly enabled via env/PlParam. Default: 0 (disabled) */
+static int g_allow_arp_fallback = 0;
 /* debug toggle: when set, emit extra per-request debug lines for specific endpoints (env/plugin param) */
 int g_log_request_debug __attribute__((visibility("default"))) = 0; /* default: off */
 static int g_cfg_log_request_debug_set = 0;
@@ -268,6 +270,18 @@ static int endpoint_coalesce_try_start(endpoint_coalesce_t *e, char **out, size_
       return 1;
     }
   }
+
+  /* ARP fallback opt-in via env (0=off,1=on) */
+  {
+    const char *env_arp = getenv("OLSRD_STATUS_ALLOW_ARP_FALLBACK");
+    if (env_arp && env_arp[0]) {
+      char *endptr = NULL; long v = strtol(env_arp, &endptr, 10);
+      if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {
+        g_allow_arp_fallback = (int)v;
+        fprintf(stderr, "[status-plugin] setting allow_arp_fallback from env: %d\n", g_allow_arp_fallback);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_ALLOW_ARP_FALLBACK value: %s (ignored)\n", env_arp);
+    }
+  }
   if (e->busy) {
     while (e->busy) pthread_cond_wait(&e->cv, &e->m);
     if (e->cached && e->cached_len > 0 && (time(NULL) - e->ts) <= e->ttl) {
@@ -379,7 +393,7 @@ static int g_devices_worker_running = 0;
 /* Forward declarations for device discovery helpers used by background worker */
 static int ubnt_discover_output(char **out, size_t *outlen);
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen);
-static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len);
+/* helper removed: transform_devices_to_legacy no longer used */
 
 /* Forward declarations for helpers used by fetch worker */
 static void get_primary_ipv4(char *out, size_t outlen);
@@ -864,7 +878,7 @@ static int h_devices_json(http_request_t *r);
 /* Forward declarations for device discovery helpers used by background worker */
 static int ubnt_discover_output(char **out, size_t *outlen);
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen);
-static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len);
+/* forward declaration removed: transform_devices_to_legacy is deleted */
 
 /* helper: return 1 if buffer contains any non-whitespace byte */
 static int buffer_has_content(const char *b, size_t n) {
@@ -1295,80 +1309,7 @@ static int extract_json_value(const char *buf, const char *key, char **out, size
  * Input: devices_json (string containing JSON array of objects)
  * Output: out (malloc'ed JSON array string) and out_len
  */
-static int transform_devices_to_legacy(const char *devices_json, char **out, size_t *out_len) {
-  if (!devices_json || !out) return -1;
-  const char *p = strchr(devices_json, '[');
-  if (!p) p = devices_json;
-  const char *end = devices_json + strlen(devices_json);
-  /* allocate output buffer */
-  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf) return -1; buf[0]=0;
-  /* start array */
-    int first = 1; if (json_buf_append(&buf, &len, &cap, "[") < 0) { free(buf); return -1; }
-  const char *q = p;
-  while (q && q < end) {
-    /* find next object */
-    const char *obj = strchr(q, '{'); if (!obj) break;
-    const char *cur = obj+1; int depth = 1;
-    while (cur < end && depth>0) { if (*cur=='{') depth++; else if (*cur=='}') depth--; cur++; }
-    if (depth!=0) break; /* malformed */
-    size_t objlen = (size_t)(cur - obj);
-    /* create a temporary null-terminated object string */
-    char *objbuf = malloc(objlen+1); if(!objbuf) { free(buf); return -1; }
-    memcpy(objbuf, obj, objlen); objbuf[objlen]=0;
-   /* extract relevant fields. find_json_string_value returns pointers INTO objbuf (not malloc'd),
-     so copy each found slice into a strdup'd buffer we own and can free safely. */
-   char *hw = NULL; size_t hlen=0; char *ipv4 = NULL; size_t iplen=0; char *firm = NULL; size_t flen=0;
-   char *host = NULL; size_t hlo=0; char *prod = NULL; size_t pl=0; char *upt = NULL; size_t uln=0; char *essid = NULL; size_t esn=0;
-   char *tmp = NULL; size_t tlen = 0;
-   if (find_json_string_value(objbuf, "hwaddr", &tmp, &tlen)) { hw = strndup(tmp, tlen); hlen = tlen; }
-   if (find_json_string_value(objbuf, "ipv4", &tmp, &tlen)) { ipv4 = strndup(tmp, tlen); iplen = tlen; }
-   /* try both firmware and fwversion */
-   if (find_json_string_value(objbuf, "fwversion", &tmp, &tlen)) { firm = strndup(tmp, tlen); flen = tlen; }
-   else if (find_json_string_value(objbuf, "firmware", &tmp, &tlen)) { firm = strndup(tmp, tlen); flen = tlen; }
-   if (find_json_string_value(objbuf, "hostname", &tmp, &tlen)) { host = strndup(tmp, tlen); hlo = tlen; }
-   if (find_json_string_value(objbuf, "product", &tmp, &tlen)) { prod = strndup(tmp, tlen); pl = tlen; }
-   if (find_json_string_value(objbuf, "uptime", &tmp, &tlen)) { upt = strndup(tmp, tlen); uln = tlen; }
-   if (find_json_string_value(objbuf, "essid", &tmp, &tlen)) { essid = strndup(tmp, tlen); esn = tlen; }
-
-  /* Build one legacy device object */
-  if (!first) json_buf_append(&buf, &len, &cap, ",");
-  first = 0;
-  /* addresses array: include explicit addr/type and hwaddr in a single entry */
-  json_buf_append(&buf, &len, &cap, "{");
-  /* addresses */
-  json_buf_append(&buf, &len, &cap, "\"addresses\":[{");
-  if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"addr\":\"%.*s\",\"type\":\"ipv4\",", (int)iplen, ipv4);
-  else json_buf_append(&buf, &len, &cap, "\"addr\":\"\",\"type\":\"ipv4\",");
-  if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\"", (int)hlen, hw);
-  else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\"");
-  json_buf_append(&buf, &len, &cap, "}],");
-    /* copy common shallow fields */
-    if (essid && esn>0) json_buf_append(&buf, &len, &cap, "\"essid\":\"%.*s\",", (int)esn, essid); else json_buf_append(&buf, &len, &cap, "\"essid\":\"\",");
-    if (firm && flen>0) json_buf_append(&buf, &len, &cap, "\"fwversion\":\"%.*s\",", (int)flen, firm); else json_buf_append(&buf, &len, &cap, "\"fwversion\":\"\",");
-    if (host && hlo>0) json_buf_append(&buf, &len, &cap, "\"hostname\":\"%.*s\",", (int)hlo, host); else json_buf_append(&buf, &len, &cap, "\"hostname\":\"\",");
-    if (hw && hlen>0) json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"%.*s\",", (int)hlen, hw); else json_buf_append(&buf, &len, &cap, "\"hwaddr\":\"\",");
-    if (ipv4 && iplen>0) json_buf_append(&buf, &len, &cap, "\"ipv4\":\"%.*s\",", (int)iplen, ipv4); else json_buf_append(&buf, &len, &cap, "\"ipv4\":\"\",");
-    if (prod && pl>0) json_buf_append(&buf, &len, &cap, "\"product\":\"%.*s\",", (int)pl, prod); else json_buf_append(&buf, &len, &cap, "\"product\":\"\",");
-    /* uptime numeric fallback */
-    int ui = 0; if (upt && uln>0) { ui = atoi(upt); }
-    json_buf_append(&buf, &len, &cap, "\"uptime\":%d", ui);
-    json_buf_append(&buf, &len, &cap, "}");
-
-  /* cleanup */
-  if (objbuf) free(objbuf);
-  if (hw) free(hw);
-  if (ipv4) free(ipv4);
-  if (firm) free(firm);
-  if (host) free(host);
-  if (prod) free(prod);
-  if (upt) free(upt);
-  if (essid) free(essid);
-
-    q = cur;
-  }
-  json_buf_append(&buf, &len, &cap, "]");
-  *out = buf; if (out_len) *out_len = len; return 0;
-}
+/* transform_devices_to_legacy definition removed */
 
 
 /* Extract twoHopNeighborCount (or linkcount as last resort) for a given neighbor IP from neighbors section */
@@ -3175,8 +3116,10 @@ static int h_status_lite(http_request_t *r) {
       }
       free(ud); ud = NULL; udn = 0;
     }
-    if (devices_from_arp_json(&arp, &arpn) == 0 && arp && arpn > 0) {
-      have_arp = 1;
+    if (g_allow_arp_fallback) {
+      if (devices_from_arp_json(&arp, &arpn) == 0 && arp && arpn > 0) {
+        have_arp = 1;
+      }
     }
     /* build merged array: [ <normalized...>, <arp...> ] taking care of brackets/comma */
     if (!have_ud && !have_arp) {
