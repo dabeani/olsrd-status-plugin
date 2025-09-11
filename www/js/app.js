@@ -2902,6 +2902,15 @@ function renderVersionsPanel(v) {
   var badgeContainer = document.createElement('div');
   badgeContainer.style.marginTop = '10px';
 
+  // Refresh button for Versions (moved to global header). Keep spinner element id.
+  var refreshBtn = document.createElement('button');
+  refreshBtn.id = 'refresh-versions';
+  refreshBtn.className = 'btn btn-sm btn-primary';
+  refreshBtn.style.marginTop = '15px';
+  refreshBtn.innerHTML = '<span class="spin" id="refresh-versions-spinner"></span> <i class="glyphicon glyphicon-refresh"></i> Refresh';
+  // Place the refresh button above the badges on narrow viewports
+  rightCol.appendChild(refreshBtn);
+
   // Status badges with better styling
   function createStatusBadge(label, value, type) {
     var badge = document.createElement('span');
@@ -2922,7 +2931,21 @@ function renderVersionsPanel(v) {
   headerRow.appendChild(rightCol);
   headerBody.appendChild(headerRow);
   headerCard.appendChild(headerBody);
-  container.appendChild(headerCard);
+  // Move header into the global header placeholder so it's visible across tabs.
+  var globalHeader = document.getElementById('global-versions-header');
+  try {
+    if (globalHeader) {
+      // Clear any previous content and append the header card
+      globalHeader.innerHTML = '';
+      globalHeader.appendChild(headerCard);
+    } else {
+      // Fallback: keep header in the versions container if placeholder is missing
+      container.appendChild(headerCard);
+    }
+  } catch (e) {
+    // If DOM manipulation fails for any reason, fallback to container append
+    try { container.appendChild(headerCard); } catch (ee) { /* ignore */ }
+  }
 
   // Information cards in a grid
   var infoGrid = document.createElement('div');
