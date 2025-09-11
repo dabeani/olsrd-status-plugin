@@ -92,6 +92,8 @@ sudo make status_plugin_install DESTDIR=/
 sudo /usr/share/olsrd-status-plugin/fetch-assets.sh
 ```
 
+See `docs/ubnt_discover_cli.md` for a small standalone CLI helper that broadcasts a UBNT v1 discovery probe and prints parsed device fields.
+
 ## Smoke test: traceroute endpoint
 
 We provide a small smoke test script that verifies the clean traceroute endpoint returns a single JSON object with `trace_target` and `trace_to_uplink` keys.
