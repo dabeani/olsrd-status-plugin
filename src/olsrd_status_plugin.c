@@ -272,16 +272,7 @@ static int endpoint_coalesce_try_start(endpoint_coalesce_t *e, char **out, size_
   }
 
   /* ARP fallback opt-in via env (0=off,1=on) */
-  {
-    const char *env_arp = getenv("OLSRD_STATUS_ALLOW_ARP_FALLBACK");
-    if (env_arp && env_arp[0]) {
-      char *endptr = NULL; long v = strtol(env_arp, &endptr, 10);
-      if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {
-        g_allow_arp_fallback = (int)v;
-        fprintf(stderr, "[status-plugin] setting allow_arp_fallback from env: %d\n", g_allow_arp_fallback);
-      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_ALLOW_ARP_FALLBACK value: %s (ignored)\n", env_arp);
-    }
-  }
+  /* ARP fallback opt-in via env is now parsed at plugin init to emit a concise startup message. */
   if (e->busy) {
     while (e->busy) pthread_cond_wait(&e->cv, &e->m);
     if (e->cached && e->cached_len > 0 && (time(NULL) - e->ts) <= e->ttl) {
@@ -4495,6 +4486,22 @@ int olsrd_plugin_init(void) {
         } else {
           fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_PORT value: %s (ignored)\n", env_port);
         }
+      }
+    }
+  }
+
+  /* Parse ARP fallback env once at startup and emit a concise startup-level message so operators see configured behavior */
+  {
+    const char *env_arp = getenv("OLSRD_STATUS_ALLOW_ARP_FALLBACK");
+    if (env_arp && env_arp[0]) {
+      char *endptr = NULL; long v = strtol(env_arp, &endptr, 10);
+      if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {
+        g_allow_arp_fallback = (int)v;
+        if (g_allow_arp_fallback) {
+          fprintf(stderr, "[status-plugin] ARP fallback ENABLED via OLSRD_STATUS_ALLOW_ARP_FALLBACK=1\n");
+        }
+      } else {
+        fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_ALLOW_ARP_FALLBACK value: %s (ignored)\n", env_arp);
       }
     }
   }

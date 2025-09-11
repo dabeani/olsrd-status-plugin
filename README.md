@@ -263,6 +263,10 @@ Runtime environment variables (examples)
 - `OLSRD_STATUS_FETCH_REPORT_INTERVAL` (seconds)
     - When set >0 the plugin emits a short periodic summary of fetch metrics (queue length, dropped, retries) every N seconds.
 
+- `OLSRD_STATUS_ALLOW_ARP_FALLBACK` (0/1)
+    - Default: `0` (OFF). When set to `1` the plugin will allow synthesis of device entries from the local ARP table and may include those ARP-derived entries in aggregate status payloads when the code-paths opt-in to ARP fallback (for example the full `/status` output can include ARP-derived devices when enabled).
+    - Important: some discovery-specific endpoints intentionally exclude ARP-derived entries to avoid polluting discovery responses. Notably `/discover/ubnt` and `/devices` will not include ARP-synthesized devices regardless of this flag. Use this toggle when you explicitly want ARP-derived supplemental entries in aggregated status views.
+
 Enabling these in systemd (example)
 
 ```
