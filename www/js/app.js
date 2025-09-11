@@ -2555,16 +2555,41 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!details) return;
         details.textContent = 'Loading…';
         fetch('/status/stats', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try {
-            var html = '';
-            html += '<div>Nodes: <strong>' + (typeof s.olsr_nodes_count !== 'undefined' ? s.olsr_nodes_count : '-') + '</strong></div>';
-            html += '<div>Routes: <strong>' + (typeof s.olsr_routes_count !== 'undefined' ? s.olsr_routes_count : '-') + '</strong></div>';
-            if (s.fetch_stats) {
-              html += '<div style="margin-top:6px; font-weight:600">Fetch Queue</div>';
-              html += '<div>Queued: ' + (s.fetch_stats.queued_count || s.fetch_stats.queue_length || s.fetch_stats.queued || 0) + '</div>';
-              html += '<div>Processing: ' + (s.fetch_stats.processing_count || s.fetch_stats.processing || s.fetch_stats.in_progress || 0) + '</div>';
-              html += '<div>Dropped: ' + (s.fetch_stats.dropped_count || s.fetch_stats.dropped || 0) + '</div>';
+            // Use the reusable card renderer to render dropdown details
+            try {
+              renderCard({
+                container: details,
+                title: '',
+                panelClass: 'panel panel-default',
+                bodyStyle: 'padding:8px',
+                render: function(body, headerRight) {
+                  // top badges for nodes/routes
+                  var top = document.createElement('div'); top.style.display = 'flex'; top.style.gap = '8px'; top.style.alignItems = 'center';
+                  var nodesCount = (typeof s.olsr_nodes_count !== 'undefined') ? s.olsr_nodes_count : '-';
+                  var routesCount = (typeof s.olsr_routes_count !== 'undefined') ? s.olsr_routes_count : '-';
+                  var bn = document.createElement('div'); bn.className = 'metric-badge'; bn.textContent = 'Nodes: ' + String(nodesCount); top.appendChild(bn);
+                  var br = document.createElement('div'); br.className = 'metric-badge'; br.textContent = 'Routes: ' + String(routesCount); top.appendChild(br);
+                  body.appendChild(top);
+
+                  // Fetch queue section
+                  if (s.fetch_stats) {
+                    var sep = document.createElement('div'); sep.style.marginTop = '8px'; sep.style.fontWeight = '600'; sep.textContent = 'Fetch Queue'; body.appendChild(sep);
+                    var qwrap = document.createElement('div'); qwrap.style.marginTop = '6px';
+                    function val(name, alt){ return s.fetch_stats[name] || s.fetch_stats[alt] || 0; }
+                    var queued = val('queued_count','queue_length') || val('queued','queue_len');
+                    var processing = val('processing_count','in_progress') || val('processing');
+                    var dropped = val('dropped_count','dropped') || val('dropped');
+                    var queuedDiv = document.createElement('div'); queuedDiv.textContent = 'Queued: ' + String(queued); qwrap.appendChild(queuedDiv);
+                    var procDiv = document.createElement('div'); procDiv.textContent = 'Processing: ' + String(processing); qwrap.appendChild(procDiv);
+                    var dropDiv = document.createElement('div'); dropDiv.textContent = 'Dropped: ' + String(dropped); qwrap.appendChild(dropDiv);
+                    body.appendChild(qwrap);
+                  }
+                }
+              });
+            } catch(e) {
+              details.textContent = 'Error rendering details';
             }
-            details.innerHTML = html;
+
             if (ts) { var now = new Date(); ts.textContent = now.toLocaleTimeString(); ts.title = now.toString(); }
             applyThresholds(s);
           } catch(e){ details.textContent = 'Error rendering details'; } }).catch(function(){ details.textContent = 'Error fetching stats'; });
