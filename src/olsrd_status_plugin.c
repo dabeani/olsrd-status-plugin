@@ -5433,7 +5433,6 @@ static int h_versions_json(http_request_t *r) {
 static int h_platform_json(http_request_t *r) {
   char buf[512];
   /* Provide a tiny JSON structure the frontend can use; keep it safe and simple */
-  const char *hostname = "";
   gethostname((char*)buf, sizeof(buf));
   buf[sizeof(buf)-1]=0;
   /* Example keys: vendor, model, hostname */
