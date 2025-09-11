@@ -144,7 +144,7 @@ static int g_cfg_ubnt_probe_window_ms_set = 0;
 static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
 /* debug toggle: when set, emit extra per-request debug lines for specific endpoints (env/plugin param) */
-static int g_log_request_debug = 0; /* default: off */
+int g_log_request_debug = 0; /* default: off */
 static int g_cfg_log_request_debug_set = 0;
 /* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
@@ -812,6 +812,7 @@ static int h_root(http_request_t *r);
 static int h_ipv4(http_request_t *r); static int h_ipv6(http_request_t *r);
 static int h_status(http_request_t *r); static int h_status_summary(http_request_t *r); static int h_status_olsr(http_request_t *r); static int h_status_lite(http_request_t *r);
 static int h_status_stats(http_request_t *r);
+static int h_status_ping(http_request_t *r);
 static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
@@ -3385,6 +3386,19 @@ static int h_status_stats(http_request_t *r) {
   return 0;
 }
 
+/* Minimal ping endpoint for accurate RTT measurement */
+static int h_status_ping(http_request_t *r) {
+  /* Return a tiny JSON object with server time in ms */
+  char out[128];
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  unsigned long long ms = (unsigned long long)tv.tv_sec * 1000ULL + (unsigned long long)(tv.tv_usec / 1000ULL);
+  int n = snprintf(out, sizeof(out), "{\"ts\":%llu}\n", ms);
+  if (n < 0) n = 0; if (n >= (int)sizeof(out)) n = (int)sizeof(out) - 1;
+  http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n);
+  return 0;
+}
+
 /* --- Per-neighbor routes endpoint: /olsr/routes?via=1.2.3.4 --- */
 static int h_olsr_routes(http_request_t *r) {
   char via_ip[64]=""; get_query_param(r,"via", via_ip, sizeof(via_ip));
@@ -4668,6 +4682,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/summary", &h_status_summary);
   http_server_register_handler("/status/olsr", &h_status_olsr);
   http_server_register_handler("/status/lite", &h_status_lite);
+  http_server_register_handler("/status/ping", &h_status_ping);
   http_server_register_handler("/devices.json", &h_devices_json);
   http_server_register_handler("/status/stats", &h_status_stats);
   http_server_register_handler("/status.py", &h_status_py);
