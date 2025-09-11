@@ -2045,8 +2045,8 @@ static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char 
     const char *kend = strchr(kstart, '"');
     if (!kend) break;
     size_t keylen = (size_t)(kend - kstart);
-    if (keylen == 0 || keylen >= 64) { p = kend + 1; continue; }
-    char keybuf[64]; memcpy(keybuf, kstart, keylen); keybuf[keylen] = '\0';
+    if (keylen == 0 || keylen >= sizeof(best_name)) { p = kend + 1; continue; }
+    char keybuf[256]; memcpy(keybuf, kstart, keylen); keybuf[keylen] = '\0';
     /* Move to ':' and then to object '{' */
     const char *after = kend + 1;
     while (*after && (*after == ' ' || *after == '\t' || *after == '\r' || *after == '\n')) after++;
@@ -2061,28 +2061,55 @@ static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char 
       objend++;
     }
     if (!objend || objend <= objstart) break;
-    /* Only consider keys that start with digit (ipv4) */
-    if (!(keybuf[0] >= '0' && keybuf[0] <= '9')) { p = objend; continue; }
-    /* parse key as ip[/mask] */
-    char addrpart[64]; int maskbits = 32;
-    char *s = strchr(keybuf, '/'); if (s) {
-      size_t L = (size_t)(s - keybuf); if (L >= sizeof(addrpart)) { p = objend; continue; }
-      memcpy(addrpart, keybuf, L); addrpart[L] = '\0'; maskbits = atoi(s + 1);
-    } else { snprintf(addrpart, sizeof(addrpart), "%s", keybuf); }
-    struct in_addr ina_k; if (!inet_aton(addrpart, &ina_k)) { p = objend; continue; }
-    uint32_t net = ntohl(ina_k.s_addr);
-  if (maskbits < 0) maskbits = 0;
-  if (maskbits > 32) maskbits = 32;
-    uint32_t mask = (maskbits == 0) ? 0 : ((maskbits == 32) ? 0xFFFFFFFFu : (~((1u << (32 - maskbits)) - 1u)));
-    if ((dest & mask) != (net & mask)) { p = objend; continue; }
-    /* matched; extract "n" value inside object */
-    char *v = NULL; size_t vlen = 0;
-    if (find_json_string_value(objstart, "n", &v, &vlen)) {
-      size_t L = vlen; if (L >= sizeof(best_name)) L = sizeof(best_name) - 1;
-      memcpy(best_name, v, L); best_name[L] = '\0';
-      if (maskbits > best_mask) best_mask = maskbits;
+    /* If the JSON key looks like an IPv4 address or CIDR, treat it as a network key and prefer
+     * longest-prefix (CIDR) matches. Otherwise, scan the object fields for IP-like fields
+     * (e.g. "h","host","hostname","ip","ipv4","addr") that match dest_ip and
+     * use the contained "n"/"name"/"hostname" if present.
+     */
+    if (keybuf[0] >= '0' && keybuf[0] <= '9') {
+      /* parse key as ip[/mask] */
+      char addrpart[64]; int maskbits = 32;
+      char *s = strchr(keybuf, '/'); if (s) {
+        size_t L = (size_t)(s - keybuf); if (L >= sizeof(addrpart)) { p = objend; continue; }
+        memcpy(addrpart, keybuf, L); addrpart[L] = '\0'; maskbits = atoi(s + 1);
+      } else { snprintf(addrpart, sizeof(addrpart), "%s", keybuf); }
+      struct in_addr ina_k; if (!inet_aton(addrpart, &ina_k)) { p = objend; continue; }
+      uint32_t net = ntohl(ina_k.s_addr);
+      if (maskbits < 0) maskbits = 0; if (maskbits > 32) maskbits = 32;
+      uint32_t mask = (maskbits == 0) ? 0 : ((maskbits == 32) ? 0xFFFFFFFFu : (~((1u << (32 - maskbits)) - 1u)));
+      if ((dest & mask) != (net & mask)) { p = objend; continue; }
+      /* matched by key; extract "n"/"name"/"hostname" value inside object */
+      char *v = NULL; size_t vlen = 0;
+      if (find_json_string_value(objstart, "n", &v, &vlen) || find_json_string_value(objstart, "name", &v, &vlen) || find_json_string_value(objstart, "hostname", &v, &vlen)) {
+        size_t L = vlen; if (L >= sizeof(best_name)) L = sizeof(best_name) - 1;
+        memcpy(best_name, v, L); best_name[L] = '\0';
+        if (maskbits > best_mask) best_mask = maskbits;
+      }
+      p = objend;
+    } else {
+      /* key is not an IP; inspect inner object fields for a matching IP value */
+      char *v = NULL; size_t vlen = 0; int matched = 0;
+      const char *fields[] = { "h", "host", "hostname", "m", "ip", "ipv4", "addr", "address", NULL };
+      for (int fi = 0; fields[fi]; ++fi) {
+        if (find_json_string_value(objstart, fields[fi], &v, &vlen)) {
+          if (v && vlen > 0) {
+            char tmp[128]; size_t L = vlen; if (L >= sizeof(tmp)) L = sizeof(tmp)-1; memcpy(tmp, v, L); tmp[L] = '\0';
+            /* trim possible /mask suffix */
+            char *slash = strchr(tmp, '/'); if (slash) *slash = '\0';
+            if (strcmp(tmp, dest_ip) == 0) { matched = 1; break; }
+          }
+        }
+      }
+      if (matched) {
+        if (find_json_string_value(objstart, "n", &v, &vlen) || find_json_string_value(objstart, "name", &v, &vlen) || find_json_string_value(objstart, "hostname", &v, &vlen)) {
+          size_t L = vlen; if (L >= sizeof(best_name)) L = sizeof(best_name) - 1;
+          memcpy(best_name, v, L); best_name[L] = '\0';
+          /* Treat this as an exact match (mask 32) so it outranks broader CIDR entries */
+          if (32 > best_mask) best_mask = 32;
+        }
+      }
+      p = objend;
     }
-    p = objend;
   }
   if (best_mask >= 0 && best_name[0]) {
     size_t L = strnlen(best_name, sizeof(best_name)); if (L >= out_len) L = out_len - 1; memcpy(out_name, best_name, L); out_name[L] = '\0'; return 1;

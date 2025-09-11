@@ -6,7 +6,7 @@
       "text": "Tab switched to: #tab-status",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2417,
+        "lineNumber": 2426,
         "columnNumber": 14
       }
     },
@@ -16,7 +16,7 @@
       "text": "Active pane: tab-status display: block classes: tab-pane active",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2418,
+        "lineNumber": 2427,
         "columnNumber": 14
       }
     },
@@ -26,7 +26,7 @@
       "text": "Loading content for tab: #tab-status",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2466,
+        "lineNumber": 2475,
         "columnNumber": 12
       }
     },
@@ -36,7 +36,7 @@
       "text": "Loading status tab content...",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2498,
+        "lineNumber": 2507,
         "columnNumber": 16
       }
     },
@@ -46,7 +46,7 @@
       "text": "Fetching /status/lite API...",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2502,
+        "lineNumber": 2511,
         "columnNumber": 20
       }
     },
@@ -56,7 +56,7 @@
       "text": "ensureTraceroutePreloaded: start",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2136,
+        "lineNumber": 2145,
         "columnNumber": 18
       }
     },
@@ -66,7 +66,7 @@
       "text": "Status data received: JSHandle@array",
       "location": {
         "url": "http://193.238.158.74/js/app.js",
-        "lineNumber": 2503,
+        "lineNumber": 2512,
         "columnNumber": 91
       }
     }
@@ -79,8 +79,9 @@
         "1",
         "<a href=\"https://193.238.156.86\" target=\"_blank\">193.238.156.86</a>",
         "<a href=\"https://ge2-rn01falke.falke-bb.wien.funkfeuer.at\" target=\"_blank\">ge2-rn01falke.falke-bb.wien.funkfeuer.at</a>",
-        "10.070ms"
+        "0.220ms"
       ]
-    ]
+    ],
+    "olsrLinks": []
   }
 }
