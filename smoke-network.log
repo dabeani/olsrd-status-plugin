@@ -65,17 +65,17 @@
   },
   {
     "type": "response",
-    "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js",
-    "status": 200,
-    "method": "GET",
-    "resourceType": "script"
-  },
-  {
-    "type": "response",
     "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css",
     "status": 200,
     "method": "GET",
     "resourceType": "stylesheet"
+  },
+  {
+    "type": "response",
+    "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js",
+    "status": 200,
+    "method": "GET",
+    "resourceType": "script"
   },
   {
     "type": "request",

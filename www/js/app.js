@@ -813,12 +813,22 @@ function populateOlsrLinksTable(links) {
       for (var i=0;i<parts.length;i++) {
         var pname = parts[i];
         var found = false;
-        Object.keys(window._nodedb_cache).some(function(k){ var v = window._nodedb_cache[k]; if(!v) return false; try {
-          if (v.n === pname) {
-            if (k === remote || v.h === remote || v.m === remote) { found = true; return true; }
+        Object.keys(window._nodedb_cache).some(function(k){
+          var v = window._nodedb_cache[k]; if(!v) return false;
+          try {
+            // If the nodedb entry's canonical name matches the node_names part, accept it.
+            // Previously we required additional equality checks against the remote IP or host
+            // fields which made matches fail for CIDR keys or when entries used different
+            // address representations. Accepting v.n === pname gives better coverage while
+            // remaining conservative because nodedb canonical names are usually unique.
+            if (v.n === pname) { found = true; return true; }
+            // fallback: if this nodedb entry explicitly references the remote IP via
+            // host/mask/m fields, consider it a match as well.
+            if (k === remote || v.h === remote || v.m === remote) { if (v.n === pname) { found = true; return true; } }
             try { if (typeof getNodeNameForIp === 'function' && getNodeNameForIp(remote) === pname) { found = true; return true; } } catch(e) {}
-          }
-        } catch(e){} return false; });
+          } catch(e){}
+          return false;
+        });
         if (found) { resolved = pname; reason = 'node_names->nodedb-match'; break; }
       }
     }
