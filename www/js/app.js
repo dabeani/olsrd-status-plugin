@@ -790,9 +790,12 @@ function populateOlsrLinksTable(links) {
     }
     // incorporate small metric badges into routes cell (avoid an extra column that shifts nodes)
     try {
-      var metricsInline = '';
-      metricsInline += '<span class="metric-badge routes small" style="margin-left:6px;">R:'+ (l.routes || '0') +'</span>';
-      routesCell.innerHTML = (routesCell.innerHTML || '') + metricsInline;
+      var badgeSpan = document.createElement('span');
+      badgeSpan.className = 'metric-badge routes small';
+      badgeSpan.style.marginLeft = '6px';
+      badgeSpan.textContent = 'R:' + (l.routes || '0');
+      // append without clobbering existing content
+      try { routesCell.appendChild(badgeSpan); } catch(e) { /* fallback to innerHTML */ routesCell.innerHTML = (routesCell.innerHTML || '') + ('<span class="metric-badge routes small" style="margin-left:6px;">R:'+ (l.routes || '0') +'</span>'); }
     } catch(e){}
     tr.appendChild(routesCell);
     // nodes column: show numeric count and tooltip with names (avoid duplicating long text in table)
@@ -808,11 +811,23 @@ function populateOlsrLinksTable(links) {
   // nodes column (detailed node names + click handler)
   tr.appendChild(nodesCell);
   // Actions column
-  var actHtml = '';
-  if (l.remote_host) actHtml += '<button class="btn btn-xs btn-default action-open-host" data-host="'+encodeURIComponent(l.remote_host)+'" title="Open remote host">Open</button> ';
-  if (l.routes && parseInt(l.routes,10)>0) actHtml += '<button class="btn btn-xs btn-primary action-show-routes" data-remote="'+encodeURIComponent(l.remote)+'">Routes</button> ';
-  if (l.nodes && parseInt(l.nodes,10)>0) actHtml += '<button class="btn btn-xs btn-info action-show-nodes" data-remote="'+encodeURIComponent(l.remote)+'" data-names="'+(l.node_names?encodeURIComponent(l.node_names):'')+'">Nodes</button>';
-  var actTd = td(actHtml);
+  var actTd = document.createElement('td');
+  try {
+    if (l.remote_host) {
+      var btnOpen = document.createElement('button'); btnOpen.className = 'btn btn-xs btn-default action-open-host'; btnOpen.setAttribute('data-host', encodeURIComponent(l.remote_host)); btnOpen.title = 'Open remote host'; btnOpen.textContent = 'Open'; actTd.appendChild(btnOpen);
+      actTd.appendChild(document.createTextNode(' '));
+    }
+    if (l.routes && parseInt(l.routes,10)>0) {
+      var btnRoutes = document.createElement('button'); btnRoutes.className = 'btn btn-xs btn-primary action-show-routes'; btnRoutes.setAttribute('data-remote', encodeURIComponent(l.remote)); btnRoutes.textContent = 'Routes'; actTd.appendChild(btnRoutes);
+      actTd.appendChild(document.createTextNode(' '));
+    }
+    if (l.nodes && parseInt(l.nodes,10)>0) {
+      var btnNodes = document.createElement('button'); btnNodes.className = 'btn btn-xs btn-info action-show-nodes'; btnNodes.setAttribute('data-remote', encodeURIComponent(l.remote)); btnNodes.setAttribute('data-names', l.node_names ? encodeURIComponent(l.node_names) : ''); btnNodes.textContent = 'Nodes'; actTd.appendChild(btnNodes);
+    }
+  } catch(e) {
+    // fallback: minimal text
+    if (!actTd.childNodes.length) actTd.textContent = '';
+  }
   tr.appendChild(actTd);
     tbody.appendChild(tr);
   });
@@ -1363,60 +1378,53 @@ function renderLineGraph(canvasId, series, color, yLabel) {
   ctx.fillText(maxY, 2, pad+4);
 }
 
-// Generic card renderer: renders a Bootstrap-style panel into a container.
-// opts: { container: (id|string|element), title, subtitle, smallHelp, render: function(bodyEl, headerRightEl) }
+// Single flexible card renderer: renders a Bootstrap-style panel into a container.
+// Supports both styles used across the codebase.
+// opts: {
+//   container: element or id string,
+//   panelClass: optional panel class (default 'panel panel-default'),
+//   title, subtitle,
+//   bodyStyle: cssText for body,
+//   contentHTML: optional HTML string to place into body,
+//   smallHelp: optional help HTML appended to body,
+//   render: optional function(bodyEl, headerRightEl) to programmatically populate body/header
+// }
 function renderCard(opts) {
   try {
-    var container = null;
     if (!opts) return;
+    var container = null;
     if (typeof opts.container === 'string') container = document.getElementById(opts.container);
     else container = opts.container || null;
+    // fallback to containerId for older call-sites
+    if (!container && opts.containerId) container = document.getElementById(opts.containerId);
     if (!container) return;
-    // clear
+
+    // clear and build panel
     container.innerHTML = '';
-    // panel
     var panel = document.createElement('div'); panel.className = opts.panelClass || 'panel panel-default';
-    var heading = document.createElement('div'); heading.className = 'panel-heading'; heading.style.display = 'flex'; heading.style.justifyContent = 'space-between'; heading.style.alignItems = 'center';
+    var heading = document.createElement('div'); heading.className = 'panel-heading';
+    heading.style.display = 'flex'; heading.style.justifyContent = 'space-between'; heading.style.alignItems = 'center';
+
     var titleWrap = document.createElement('div');
-    var title = document.createElement('div'); title.style.fontWeight = '600'; title.style.marginBottom = '4px'; title.textContent = opts.title || '';
-    titleWrap.appendChild(title);
+    if (opts.title) { var title = document.createElement('div'); title.style.fontWeight = '600'; title.style.marginBottom = '4px'; title.textContent = opts.title; titleWrap.appendChild(title); }
     if (opts.subtitle) { var sub = document.createElement('div'); sub.style.fontSize = '12px'; sub.style.color = '#666'; sub.textContent = opts.subtitle; titleWrap.appendChild(sub); }
     heading.appendChild(titleWrap);
+
     var headerRight = document.createElement('div'); headerRight.style.display = 'flex'; headerRight.style.gap = '8px'; headerRight.style.alignItems = 'center'; heading.appendChild(headerRight);
     panel.appendChild(heading);
+
     var body = document.createElement('div'); body.className = 'panel-body'; if (opts.bodyStyle) body.style.cssText = opts.bodyStyle;
+    // contentHTML convenience
+    if (opts.contentHTML) { var content = document.createElement('div'); content.innerHTML = opts.contentHTML; body.appendChild(content); }
+
+    // render callback may populate body and headerRight
+    try { if (typeof opts.render === 'function') opts.render(body, headerRight); } catch (e) { /* swallow UI render errors */ }
+
+    if (opts.smallHelp) { var help = document.createElement('div'); help.className = 'small-muted'; help.style.marginTop = '8px'; help.innerHTML = opts.smallHelp; body.appendChild(help); }
+
     panel.appendChild(body);
-    // allow render callback to populate body and headerRight
-    try { if (typeof opts.render === 'function') opts.render(body, headerRight); }
-    catch (e) { /* swallow UI render errors */ }
-    if (opts.smallHelp) {
-      var help = document.createElement('div'); help.className = 'small-muted'; help.style.marginTop = '8px'; help.innerHTML = opts.smallHelp; body.appendChild(help);
-    }
     container.appendChild(panel);
   } catch (e) { /* ignore */ }
-}
-
-// Top-level reusable card renderer
-function renderCard(opts) {
-  // opts: { containerId, title, subtitle, contentHTML, smallHelp }
-  try {
-    var container = document.getElementById(opts.containerId);
-    if (!container) return;
-    container.innerHTML = '';
-    var title = document.createElement('div'); title.style.fontWeight = '600'; title.style.marginBottom = '6px'; title.textContent = opts.title || '';
-    var wrap = document.createElement('div'); wrap.style.display = 'flex'; wrap.style.flexDirection = 'column'; wrap.style.gap = '8px';
-    if (opts.subtitle) {
-      var sub = document.createElement('div'); sub.style.fontSize='12px'; sub.style.color='#666'; sub.textContent = opts.subtitle; container.appendChild(sub);
-    }
-    container.appendChild(title);
-    if (opts.contentHTML) {
-      var content = document.createElement('div'); content.innerHTML = opts.contentHTML; wrap.appendChild(content);
-    }
-    if (opts.smallHelp) {
-      var help = document.createElement('div'); help.style.fontSize='11px'; help.style.color='#666'; help.innerHTML = opts.smallHelp; wrap.appendChild(help);
-    }
-    container.appendChild(wrap);
-  } catch(e) {}
 }
 
 // Hook into updateUI to sample stats when status payload contains them
@@ -2679,32 +2687,39 @@ function enableVirtualLogs() {
   var container = document.getElementById('log-table-wrap');
   if (!container) return;
   window._log_virtual_enabled = true;
-  // clear existing content
-  container.innerHTML = '';
-  container.style.overflow = 'auto';
-  container.style.height = container.style.height || '400px';
+  // render using renderCard for consistent header/body
+  try {
+    renderCard({
+      container: container,
+      panelClass: 'panel panel-default',
+      title: 'Log (virtualized)',
+      bodyStyle: 'padding:8px; overflow:auto; height:400px',
+      render: function(body, headerRight) {
+        // create table skeleton inside body
+        var table = document.createElement('table');
+        table.className = 'table table-condensed';
+        table.id = 'log-table-virtual';
+        var thead = document.createElement('thead');
+        thead.innerHTML = '<tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr>';
+        table.appendChild(thead);
+        var tbody = document.createElement('tbody');
+        tbody.id = 'log-virtual-tbody';
+        tbody.style.position = 'relative';
+        table.appendChild(tbody);
 
-  // create table skeleton
-  var table = document.createElement('table');
-  table.className = 'table table-condensed';
-  table.id = 'log-table-virtual';
-  var thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr>';
-  table.appendChild(thead);
-  var tbody = document.createElement('tbody');
-  tbody.id = 'log-virtual-tbody';
-  tbody.style.position = 'relative';
-  table.appendChild(tbody);
+        // spacer to emulate full height
+        var spacer = document.createElement('div');
+        spacer.id = 'log-virtual-spacer';
+        spacer.style.width = '1px';
+        spacer.style.height = '0px';
 
-  // spacer to emulate full height
-  var spacer = document.createElement('div');
-  spacer.id = 'log-virtual-spacer';
-  spacer.style.width = '1px';
-  spacer.style.height = '0px';
-
-  container.appendChild(table);
-  container.appendChild(spacer);
-  container.addEventListener('scroll', virtualScrollHandler);
+        body.appendChild(table);
+        body.appendChild(spacer);
+        // forward scroll events from body
+        body.addEventListener('scroll', virtualScrollHandler);
+      }
+    });
+  } catch(e) { container.innerHTML = ''; }
 }
 
 function disableVirtualLogs() {
@@ -2712,14 +2727,23 @@ function disableVirtualLogs() {
   var container = document.getElementById('log-table-wrap');
   if (!container) return;
   window._log_virtual_enabled = false;
-  try { container.removeEventListener('scroll', virtualScrollHandler); } catch(e) {}
-  // restore basic table
-  container.innerHTML = '';
-  var table = document.createElement('table');
-  table.className = 'table table-condensed';
-  table.id = 'log-table';
-  table.innerHTML = '<thead><tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr></thead><tbody id="log-tbody"><tr><td colspan="3" class="text-muted" style="padding:12px">(no log lines)</td></tr></tbody>';
-  container.appendChild(table);
+  try { body = document.getElementById('log-table-wrap'); if (body) body.removeEventListener('scroll', virtualScrollHandler); } catch(e) {}
+  // restore basic table using renderCard
+  try {
+    renderCard({
+      container: container,
+      panelClass: 'panel panel-default',
+      title: 'Log',
+      bodyStyle: 'padding:8px',
+      render: function(body) {
+        var table = document.createElement('table');
+        table.className = 'table table-condensed';
+        table.id = 'log-table';
+        table.innerHTML = '<thead><tr><th style="width:160px">Timestamp</th><th style="width:100px">Level</th><th>Message</th></tr></thead><tbody id="log-tbody"><tr><td colspan="3" class="text-muted" style="padding:12px">(no log lines)</td></tr></tbody>';
+        body.appendChild(table);
+      }
+    });
+  } catch(e) { container.innerHTML = ''; }
 }
 
 function virtualScrollHandler() {
@@ -3024,17 +3048,20 @@ function renderConnectionsTable(c, nodedb) {
       if (fullHostname) fullHostname = fullHostname + '.' + primaryNode + '.wien.funkfeuer.at';
       else fullHostname = primaryNode + '.wien.funkfeuer.at';
     }
-    // Build host cell HTML: prefer clickable anchor when we have a fullHostname
-    var hostCellHtml = '';
+    // Build host cell: prefer clickable anchor when we have a fullHostname
+    var hostTd = document.createElement('td');
     if (fullHostname) {
-      // escape fullHostname minimally for href/text
       var safeHost = String(fullHostname).replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      hostCellHtml = '<a target="_blank" href="https://' + safeHost + '">' + safeHost + '</a>';
+      var a = document.createElement('a'); a.target = '_blank'; a.href = 'https://' + safeHost; a.textContent = safeHost; hostTd.appendChild(a);
     } else if (hostnameVal) {
-      hostCellHtml = String(hostnameVal).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      hostTd.textContent = String(hostnameVal).replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
-    tr.appendChild(td(hostCellHtml || ''));
-    tr.appendChild(td(nodeNames.join('<br>')));
+    tr.appendChild(hostTd);
+    var nodesTd = document.createElement('td');
+    if (nodeNames && nodeNames.length) {
+      nodeNames.forEach(function(n){ var d = document.createElement('div'); d.textContent = n; nodesTd.appendChild(d); });
+    }
+    tr.appendChild(nodesTd);
     tbody.appendChild(tr);
   });
   var headers = document.querySelectorAll('#connectionsTable th');
@@ -3045,7 +3072,13 @@ function renderConnectionsTable(c, nodedb) {
 
 function renderVersionsPanel(v) {
   var wrap = document.getElementById('versions-wrap'); if(!wrap) return; wrap.innerHTML='';
-  if(!v) { wrap.innerHTML = '<div class="alert alert-warning"><i class="glyphicon glyphicon-exclamation-sign"></i> No versions data available</div>'; return; }
+  if(!v) {
+    var alert = document.createElement('div'); alert.className = 'alert alert-warning';
+    var icon = document.createElement('i'); icon.className = 'glyphicon glyphicon-exclamation-sign'; alert.appendChild(icon);
+    alert.appendChild(document.createTextNode(' No versions data available'));
+    wrap.appendChild(alert);
+    return;
+  }
 
   // Main container with improved styling
   var container = document.createElement('div');
@@ -3071,8 +3104,10 @@ function renderVersionsPanel(v) {
   leftCol.style.fontSize = '13px';
   leftCol.style.fontWeight = '600';
   var systemInfo = document.createElement('div');
-  var smallInfo = (v.system ? v.system + ' • ' : '') + (v.ipv4 || 'No IP');
-  systemInfo.innerHTML = '<div style="font-weight:700">' + (v.hostname || 'System') + '</div><div style="font-size:11px;color:#666;margin-top:2px;">' + smallInfo + '</div>';
+  var smallInfo = (v.system ? v.system + '  ' : '') + (v.ipv4 || 'No IP');
+  var titleDiv = document.createElement('div'); titleDiv.style.fontWeight = '700'; titleDiv.textContent = (v.hostname || 'System');
+  var smallDiv = document.createElement('div'); smallDiv.style.fontSize = '11px'; smallDiv.style.color = '#666'; smallDiv.style.marginTop = '2px'; smallDiv.textContent = smallInfo;
+  systemInfo.appendChild(titleDiv); systemInfo.appendChild(smallDiv);
   leftCol.appendChild(systemInfo);
 
   // Right side - Status badges
@@ -3282,20 +3317,24 @@ function renderVersionsPanel(v) {
     var card = document.createElement('div');
     card.className = 'panel panel-info';
 
-    var cardHeader = document.createElement('div');
-    cardHeader.className = 'panel-heading';
-    cardHeader.innerHTML = '<h5><i class="glyphicon glyphicon-' + icon + '"></i> ' + title + '</h5>';
-    card.appendChild(cardHeader);
+  var cardHeader = document.createElement('div');
+  cardHeader.className = 'panel-heading';
+  var h5 = document.createElement('h5');
+  var ih = document.createElement('i'); ih.className = 'glyphicon glyphicon-' + icon; h5.appendChild(ih); h5.appendChild(document.createTextNode(' ' + title));
+  cardHeader.appendChild(h5);
+  card.appendChild(cardHeader);
 
     var cardBody = document.createElement('div');
     cardBody.className = 'panel-body';
 
     items.forEach(function(item) {
-      var itemDiv = document.createElement('div');
-      itemDiv.className = 'info-item';
-      itemDiv.innerHTML = '<div class="info-label"><i class="glyphicon glyphicon-' + item.icon + '"></i> ' + item.label + '</div>' +
-                         '<div class="info-value">' + item.value + '</div>';
-      cardBody.appendChild(itemDiv);
+  var itemDiv = document.createElement('div');
+  itemDiv.className = 'info-item';
+  var labelDiv = document.createElement('div'); labelDiv.className = 'info-label';
+  var li = document.createElement('i'); li.className = 'glyphicon glyphicon-' + item.icon; labelDiv.appendChild(li); labelDiv.appendChild(document.createTextNode(' ' + item.label));
+  var valDiv = document.createElement('div'); valDiv.className = 'info-value'; valDiv.textContent = item.value;
+  itemDiv.appendChild(labelDiv); itemDiv.appendChild(valDiv);
+  cardBody.appendChild(itemDiv);
     });
 
     card.appendChild(cardBody);
