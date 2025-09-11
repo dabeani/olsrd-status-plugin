@@ -380,6 +380,8 @@ This project has a few small runtime extensions you can use for monitoring and t
     - PlParam: `fetch_log_queue` (0 = off, 1 = on)
     - Env var: `OLSRD_STATUS_FETCH_LOG_QUEUE` (export before starting olsrd)
 
+    Note: the default was changed to be quiet by default in recent updates (the code now initializes `fetch_log_queue` to `0`). To re-enable the per-request "picked request" lines use the PlParam or environment variable above. If you need temporary verbose logs without changing `olsrd.conf`, set `OLSRD_STATUS_FETCH_LOG_FORCE=1` (or PlParam `fetch_log_force`) which forces logging ON regardless of `fetch_log_queue`.
+
 - Periodic fetch reporter: a periodic summary of fetch metrics can be enabled via PlParam `fetch_report_interval` or env `OLSRD_STATUS_FETCH_REPORT_INTERVAL` (seconds). When enabled this prints a short summary to stderr every N seconds; it respects the `fetch_log_queue` toggle.
 
 - UI auto-refresh hint: the plugin can suggest an auto-refresh interval to the web UI via PlParam `fetch_auto_refresh_ms` or env `OLSRD_STATUS_FETCH_AUTO_REFRESH_MS` (milliseconds). The front-end honors this as a suggested default for the Fetch Queue auto-refresh control.

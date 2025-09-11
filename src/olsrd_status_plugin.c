@@ -146,7 +146,7 @@ static int g_cfg_ubnt_probe_window_ms_set = 0;
 static int g_ubnt_cache_ttl_s = 300;
 static int g_cfg_ubnt_cache_ttl_s_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
-static int g_fetch_log_queue = 1;
+static int g_fetch_log_queue = 0;
 static int g_cfg_fetch_log_queue_set = 0;
 /* Optional PlParam/env to force-enable fetch queue logging even when otherwise disabled */
 static int g_fetch_log_force = 0;
@@ -4650,6 +4650,10 @@ int olsrd_plugin_init(void) {
     if (g_fetch_log_force) {
       g_fetch_log_queue = 1;
       fprintf(stderr, "[status-plugin] fetch logging forced ON via fetch_log_force\n");
+    }
+    /* Inform operator that fetch-queue per-request logging is quiet by default and how to enable it */
+    if (!g_fetch_log_queue && !g_fetch_log_force) {
+      fprintf(stderr, "[status-plugin] fetch queue logging: quiet by default; set PlParam 'fetch_log_queue' or export OLSRD_STATUS_FETCH_LOG_QUEUE=1 to enable\n");
     }
     /* discovery interval env override (seconds) */
     if (!g_cfg_devices_discover_interval_set) {
