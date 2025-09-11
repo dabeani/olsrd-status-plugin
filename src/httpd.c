@@ -4,6 +4,8 @@
 #include <stdlib.h>
 int path_exists(const char *p);
 extern int g_is_edgerouter;
+/* allow optional request debug toggle (defined in plugin) */
+extern int g_log_request_debug;
 #include <sys/types.h>
 #include <sys/socket.h>
 #if defined(__linux__)
@@ -420,6 +422,12 @@ static void *connection_worker(void *arg) {
   size_t plen = strnlen(path, sizeof(r->path)-1); if (plen >= sizeof(r->path)-1) plen = sizeof(r->path)-1; memcpy(r->path, path, plen); r->path[plen]=0;
   char *hosth = strcasestr(sp2+1, "\nHost:"); if (hosth) { hosth += 6; while (*hosth==' ' || *hosth=='\t') hosth++; char *e = strpbrk(hosth, "\r\n"); if (e) *e = 0; size_t hlen = strnlen(hosth, sizeof(r->host)-1); if (hlen >= sizeof(r->host)-1) hlen = sizeof(r->host)-1; memcpy(r->host, hosth, hlen); r->host[hlen]=0; }
   if (g_log_access) fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r->method, r->path, r->client_ip, r->query, r->host);
+  /* Optional per-endpoint request debug logging (disabled by default). When enabled,
+   * emit an abbreviated line for GET /status/stats requests to help diagnosing UI fetches.
+   */
+  if (g_log_request_debug && strcmp(r->method, "GET") == 0 && strcmp(r->path, "/status/stats") == 0) {
+    fprintf(stderr, "[httpd][debug] request: %s %s from %s\n", r->method, r->path, r->client_ip);
+  }
 
   /* Enforce allow-list even for static assets */
   if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, r->path); struct linger _lg = {1, 0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg)); close(cfd); http_request_free(r); return NULL; }

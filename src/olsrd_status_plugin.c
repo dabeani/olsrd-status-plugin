@@ -143,6 +143,9 @@ static int g_cfg_ubnt_probe_window_ms_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
+/* debug toggle: when set, emit extra per-request debug lines for specific endpoints (env/plugin param) */
+static int g_log_request_debug = 0; /* default: off */
+static int g_cfg_log_request_debug_set = 0;
 /* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
 
@@ -4335,6 +4338,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_queue_warn) g_cfg_fetch_queue_warn_set = 1;
   if (data == &g_fetch_queue_crit) g_cfg_fetch_queue_crit_set = 1;
   if (data == &g_fetch_dropped_warn) g_cfg_fetch_dropped_warn_set = 1;
+  if (data == &g_log_request_debug) g_cfg_log_request_debug_set = 1;
   if (data == &g_log_buf_lines) g_cfg_log_buf_lines_set = 1;
   return 0;
 }
@@ -4370,6 +4374,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
   { .name = "fetch_auto_refresh_ms", .set_plugin_parameter = &set_int_param, .data = &g_fetch_auto_refresh_ms, .addon = {0} },
   { .name = "fetch_log_queue", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_queue, .addon = {0} },
+  { .name = "log_request_debug", .set_plugin_parameter = &set_int_param, .data = &g_log_request_debug, .addon = {0} },
   { .name = "log_buf_lines", .set_plugin_parameter = &set_int_param, .data = &g_log_buf_lines, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
@@ -4579,6 +4584,18 @@ int olsrd_plugin_init(void) {
           fprintf(stderr, "[status-plugin] setting ubnt probe window from env: %d ms\n", g_ubnt_probe_window_ms);
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_PROBE_WINDOW_MS value: %s (ignored)\n", env_pw);
       }
+    }
+  }
+
+  /* request debug logging toggle via env (0=off,1=on) */
+  if (!g_cfg_log_request_debug_set) {
+    const char *env_rd = getenv("OLSRD_STATUS_LOG_REQUEST_DEBUG");
+    if (env_rd && env_rd[0]) {
+      char *endptr = NULL; long v = strtol(env_rd, &endptr, 10);
+      if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {
+        g_log_request_debug = (int)v;
+        fprintf(stderr, "[status-plugin] setting log_request_debug from env: %d\n", g_log_request_debug);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_LOG_REQUEST_DEBUG value: %s (ignored)\n", env_rd);
     }
   }
 
