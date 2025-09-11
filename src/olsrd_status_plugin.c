@@ -2050,8 +2050,9 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
       return 0;
     }
   }
-  /* Use internal broadcast discovery */
-  if (devices_from_arp_json(out, outlen)==0 && *out && *outlen>0) { free(cache_buf); cache_buf=malloc(*outlen+1); if(cache_buf){ memcpy(cache_buf,*out,*outlen); cache_buf[*outlen]=0; cache_len=*outlen; cache_time=nowt; } return 0; }
+  /* ARP fallback disabled for /discover/ubnt: do not synthesize devices from ARP table
+   * because those entries are not true UBNT discovery responses and pollute the endpoint.
+   */
   return -1;
 }
 
@@ -3079,19 +3080,8 @@ static int h_status_compat(http_request_t *r) {
 
   /* devices: prefer a lightweight ARP-derived list during remote collection to avoid blocking discovery */
   {
-    char *devs = NULL; size_t devn = 0;
-    if (devices_from_arp_json(&devs, &devn) == 0 && devs && devn>0) {
-      char *legacy_dev = NULL; size_t legacy_len = 0;
-      if (transform_devices_to_legacy(devs, &legacy_dev, &legacy_len) == 0 && legacy_dev) {
-        CAPPEND(",\"devices\":%s", legacy_dev);
-        free(legacy_dev);
-      } else {
-        CAPPEND(",\"devices\":%s", devs);
-      }
-      free(devs);
-    } else {
-      CAPPEND(",\"devices\":[]");
-    }
+  /* ARP-derived devices disabled for remote-collector compat payload here; leave devices empty */
+  CAPPEND(",\"devices\":[]");
   }
 
   CAPPEND(",\"homes\":[]");
@@ -3312,10 +3302,8 @@ static int h_devices_json(http_request_t *r) {
   }
   pthread_mutex_unlock(&g_devices_cache_lock);
 
-  /* read ARP-derived devices */
-  if (devices_from_arp_json(&arp, &arpn) == 0 && arp && arpn > 0) {
-    have_arp = 1;
-  }
+  /* ARP fallback disabled for devices endpoint: do not call devices_from_arp_json() here */
+  (void)arp; (void)arpn;
 
   /* Build merged JSON */
   char *out = NULL; size_t cap = 4096, len = 0;
@@ -3329,7 +3317,7 @@ static int h_devices_json(http_request_t *r) {
   out[0] = '\0';
   if (json_buf_append(&out, &len, &cap, "{") < 0) { free(out); if (udcopy) free(udcopy); if (arp) free(arp); send_json(r, "{}\n"); return 0; }
   /* devices array */
-  if (!have_ud && !have_arp) {
+  if (!have_ud) {
     json_buf_append(&out, &len, &cap, "\"devices\":[]");
   } else {
     json_buf_append(&out, &len, &cap, "\"devices\":[");
