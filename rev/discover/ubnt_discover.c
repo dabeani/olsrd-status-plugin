@@ -280,6 +280,7 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
         if (total_len + 4 <= (size_t)n) {
             size_t i = 4; int have_mac = 0, have_ip = 0, have_host = 0, have_product = 0, have_fw = 0, have_uptime = 0;
             char chosen_ip[INET_ADDRSTRLEN] = ""; /* store first or matching */
+            int pair_idx = 0;
             while (i + 3 <= (size_t)n) {
                 uint16_t tag = (uint16_t)buf[i] | ((uint16_t)buf[i+1] << 8);
                 uint8_t l = buf[i+2];
@@ -287,21 +288,43 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
                 if (i + l > (size_t)n) break; /* truncated */
                 const uint8_t *val = buf + i;
                 if (tag == 0x0002 && l == 10) {
-                    /* MAC + IPv4 */
+                    /* MAC + IPv4: record all observed pairs. The first pair is emitted
+                     * as 'hwaddr'/'ipv4' for backward compatibility; subsequent pairs
+                     * are emitted as 'hwaddr_N'/'ipv4_N' so the caller can create
+                     * extra devices from a single reply.
+                     */
                     char mac[32];
                     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", val[0],val[1],val[2],val[3],val[4],val[5]);
                     struct in_addr ia; memcpy(&ia, val+6, 4);
                     char ipbuf[INET_ADDRSTRLEN];
                     const char *ipstr = inet_ntop(AF_INET, &ia, ipbuf, sizeof(ipbuf));
                     int ip_matches_src = (ip && ip[0] && ipstr && strcmp(ipstr, ip)==0);
-                    if (!have_mac) {
-                        /* Accept first pair, or later one if matches source and we had different first */
-                        if (!have_ip || ip_matches_src) {
-                            if (kv && out < cap) { snprintf(kv[out].key, sizeof(kv[out].key), "%s", "hwaddr"); snprintf(kv[out].value, sizeof(kv[out].value), "%s", mac); out++; }
-                            if (kv && out < cap && ipstr) { snprintf(kv[out].key, sizeof(kv[out].key), "%s", "ipv4"); snprintf(kv[out].value, sizeof(kv[out].value), "%s", ipstr); out++; }
-                            have_mac = 1; have_ip = 1; snprintf(chosen_ip, sizeof(chosen_ip), "%s", ipstr?ipstr:"");
+                    if (pair_idx == 0) {
+                        /* primary pair: keep legacy keys */
+                        if (!have_mac) {
+                            if (!have_ip || ip_matches_src) {
+                                if (kv && out < cap) { snprintf(kv[out].key, sizeof(kv[out].key), "%s", "hwaddr"); snprintf(kv[out].value, sizeof(kv[out].value), "%s", mac); out++; }
+                                if (kv && out < cap && ipstr) { snprintf(kv[out].key, sizeof(kv[out].key), "%s", "ipv4"); snprintf(kv[out].value, sizeof(kv[out].value), "%s", ipstr); out++; }
+                                have_mac = 1; have_ip = 1; snprintf(chosen_ip, sizeof(chosen_ip), "%s", ipstr?ipstr:"");
+                            }
+                        }
+                    } else {
+                        /* additional pairs: emit indexed keys */
+                        char key_idx[32];
+                        if (kv && out < cap) {
+                            snprintf(key_idx, sizeof(key_idx), "hwaddr_%d", pair_idx);
+                            snprintf(kv[out].key, sizeof(kv[out].key), "%s", key_idx);
+                            snprintf(kv[out].value, sizeof(kv[out].value), "%s", mac);
+                            out++;
+                        }
+                        if (kv && out < cap && ipstr) {
+                            snprintf(key_idx, sizeof(key_idx), "ipv4_%d", pair_idx);
+                            snprintf(kv[out].key, sizeof(kv[out].key), "%s", key_idx);
+                            snprintf(kv[out].value, sizeof(kv[out].value), "%s", ipstr);
+                            out++;
                         }
                     }
+                    pair_idx++;
                 } else if (tag == 0x000B && l > 0 && !have_host) {
                     /* Hostname */
                     char host[256]; size_t copy = l < sizeof(host)-1 ? l : sizeof(host)-1; memcpy(host, val, copy); host[copy]=0;

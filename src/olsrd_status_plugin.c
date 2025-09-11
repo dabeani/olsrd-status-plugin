@@ -1930,6 +1930,7 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
               int idx=-1; for(int di=0; di<dev_count; ++di){ if(strcmp(devices[di].ip, ip)==0){ idx=di; break; } }
               if(idx<0 && dev_count < (int)(sizeof(devices)/sizeof(devices[0]))){ idx = dev_count++; memset(&devices[idx],0,sizeof(devices[idx])); snprintf(devices[idx].ip,sizeof(devices[idx].ip),"%s",ip); }
               if(idx>=0){
+                /* First pass: apply non-indexed keys to the primary device slot */
                 for(size_t i=0;i<kvn;i++){
                   if(strcmp(kv[i].key,"hostname")==0 && !devices[idx].have_hostname){ snprintf(devices[idx].hostname,sizeof(devices[idx].hostname),"%s",kv[i].value); devices[idx].have_hostname=1; }
                   else if(strcmp(kv[i].key,"hwaddr")==0 && !devices[idx].have_hw){ snprintf(devices[idx].hw,sizeof(devices[idx].hw),"%s",kv[i].value); devices[idx].have_hw=1; }
@@ -1939,6 +1940,32 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
                   else if(strcmp(kv[i].key,"essid")==0 && !devices[idx].have_essid){ snprintf(devices[idx].essid,sizeof(devices[idx].essid),"%s",kv[i].value); devices[idx].have_essid=1; }
                   else if(strcmp(kv[i].key,"firmware")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; }
                   else if(strcmp(kv[i].key,"fwversion")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; devices[idx].have_fwversion=1; }
+                }
+                /* Second pass: detect indexed ipv4_N / hwaddr_N pairs and create extra devices */
+                for(size_t i=0;i<kvn;i++){
+                  /* handle keys like ipv4, ipv4_1, ipv4_2, etc. */
+                  if (strncmp(kv[i].key, "ipv4", 4) == 0) {
+                    int idx_num = 0;
+                    if (kv[i].key[4] == '_' ) { idx_num = atoi(kv[i].key + 5); }
+                    /* skip primary (idx_num==0) already handled */
+                    if (idx_num > 0) {
+                      /* create/find device for this ipv4 value */
+                      const char *ipv = kv[i].value;
+                      if (!ipv || !ipv[0]) continue;
+                      int didx = -1;
+                      for (int di=0; di<dev_count; ++di) { if (strcmp(devices[di].ip, ipv) == 0) { didx = di; break; } }
+                      if (didx < 0 && dev_count < (int)(sizeof(devices)/sizeof(devices[0]))) {
+                        didx = dev_count++; memset(&devices[didx], 0, sizeof(devices[didx])); snprintf(devices[didx].ip, sizeof(devices[didx].ip), "%s", ipv);
+                      }
+                      if (didx >= 0) {
+                        /* look for a corresponding hwaddr_N */
+                        char hwkey[32]; snprintf(hwkey, sizeof(hwkey), "hwaddr_%d", idx_num);
+                        for (size_t j=0;j<kvn;j++){
+                          if (strcmp(kv[j].key, hwkey) == 0) { if (!devices[didx].have_hw) { snprintf(devices[didx].hw, sizeof(devices[didx].hw), "%s", kv[j].value); devices[didx].have_hw = 1; } break; }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
