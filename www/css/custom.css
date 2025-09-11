@@ -30,11 +30,11 @@
 .sort-mark { font-size: 11px; color: #666; }
 
 /* New layout styles */
-.layout-root { max-width:1200px; margin: 0 auto; }
-.site-header { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #eee; margin-bottom:12px; }
+.layout-root { max-width:100%; width:100%; margin: 0; padding:0 12px; }
+.site-header { display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid #eee; margin-bottom:8px; }
 .site-header .brand h3 { margin:0; font-weight:600; }
-.sidebar { padding-right:12px; }
-.sidebar .nav { background: #fafafa; border:1px solid #eee; padding:8px; border-radius:6px; }
+.sidebar { padding-right:8px; }
+.sidebar .nav { background: #fafafa; border:1px solid #eee; padding:6px; border-radius:6px; font-size:14px }
 .content { min-height:400px; }
 
 /* utility hidden class for conditional tab visibility - don't hide active tabs */
@@ -111,7 +111,7 @@
 
 /* Compact status badges shown in header */
 .status-badges { display:flex; gap:8px; align-items:center; }
-.status-badges .badge { background:#eee; color:#333; padding:6px 8px; border-radius:12px; font-size:12px; }
+.status-badges .badge { background:#eee; color:#333; padding:4px 8px; border-radius:10px; font-size:12px; }
 .status-badges .badge.nodes { background:#6cc070; color:#063; }
 .status-badges .badge.routes { background:#2b9af3; color:#04315a; }
 
@@ -123,7 +123,7 @@
 
 /* Compact dropdown menu for header status (absolute positioned) */
 .status-dropdown-wrap { position:relative; }
-.status-dropdown-menu { display:none; position:absolute; right:0; top:32px; z-index:2200; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 8px 18px rgba(0,0,0,0.12); }
+.status-dropdown-menu { display:none; position:absolute; right:0; top:28px; z-index:2200; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 8px 18px rgba(0,0,0,0.12); }
 .status-dropdown-menu[aria-hidden="false"] { display:block; }
 .status-badges .badge { transition: box-shadow 200ms ease, background-color 200ms ease; }
 .status-badges .badge.clickable { cursor:pointer; }

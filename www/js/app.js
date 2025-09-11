@@ -2911,20 +2911,63 @@ function renderVersionsPanel(v) {
   // Place the refresh button above the badges on narrow viewports
   rightCol.appendChild(refreshBtn);
 
-  // Status badges with better styling
-  function createStatusBadge(label, value, type) {
+  // Compact status badge helper per user rules: show green OK (with check) when binary exists and running,
+  // red X when binary exists but not running, grey X when binary not present.
+  function createOlsrStatusBadge(binaryName, exists, running) {
     var badge = document.createElement('span');
-    badge.className = 'badge status-badge status-' + type;
-    badge.innerHTML = '<i class="glyphicon glyphicon-' + (type === 'success' ? 'ok' : type === 'danger' ? 'remove' : 'info-sign') + '"></i> ' + label + ': ' + value;
+    badge.className = 'status-olsr-badge';
+    badge.style.display = 'inline-flex';
+    badge.style.alignItems = 'center';
+    badge.style.gap = '6px';
+    badge.style.padding = '4px 8px';
+    badge.style.borderRadius = '12px';
+    badge.style.fontSize = '12px';
+    badge.style.fontWeight = '600';
+    var icon = document.createElement('span');
+    icon.style.display = 'inline-block';
+    icon.style.width = '14px';
+    icon.style.height = '14px';
+    icon.style.borderRadius = '50%';
+    icon.style.textAlign = 'center';
+    icon.style.lineHeight = '14px';
+    icon.style.color = '#fff';
+    icon.style.fontSize = '11px';
+    var label = document.createElement('span');
+    label.textContent = binaryName;
+
+    if (!exists) {
+      // grey X
+      icon.style.background = '#6c757d';
+      icon.textContent = '✖';
+      badge.style.background = '#ececec';
+      badge.style.color = '#333';
+    } else if (exists && running) {
+      // green OK
+      icon.style.background = '#2ecc71';
+      icon.textContent = '✓';
+      badge.style.background = '#e6f9ee';
+      badge.style.color = '#145a2b';
+    } else {
+      // exists but not running -> red X
+      icon.style.background = '#e74c3c';
+      icon.textContent = '✖';
+      badge.style.background = '#fff0f0';
+      badge.style.color = '#7a1d1d';
+    }
+    badge.appendChild(icon);
+    badge.appendChild(label);
     return badge;
   }
 
-  if (v.olsrd_running !== undefined) {
-    badgeContainer.appendChild(createStatusBadge('OLSRd', v.olsrd_running ? 'Running' : 'Stopped', v.olsrd_running ? 'success' : 'danger'));
-  }
-  if (v.olsr2_running !== undefined) {
-    badgeContainer.appendChild(createStatusBadge('OLSRv2', v.olsr2_running ? 'Running' : 'Stopped', v.olsr2_running ? 'success' : 'danger'));
-  }
+  // Append OLSRd / OLSRd2 compact badges based on versions payload (versions.json renders into `v`)
+  try {
+    if (typeof v.olsrd_exists !== 'undefined') {
+      badgeContainer.appendChild(createOlsrStatusBadge('olsrd', v.olsrd_exists, v.olsrd_running));
+    }
+    if (typeof v.olsr2_exists !== 'undefined') {
+      badgeContainer.appendChild(createOlsrStatusBadge('olsrd2', v.olsr2_exists, v.olsr2_running));
+    }
+  } catch (e) { /* ignore UI errors */ }
 
   rightCol.appendChild(badgeContainer);
   headerRow.appendChild(leftCol);

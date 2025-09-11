@@ -2263,6 +2263,9 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   pthread_mutex_unlock(&versions_cache_lock);
   char host[256] = ""; gethostname(host, sizeof(host)); host[sizeof(host)-1]=0;
   int olsrd_on=0, olsr2_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+  /* detect whether olsrd / olsrd2 binaries exist on filesystem (best-effort) */
+  int olsrd_exists = (path_exists("/usr/sbin/olsrd") || path_exists("/usr/bin/olsrd") || path_exists("/sbin/olsrd"));
+  int olsr2_exists = (path_exists("/usr/sbin/olsrd2") || path_exists("/usr/bin/olsrd2") || path_exists("/sbin/olsrd2"));
 
   /* autoupdate wizard info */
   const char *au_path = "/etc/cron.daily/autoupdatewizards";
@@ -2355,11 +2358,13 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   if (homes_out && homes_n>0) { size_t hn = homes_n; char *tmp = strndup(homes_out, homes_n); if (tmp) { while (hn>0 && (tmp[hn-1]=='\n' || tmp[hn-1]==',')) { tmp[--hn]=0; } snprintf(homes_json,sizeof(homes_json),"[%s]", tmp[0]?tmp:"" ); free(tmp); } }
   char bootimage_md5[128] = "n/a"; if (md5_out && md5_n>0) { char *m = strndup(md5_out, md5_n); if (m) { char *nl = strchr(m,'\n'); if (nl) *nl=0; strncpy(bootimage_md5, m, sizeof(bootimage_md5)-1); free(m); } }
   snprintf(obuf, buf_sz,
-    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"},\"bmk_webstatus\":\"%s\",\"ipv4\":\"%s\",\"ipv6\":\"%s\",\"linkserial\":\"%s\",\"olsrd\":\"%s\",\"olsrd_details\":{\"version\":\"%s\",\"description\":\"%s\",\"device\":\"%s\",\"date\":\"%s\",\"release\":\"%s\",\"source\":\"%s\"}}\n",
+    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"},\"bmk_webstatus\":\"%s\",\"ipv4\":\"%s\",\"ipv6\":\"%s\",\"linkserial\":\"%s\",\"olsrd\":\"%s\",\"olsrd_details\":{\"version\":\"%s\",\"description\":\"%s\",\"device\":\"%s\",\"date\":\"%s\",\"release\":\"%s\",\"source\":\"%s\"}}\n",
     host,
     system_type,
     olsrd_on?"true":"false",
     olsr2_on?"true":"false",
+    olsrd_exists?"true":"false",
+    olsr2_exists?"true":"false",
     olsrd4watchdog?"true":"false",
     auon?"yes":"no",
     aa_on?"true":"false",
@@ -3155,9 +3160,11 @@ static int h_status_lite(http_request_t *r) {
       APP_L("\"versions\":{\"olsrd\":\"unknown\"},");
     }
   }
-  /* detect olsrd / olsrd2 (previously skipped in lite) */
+  /* detect olsrd / olsrd2 (previously skipped in lite) and whether binaries exist */
   int lite_olsr2_on=0, lite_olsrd_on=0; detect_olsr_processes(&lite_olsrd_on,&lite_olsr2_on);
-  APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false");
+  int lite_olsrd_exists = (path_exists("/usr/sbin/olsrd") || path_exists("/usr/bin/olsrd") || path_exists("/sbin/olsrd"));
+  int lite_olsr2_exists = (path_exists("/usr/sbin/olsrd2") || path_exists("/usr/bin/olsrd2") || path_exists("/sbin/olsrd2"));
+  APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false", lite_olsrd_exists?"true":"false", lite_olsr2_exists?"true":"false");
   APP_L("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
