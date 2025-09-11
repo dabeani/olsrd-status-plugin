@@ -542,8 +542,11 @@ static void *devices_cache_worker(void *arg) {
      * the devices cache. Non-blocking enqueue so this thread won't stall.
      */
     enqueue_fetch_request(0, 0, FETCH_TYPE_DISCOVER);
-    /* Sleep with short interval; adjust as needed */
-    for (int i = 0; i < 10; i++) { sleep(1); if (!g_devices_worker_running) break; }
+    /* Sleep for configured discover interval (interruptible when shutting down).
+     * Use a 1s granularity loop so shutdown can be responsive.
+     */
+    int total = g_devices_discover_interval > 0 ? g_devices_discover_interval : 1;
+    for (int i = 0; i < total; i++) { sleep(1); if (!g_devices_worker_running) break; }
   }
   return NULL;
 }
@@ -2706,8 +2709,15 @@ static int h_status(http_request_t *r) {
     int used_cache = 0;
     pthread_mutex_lock(&g_devices_cache_lock);
     if (g_devices_cache && g_devices_cache_len > 0) {
-      APPEND("\"devices\":%s,", g_devices_cache);
-      used_cache = 1;
+      /* consider cache stale if older than g_ubnt_cache_ttl_s */
+      time_t nowt = time(NULL);
+      if (g_ubnt_cache_ttl_s <= 0 || (nowt - g_devices_cache_ts) <= g_ubnt_cache_ttl_s) {
+        APPEND("\"devices\":%s,", g_devices_cache);
+        used_cache = 1;
+      } else {
+        /* stale: treat as absent */
+        if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] devices cache stale (age=%lds > %ds)\n", (long)(nowt - g_devices_cache_ts), g_ubnt_cache_ttl_s);
+      }
     }
     pthread_mutex_unlock(&g_devices_cache_lock);
     if (!used_cache) {
@@ -3269,12 +3279,17 @@ static int h_devices_json(http_request_t *r) {
   /* grab snapshot of cached normalized ubnt devices if present */
   pthread_mutex_lock(&g_devices_cache_lock);
   if (g_devices_cache && g_devices_cache_len > 0) {
-    udlen = g_devices_cache_len;
-    udcopy = malloc(udlen + 1);
-    if (udcopy) {
-      memcpy(udcopy, g_devices_cache, udlen);
-      udcopy[udlen] = '\0';
-      have_ud = 1;
+    time_t nowt = time(NULL);
+    if (g_ubnt_cache_ttl_s <= 0 || (nowt - g_devices_cache_ts) <= g_ubnt_cache_ttl_s) {
+      udlen = g_devices_cache_len;
+      udcopy = malloc(udlen + 1);
+      if (udcopy) {
+        memcpy(udcopy, g_devices_cache, udlen);
+        udcopy[udlen] = '\0';
+        have_ud = 1;
+      }
+    } else {
+      if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] devices cache stale (age=%lds > %ds)\n", (long)(nowt - g_devices_cache_ts), g_ubnt_cache_ttl_s);
     }
   }
   pthread_mutex_unlock(&g_devices_cache_lock);
@@ -5228,8 +5243,13 @@ static int h_discover_ubnt(http_request_t *r) {
     enqueue_fetch_request(1, 1, FETCH_TYPE_DISCOVER);
     pthread_mutex_lock(&g_devices_cache_lock);
     if (g_devices_cache && g_devices_cache_len > 0) {
-      devices_json = strdup(g_devices_cache);
-      devices_n = g_devices_cache_len;
+      time_t nowt = time(NULL);
+      if (g_ubnt_cache_ttl_s <= 0 || (nowt - g_devices_cache_ts) <= g_ubnt_cache_ttl_s) {
+        devices_json = strdup(g_devices_cache);
+        devices_n = g_devices_cache_len;
+      } else {
+        if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] discover_ubnt fallback: devices cache stale (age=%lds > %ds)\n", (long)(nowt - g_devices_cache_ts), g_ubnt_cache_ttl_s);
+      }
     }
     pthread_mutex_unlock(&g_devices_cache_lock);
   }
