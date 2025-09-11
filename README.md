@@ -237,8 +237,113 @@ Precedence: for all of the above the plugin parameter `PlParam` in `olsrd.conf` 
 Logging and debugging
 
 * The plugin logs which environment values are applied or ignored during startup to stderr.
-* For verbose allow-list tracing set `OLSR_DEBUG_ALLOWLIST=1` to see per-entry add/match traces.
-* When `OLSRD_STATUS_PLUGIN_NET` is used the plugin prints a friendly list of the final allow-list entries at startup.
+
+Debug options
+
+The project supports a small set of runtime environment variables and a few build-time switches you can use to enable verbose debug output for specific subsystems. These are intended for development, troubleshooting, and CI; prefer toggling them from systemd unit files or container run commands rather than embedding them in production configs.
+
+Runtime environment variables (examples)
+
+- `OLSR_DEBUG_LINK_COUNTS=1`
+    - Emit extra diagnostics during OLSR link/route/node fallback calculations to help explain why neighbor `routes`/`nodes` counts are zero or unexpectedly low.
+
+- `OLSR_DEBUG_ALLOWLIST=1`
+    - Verbose allow-list tracing: prints per-entry add/match traces when the plugin computes the final network allow-list (useful when debugging access control tokens via `OLSRD_STATUS_PLUGIN_NET`).
+
+- `OLSRD_STATUS_UBNT_DEBUG=1`
+    - Enable runtime UBNT discovery debug output in `rev/discover/ubnt_discover.c` and helpers. This causes the discovery helpers to emit socket, send/recv, and TLV parsing traces to stderr.
+    - The standalone CLI also exposes `-d` to set this env var for a single run: `./rev/discover/ubnt_discover_cli -d`.
+
+- `OLSR_STATUS_LOG_REQ_DBG` / `OLSRD_STATUS_LOG_REQUEST_DEBUG` (or short alias `OLSRD_LOG_REQ_DBG=1`)
+    - Turn on concise per-request debug messages for HTTP endpoints that support request-level diagnostics (helps trace UI fetches and queued fetch behavior).
+
+- `OLSRD_STATUS_FETCH_LOG_QUEUE` (0/1)
+    - Toggle detailed fetch-queue progress messages printed to stderr. Useful to quiet noisy logs or to enable detailed queue traces.
+
+- `OLSRD_STATUS_FETCH_REPORT_INTERVAL` (seconds)
+    - When set >0 the plugin emits a short periodic summary of fetch metrics (queue length, dropped, retries) every N seconds.
+
+Enabling these in systemd (example)
+
+```
+Environment=OLSRD_STATUS_UBNT_DEBUG=1 OLSR_DEBUG_ALLOWLIST=1
+```
+
+Build-time / compile-time debug
+
+- `UBNT_DEBUG` (compile-time macro)
+    - The UBNT discovery sources have a compile-time guard `#ifndef UBNT_DEBUG` which defaults to `0`. To enable extra debug traces from the discovery implementation at build time compile with `-DUBNT_DEBUG=1` added to `CFLAGS` for the plugin or the CLI. Example:
+
+```
+make CFLAGS="$(CFLAGS) -DUBNT_DEBUG=1" ubnt_discover_cli
+```
+
+Notes & recommendations
+
+- Prefer the runtime env vars for short-lived diagnostics; use build-time macros only when you need extremely verbose traces that are otherwise filtered by `#if` guards.
+- The discovery CLI (`rev/discover/ubnt_discover_cli`) is standalone and exposes `-d` to set `OLSRD_STATUS_UBNT_DEBUG` for convenience; use that when iterating quickly.
+- When opening issues, include which debug env vars you enabled and a copy of the stderr output to help maintainers reproduce the problem.
+
+Sample stderr snippets
+
+Below are short representative snippets you may see when enabling the corresponding debug option. They are intentionally short — real output will contain timing and socket-specific values.
+
+- `OLSRD_STATUS_UBNT_DEBUG=1` / `-d` on CLI
+
+```
+ubnt: opened socket fd=5 bound to 0.0.0.0:10001 (requested local=(any))
+ubnt: sent probe via fd=5 to 255.255.255.255:10001
+UBNT reply from 192.168.1.2, 42 bytes (parsed):
+  parsed tag hwaddr = 00:11:22:33:44:55
+  parsed tag ipv4 = 192.168.1.2
+  parsed tag product = EdgeRouter X
+```
+
+- `OLSR_DEBUG_ALLOWLIST=1`
+
+```
+allowlist: parsing token "192.168.1.0/24" -> added
+allowlist: checking 10.0.0.5 -> DENIED
+allowlist: final allowlist contains 2 entries
+```
+
+- `OLSR_DEBUG_LINK_COUNTS=1`
+
+```
+linkcounts: neighbor 10.0.0.1 routes=0 topology=2 twohop=1 -> using topology=2
+linkcounts: neighbor 10.0.0.2 routes=3 topology=0 twohop=0 -> using routes=3
+```
+
+- `OLSRD_STATUS_FETCH_REPORT_INTERVAL` (periodic summary)
+
+```
+fetch-report: queue=2 in-flight=1 retries=5 dropped=0 success=12
+```
+
+Troubleshooting checklist
+
+1) Missing TLV fields (no hostname/product/fw in discovery replies)
+    - Enable: `OLSRD_STATUS_UBNT_DEBUG=1` or `./rev/discover/ubnt_discover_cli -d`
+    - Check: stderr for `parsed tag` lines or `UBNT reply` hexdump; if hexdump shows no known tags the device probably doesn't include TLV metadata.
+
+2) Discovery returns only ARP-derived MAC/IP pairs
+    - Enable: `OLSRD_STATUS_UBNT_DEBUG=1`
+    - Check: look for hexdump and parser messages. ARP fallback is expected when replies lack TLV metadata.
+
+3) UI shows zero `routes` or `nodes` counts for neighbors
+    - Enable: `OLSR_DEBUG_LINK_COUNTS=1`
+    - Check: which fallback path was used (routes -> topology -> two-hop -> pattern scan) and inspect source documents.
+
+4) Remote `nodedb.json` not being fetched or frequent retries
+    - Enable: `OLSRD_STATUS_FETCH_LOG_QUEUE=1` and set `OLSRD_STATUS_FETCH_REPORT_INTERVAL=10`
+    - Check: periodic fetch-report and fetch-queue logs; verify network access and `OLSRD_STATUS_PLUGIN_NODEDB_URL`.
+
+5) Requests unexpectedly denied by allow-list
+    - Enable: `OLSR_DEBUG_ALLOWLIST=1`
+    - Check: per-entry allowlist traces to see which token matched and why the client IP was denied.
+
+
+
 
 ### Versions / Info source behavior
 
