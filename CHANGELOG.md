@@ -38,9 +38,6 @@ Usage notes:
 - feature: Add CIDR-aware node name lookup to resolve destinations via node_db longest-prefix matching (improves node counting in OLSR Links)
 - fix: Silence compiler warnings and free temporary gw_stats allocation
 - perf: Replace ad-hoc lookups with consistent node_db resolution for both routing-table fan-out and topology parsing
-
-- fix(ui): OLSR Links tab displayed device names (e.g. "eno", "ramp8") in the NODE column instead of canonical node names when `node_names` hints contained device fragments. The links tab now prioritizes the nodedb cache (CIDR and direct-key lookups) and prefers canonical node names; short device-like hints are avoided when a canonical name exists. This aligns Links behavior with the Connections tab and fixes mislabelled nodes.
-
 - feature: Add PlParam `log_request_debug` and env var `OLSRD_STATUS_LOG_REQUEST_DEBUG` (alias `OLSRD_LOG_REQ_DBG`) to enable concise per-request debug logging for UI fetch endpoints (default off).
 - ui: Redesigned Statistics tab (improved graphs and summaries; removed small 'dot' indicators) - work-in-progress
 
