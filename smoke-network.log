@@ -44,6 +44,13 @@
   },
   {
     "type": "response",
+    "url": "http://193.238.158.74/js/app.js",
+    "status": 200,
+    "method": "GET",
+    "resourceType": "script"
+  },
+  {
+    "type": "response",
     "url": "http://193.238.158.74/css/custom.css",
     "status": 200,
     "method": "GET",
@@ -51,7 +58,14 @@
   },
   {
     "type": "response",
-    "url": "http://193.238.158.74/js/app.js",
+    "url": "https://code.jquery.com/jquery-1.12.4.min.js",
+    "status": 200,
+    "method": "GET",
+    "resourceType": "script"
+  },
+  {
+    "type": "response",
+    "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js",
     "status": 200,
     "method": "GET",
     "resourceType": "script"
@@ -64,20 +78,6 @@
     "resourceType": "stylesheet"
   },
   {
-    "type": "response",
-    "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js",
-    "status": 200,
-    "method": "GET",
-    "resourceType": "script"
-  },
-  {
-    "type": "response",
-    "url": "https://code.jquery.com/jquery-1.12.4.min.js",
-    "status": 200,
-    "method": "GET",
-    "resourceType": "script"
-  },
-  {
     "type": "request",
     "url": "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/fonts/glyphicons-halflings-regular.woff2",
     "method": "GET",
@@ -149,14 +149,14 @@
   },
   {
     "type": "response",
-    "url": "http://193.238.158.74/status/lite",
+    "url": "http://193.238.158.74/status/traceroute",
     "status": 200,
     "method": "GET",
     "resourceType": "fetch"
   },
   {
     "type": "response",
-    "url": "http://193.238.158.74/status/traceroute",
+    "url": "http://193.238.158.74/status/lite",
     "status": 200,
     "method": "GET",
     "resourceType": "fetch"

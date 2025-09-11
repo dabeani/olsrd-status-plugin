@@ -449,24 +449,35 @@ function getNodeNameForIp(ip) {
     function ip2int(ipstr){ return ipstr.split('.').reduce(function(acc,x){return (acc<<8)+parseInt(x,10);},0) >>>0; }
     var rip = null;
     if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) rip = ip2int(ip);
-    var best = null;
+    var best = null; var bestMask = -1;
     Object.keys(window._nodedb_cache).forEach(function(k){
       if (!k) return;
-      var v = window._nodedb_cache[k];
-      if (!v) return;
-      // exact match
-      if (k === ip) { best = v.n || best; return; }
-      // direct host field match
-      if (v.h && v.h === ip) { best = v.n || best; return; }
-      // CIDR match
-      if (k.indexOf('/') > -1 && rip !== null) {
-        try {
+      var v = window._nodedb_cache[k]; if (!v) return;
+      try {
+        // direct key exact IP match (highest priority)
+        if (k === ip) { if (v.n) { best = v.n; bestMask = 32; } return; }
+        // direct object host fields matching exact IP
+        if (v.h === ip || v.host === ip || v.ip === ip || v.ipv4 === ip || v.addr === ip) { if (v.n && 32 > bestMask) { best = v.n; bestMask = 32; } return; }
+        // CIDR key: prefer longest-prefix match
+        if (k.indexOf('/') > -1 && rip !== null) {
           var parts = k.split('/'); var net = parts[0]; var bits = parseInt(parts[1],10);
-          var nint = ip2int(net);
-          var mask = bits===0?0: (~0 << (32-bits)) >>>0;
-          if ((rip & mask) === (nint & mask)) { best = v.n || best; return; }
-        } catch(e) {}
-      }
+          if (!isNaN(bits)) {
+            var nint = ip2int(net);
+            var mask = bits===0?0: (~0 << (32-bits)) >>>0;
+            if ((rip & mask) === (nint & mask)) {
+              if (v.n && bits > bestMask) { best = v.n; bestMask = bits; }
+            }
+          }
+        }
+        // non-IP key: inspect stored object fields for an IP equal to `ip` and prefer exact
+        if (bestMask < 32) {
+          var fields = ['h','host','hostname','m','ip','ipv4','addr','address'];
+          for (var fi=0; fi<fields.length; fi++) {
+            var fld = fields[fi]; if (!v[fld]) continue; var val = String(v[fld]).replace(/\/.*/,'');
+            if (val === ip) { if (v.n && 32 > bestMask) { best = v.n; bestMask = 32; } break; }
+          }
+        }
+      } catch(e) { /* ignore entry parse errors */ }
     });
     return best || null;
   } catch(e) { return null; }
