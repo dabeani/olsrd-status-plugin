@@ -160,3 +160,13 @@
 .device-source .src-ubnt-discover .dot { background:#2b9af3; } /* blue for ubnt-discover */
 .device-source .src-unknown .dot { background:#ccc; }
 .device-source .lbl.small { font-size:11px; color:#666; }
+
+/* Footer two-dot indicators */
+#status-footer { height: 18px; }
+.footer-dot { width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 0 rgba(0,0,0,0); transition: box-shadow 300ms ease, background-color 300ms ease; }
+.footer-dot-off { background:#bdbdbd; }
+.footer-dot-req { background: #f0ad4e; box-shadow: 0 0 6px rgba(240,173,78,0.45); }
+.footer-dot-res { background: #5cb85c; box-shadow: 0 0 8px rgba(92,184,92,0.45); }
+
+/* make sure footer occupies minimal space and doesn't overlap content: add bottom padding to layout-root */
+.layout-root { padding-bottom: 22px; }

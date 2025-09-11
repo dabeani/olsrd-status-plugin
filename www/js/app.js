@@ -166,6 +166,36 @@ if (!window.fetch) {
   };
 }
 
+// Footer indicators: manage request/response dots
+(function(){
+  var _pendingFetches = 0;
+  function setDot(elId, cls) {
+    try {
+      var el = document.getElementById(elId);
+      if (!el) return;
+      el.className = 'footer-dot ' + cls;
+    } catch(e) {}
+  }
+  function pulseReq() { setDot('footer-req-dot','footer-dot-req'); setTimeout(function(){ setDot('footer-req-dot','footer-dot-off'); }, 600); }
+  function pulseRes() { setDot('footer-res-dot','footer-dot-res'); setTimeout(function(){ setDot('footer-res-dot','footer-dot-off'); }, 800); }
+
+  var origFetch = window.fetch;
+  window.fetch = function(url, opts) {
+    try {
+      _pendingFetches++;
+      // pulse the request dot once per fetch start
+      pulseReq();
+    } catch(e) {}
+    return origFetch.apply(this, arguments).then(function(resp){
+      try { _pendingFetches = Math.max(0,_pendingFetches-1); pulseRes(); } catch(e) {}
+      return resp;
+    }).catch(function(err){
+      try { _pendingFetches = Math.max(0,_pendingFetches-1); pulseRes(); } catch(e) {}
+      throw err;
+    });
+  };
+})();
+
 window.refreshTab = function(id, url) {
   var el = document.getElementById(id);
   if (el) el.textContent = 'Loading…';
@@ -436,7 +466,7 @@ function showTab(tabId, show) {
   if (!el) return;
 
   // Find the corresponding nav link
-  var navLink = document.querySelector('#mainTabs a[href="#' + tabId + '"]');
+    var navLink = document.querySelector('#mainTabs a[href="#' + tabId + '"]');
   if (navLink) {
     var navItem = navLink.parentElement;
     if (show) {
@@ -1397,7 +1427,7 @@ function populateFetchStats(fs) {
     html += '<div class="panel-heading" style="display:flex; justify-content:space-between; align-items:center;">';
     html += '<div style="font-weight:600">Fetch Queue</div>';
   html += '<div style="display:flex; gap:8px; align-items:center;">';
-  html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><span class="spin" id="fetch-stats-refresh-spin"></span>Refresh</button>';
+  html += '<button id="fetch-stats-refresh" class="btn btn-xs btn-default"><i class="glyphicon glyphicon-refresh"></i></button>';
   html += '<button id="fetch-stats-debug" class="btn btn-xs btn-default">Debug</button>';
   // interval selector: persisted in localStorage as 'fetch_auto_interval_ms'
   html += '<select id="fetch-stats-interval" class="input-sm form-control" style="width:120px; display:inline-block; margin-right:6px;">';
@@ -1457,12 +1487,11 @@ function populateFetchStats(fs) {
 
     // wire actions: refresh
     var ref = document.getElementById('fetch-stats-refresh');
-    var refSpinner = document.getElementById('fetch-stats-refresh-spin');
     if (ref) ref.addEventListener('click', function(){
-      try { ref.disabled = true; if (refSpinner) refSpinner.classList.add('rotate'); } catch(e){}
+      try { ref.disabled = true; } catch(e){}
       fetch('/status/lite', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s.fetch_stats) populateFetchStats(s.fetch_stats); } catch(e){} }).catch(function(){
     safeFetchStatus({cache:'no-store'}).then(function(s){ try{ if (s.fetch_stats) populateFetchStats(s.fetch_stats); }catch(e){} });
-      }).finally(function(){ try{ if (refSpinner) refSpinner.classList.remove('rotate'); ref.disabled=false; }catch(e){} });
+      }).finally(function(){ try{ ref.disabled=false; }catch(e){} });
     });
 
     // Auto-refresh toggle logic
@@ -1766,29 +1795,25 @@ function detectPlatformAndLoad() {
           var refreshConnBtn = document.getElementById('refresh-connections');
           if (refreshConnBtn) {
             refreshConnBtn.addEventListener('click', function(){
-              var spinner = document.getElementById('refresh-connections-spinner');
-              try { refreshConnBtn.disabled = true; } catch(e){}
-              if (spinner) spinner.classList.add('rotate');
+        try { refreshConnBtn.disabled = true; } catch(e){}
               // call loadConnections which returns a Promise
               try {
                 var p = loadConnections();
                 if (p && typeof p.finally === 'function') {
-                  p.finally(function(){ try{ refreshConnBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
+          p.finally(function(){ try{ refreshConnBtn.disabled=false; }catch(e){} });
                 } else {
                   // Not a promise (nodedb not ready), just re-enable
-                  try{ refreshConnBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate');
+          try{ refreshConnBtn.disabled=false; }catch(e){}
                 }
-              } catch(e){ try{ refreshConnBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); }
+              } catch(e){ try{ refreshConnBtn.disabled=false; }catch(e){} }
             });
           }
           var refreshVerBtn = document.getElementById('refresh-versions');
           if (refreshVerBtn) {
             refreshVerBtn.addEventListener('click', function(){
-              var spinner = document.getElementById('refresh-versions-spinner');
               try { refreshVerBtn.disabled = true; } catch(e){}
-              if (spinner) spinner.classList.add('rotate');
               // Always fetch fresh versions.json on manual refresh (force bypassing loadVersions cache)
-              fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); } catch(e){} }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; }).finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
+              fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); } catch(e){} }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; }).finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} });
             });
           }
           // render fixed traceroute-to-uplink results when provided by /status
@@ -1957,10 +1982,9 @@ window.addEventListener('load', function(){
     refreshLinksBtn.addEventListener('click', function(){
   // clear client-side cache to avoid mixing stale DOM rows with new data
   try { window._olsr_links = []; } catch(e) {}
-      var statusEl = document.getElementById('links-status'); var spinner = document.getElementById('refresh-links-spinner');
+  var statusEl = document.getElementById('links-status');
       try { refreshLinksBtn.disabled = true; } catch(e){}
-      if (statusEl) statusEl.textContent = 'Refreshing…';
-      if (spinner) spinner.classList.add('rotate');
+  if (statusEl) statusEl.textContent = 'Refreshing…';
       // First force-update node_db (non-blocking by default). If server returns queued status
       // we proceed to fetch links immediately; if the client wants to ensure fresh names,
       // they can use ?wait=1 but that may block the UI.
@@ -1973,7 +1997,7 @@ window.addEventListener('load', function(){
         if (statusEl) statusEl.textContent = '';
         _olsrLoaded = true;
         showActionToast('Links refreshed', 2500);
-      }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; showActionToast('Error refreshing links', 4000); }).finally(function(){ try{ refreshLinksBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
+  }).catch(function(e){ if (statusEl) statusEl.textContent = 'ERR'; showActionToast('Error refreshing links', 4000); }).finally(function(){ try{ refreshLinksBtn.disabled=false; }catch(e){} });
     });
   }
 });
@@ -2580,12 +2604,10 @@ function virtualRender() {
 function refreshLog() {
   var btn = document.getElementById('refresh-log');
   var classBtns = document.querySelectorAll('.refresh-log-btn');
-  var spinner = document.getElementById('refresh-log-spinner-2') || document.getElementById('refresh-log-spinner');
   var status = document.getElementById('log-status');
   try {
     if (btn) btn.disabled = true;
     if (classBtns && classBtns.length) classBtns.forEach(function(b){ b.disabled = true; });
-    if (spinner) spinner.classList.add('rotate');
     if (status) status.textContent = 'Refreshing...';
   } catch(e){}
   // Request all available log lines; backend will limit automatically
@@ -2621,7 +2643,6 @@ function refreshLog() {
       try {
         if (btn) btn.disabled = false;
         if (classBtns && classBtns.length) classBtns.forEach(function(b){ b.disabled = false; });
-        if (spinner) spinner.classList.remove('rotate');
       } catch(e){}
     });
 }
@@ -2975,7 +2996,7 @@ function renderVersionsPanel(v) {
   refreshBtn.id = 'refresh-versions';
   refreshBtn.className = 'btn btn-xs btn-default';
   refreshBtn.title = 'Refresh versions';
-  refreshBtn.innerHTML = '<span class="spin" id="refresh-versions-spinner"></span> <i class="glyphicon glyphicon-refresh"></i>';
+  refreshBtn.innerHTML = '<i class="glyphicon glyphicon-refresh"></i>';
   rightCol.appendChild(refreshBtn);
   rightCol.appendChild(badgeContainer);
   headerRow.appendChild(leftCol);

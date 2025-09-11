@@ -18,10 +18,7 @@
   .page-header h1 { margin-bottom:6px; }
   .table-condensed th, .table-condensed td { padding:6px; }
   .table-hover > tbody > tr:hover { background-color:#f5f5f5; }
-  /* Shared spinner used by refresh buttons */
-  .spin{display:inline-block; width:12px; height:12px; vertical-align:middle; margin-right:6px;}
-  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-  .spin.rotate { animation: spin 1s linear infinite; }
+  /* Spinner removed: replaced by footer request/response indicators */
   /* Fetch stats badges */
   .fetch-badge { display:inline-block; padding:5px 10px; margin-right:6px; border-radius:6px; background:#f0f6ff; color:#013369; font-size:90%; border:1px solid #c9deff; }
   .fetch-badge.warn { background:#fff6e5; color:#6a4a00; border-color:#ffe9b8; }
@@ -186,7 +183,7 @@
 
         <!-- OLSR Links -->
   <div id="tab-olsr" class="tab-pane">
-      <h3>OLSR Links <button id="refresh-links" class="btn btn-xs btn-default"><span class="spin" id="refresh-links-spinner"></span>Refresh</button>
+  <h3>OLSR Links <button id="refresh-links" class="btn btn-xs btn-default"><i class="glyphicon glyphicon-refresh"></i></button>
             <span id="links-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#olsrLinksTable" placeholder="Search..."></div>
           <div class="table-responsive">
@@ -236,7 +233,7 @@
 
         <!-- Connections -->
         <div id="tab-connections" class="tab-pane">
-          <h3>Connections <button id="refresh-connections" class="btn btn-xs btn-default"><span class="spin" id="refresh-connections-spinner"></span>Refresh</button>
+          <h3>Connections <button id="refresh-connections" class="btn btn-xs btn-default"><i class="glyphicon glyphicon-refresh"></i></button>
             <span id="connections-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#connectionsTable" placeholder="Search..."></div>
           <div class="table-responsive">
@@ -371,7 +368,7 @@
 
         <!-- Log -->
         <div id="tab-log" class="tab-pane">
-          <h3>Log <button id="refresh-log" class="btn btn-xs btn-default"><span class="spin" id="refresh-log-spinner"></span>Refresh</button>
+          <h3>Log <button id="refresh-log" class="btn btn-xs btn-default"><i class="glyphicon glyphicon-refresh"></i></button>
             <span id="log-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input id="log-filter" class="table-search-input form-control input-sm" placeholder="Filter log lines..."></div>
           <div style="margin-top:8px">
@@ -402,6 +399,16 @@
           <div id="fetch-toast-msg" style="font-size:12px; margin-top:6px;"></div>
         </div>
       </div>
+
+      <!-- Minimal sticky footer with two-dot request/response indicators -->
+      <footer id="status-footer" style="position:fixed; left:0; right:0; bottom:0; height:18px; background:transparent; z-index:2400; pointer-events:none;">
+        <div style="max-width:100%; margin:0 auto; padding:2px 12px; height:100%; display:flex; align-items:center; justify-content:flex-end;">
+          <div id="footer-indicators" style="pointer-events:auto; display:flex; gap:6px; align-items:center;">
+            <div id="footer-req-dot" class="footer-dot footer-dot-off" title="Outgoing requests"></div>
+            <div id="footer-res-dot" class="footer-dot footer-dot-off" title="Responses received"></div>
+          </div>
+        </div>
+      </footer>
 
       <!-- Small transient toast for actions (refresh success/error) -->
       <div id="action-toast" style="display:none; position:fixed; right:18px; bottom:86px; z-index:2500;">
