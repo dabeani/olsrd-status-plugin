@@ -164,9 +164,6 @@ Note: when this env var is present it replaces any `PlParam "Net"` entries from 
 
 ```bash
 export OLSRD_STATUS_PLUGIN_NODEDB_URL="https://example.com/nodedb.json"
-```
-
-* `OLSRD_STATUS_PLUGIN_NODEDB_TTL` – integer seconds TTL for the cached node DB.
 
 ```bash
 export OLSRD_STATUS_PLUGIN_NODEDB_TTL=600
@@ -185,15 +182,11 @@ export OLSRD_STATUS_FETCH_STARTUP_WAIT=60
 ```
 
 Additional runtime tuning (PlParam names available in `olsrd.conf` plugin block):
-
 * `OLSRD_STATUS_FETCH_QUEUE_MAX` / PlParam `fetch_queue_max` – maximum number of pending fetch requests queued before new non-waiting requests are dropped. Default: 4.
-
 ```bash
 export OLSRD_STATUS_FETCH_QUEUE_MAX=8
 ```
-
 * `log_request_debug` (PlParam) / `OLSRD_STATUS_LOG_REQUEST_DEBUG` or short alias `OLSRD_LOG_REQ_DBG` (env) – optional toggle (0/1) to emit concise per-request debug messages for some endpoints (useful to trace UI fetches like `/status/stats`). Default: 0 (off).
-
 Example (env):
 
 ```bash
@@ -210,14 +203,12 @@ Discovery tuning (PlParam names available in `olsrd.conf` plugin block):
 
 * `OLSRD_STATUS_DISCOVER_INTERVAL` / PlParam `discover_interval` – automatic devices discovery interval in seconds. Default: 60s. Valid range: 5 - 86400 (1 day).
 
-```bash
 export OLSRD_STATUS_DISCOVER_INTERVAL=60
 ```
 
 * `OLSRD_STATUS_UBNT_PROBE_WINDOW_MS` / PlParam `ubnt_probe_window_ms` – per‑interface UBNT probe collection window in milliseconds (the discover probe is retransmitted at about half this window, min 100ms). Default: 1000 ms. Valid range: 100 - 60000.
 
 ```bash
-export OLSRD_STATUS_UBNT_PROBE_WINDOW_MS=1000
 ```
 
 Example `olsrd.conf` plugin block (pasteable):
@@ -225,7 +216,6 @@ Example `olsrd.conf` plugin block (pasteable):
 ```
 LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
 {
-    PlParam "bind"       "0.0.0.0"
     PlParam "port"       "11080"
     PlParam "assetroot"  "/usr/share/olsrd-status-plugin/www"
     # Discovery tuning (PlParam wins over environment variables)
