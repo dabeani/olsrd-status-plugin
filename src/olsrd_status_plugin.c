@@ -3315,6 +3315,67 @@ static int h_status_stats(http_request_t *r) {
   // Approximate olsr routes/nodes from cached metrics
   unsigned long olsr_routes = unique_routes; unsigned long olsr_nodes = unique_nodes;
 
+  /* Try to compute live counts by probing local OLSR endpoints if unique metrics are zero.
+   * This provides immediate feedback in the UI even when normalize step hasn't been run
+   * by a full /status request yet.
+   */
+  if (olsr_routes == 0 && olsr_nodes == 0) {
+    char *links_raw = NULL; size_t lr = 0;
+    char *routes_raw = NULL; size_t rr = 0;
+    char *topology_raw = NULL; size_t tr = 0;
+    const char *link_eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
+    const char *routes_eps[] = { "http://127.0.0.1:9090/routes", "http://127.0.0.1:2006/routes", "http://127.0.0.1:8123/routes", NULL };
+    const char *topo_eps[] = { "http://127.0.0.1:9090/topology", "http://127.0.0.1:2006/topology", "http://127.0.0.1:8123/topology", NULL };
+    for (const char **ep = link_eps; *ep && !links_raw; ++ep) {
+      if (util_http_get_url_local(*ep, &links_raw, &lr, 1) == 0 && links_raw && lr > 0) break;
+      if (links_raw) { free(links_raw); links_raw = NULL; lr = 0; }
+    }
+    for (const char **ep = routes_eps; *ep && !routes_raw; ++ep) {
+      if (util_http_get_url_local(*ep, &routes_raw, &rr, 1) == 0 && routes_raw && rr > 0) break;
+      if (routes_raw) { free(routes_raw); routes_raw = NULL; rr = 0; }
+    }
+    for (const char **ep = topo_eps; *ep && !topology_raw; ++ep) {
+      if (util_http_get_url_local(*ep, &topology_raw, &tr, 1) == 0 && topology_raw && tr > 0) break;
+      if (topology_raw) { free(topology_raw); topology_raw = NULL; tr = 0; }
+    }
+    if (links_raw || routes_raw || topology_raw) {
+      /* combine similarly to full status path */
+      size_t clen = (links_raw?strlen(links_raw):0) + (routes_raw?strlen(routes_raw):0) + (topology_raw?strlen(topology_raw):0) + 8;
+      char *combined = malloc(clen+1);
+      if (combined) {
+        combined[0]=0;
+        if (links_raw) { strncat(combined, links_raw, clen); strncat(combined, "\n", clen); }
+        if (routes_raw) { strncat(combined, routes_raw, clen); strncat(combined, "\n", clen); }
+        if (topology_raw) { strncat(combined, topology_raw, clen); strncat(combined, "\n", clen); }
+        char *norm = NULL; size_t nn = 0;
+        if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn>0) {
+          /* crude parse: sum all occurrences of "\"routes\":\"NUM\"" and "\"nodes\":\"NUM\"" */
+          unsigned long sum_routes = 0, sum_nodes = 0;
+          const char *p = norm;
+          while ((p = strstr(p, "\"routes\":")) != NULL) {
+            p += 9; /* skip \"routes\": */
+            while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p==':' )) p++;
+            sum_routes += strtoul(p, NULL, 10);
+          }
+          p = norm;
+          while ((p = strstr(p, "\"nodes\":")) != NULL) {
+            p += 8;
+            while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p==':' )) p++;
+            sum_nodes += strtoul(p, NULL, 10);
+          }
+          if (sum_routes > 0 || sum_nodes > 0) {
+            olsr_routes = sum_routes; olsr_nodes = sum_nodes;
+          }
+        }
+        if (norm) free(norm);
+        free(combined);
+      }
+    }
+    if (links_raw) free(links_raw);
+    if (routes_raw) free(routes_raw);
+    if (topology_raw) free(topology_raw);
+  }
+
   snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
            olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, strlen(out));

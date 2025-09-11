@@ -115,6 +115,14 @@
 .status-badges .badge.nodes { background:#6cc070; color:#063; }
 .status-badges .badge.routes { background:#2b9af3; color:#04315a; }
 
+/* Compact global header inside #global-versions-header */
+#global-versions-header .panel.panel-default { margin:0; border-radius:6px; }
+#global-versions-header .panel-body { padding:6px 10px; }
+#global-versions-header .status-badges { gap:6px; }
+#global-versions-header .status-olsr-badge { font-size:12px; padding:3px 8px; border-radius:10px; }
+#global-versions-header .status-olsr-badge span { display:inline-block; }
+#global-versions-header .status-olsr-badge span:first-child { width:14px; height:14px; line-height:14px; text-align:center; border-radius:50%; margin-right:6px; }
+
 /* Badge interaction and states */
 .status-badges .badge { cursor: default; }
 .status-badges .badge.clickable { cursor: pointer; }

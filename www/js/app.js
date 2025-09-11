@@ -1787,14 +1787,8 @@ function detectPlatformAndLoad() {
               var spinner = document.getElementById('refresh-versions-spinner');
               try { refreshVerBtn.disabled = true; } catch(e){}
               if (spinner) spinner.classList.add('rotate');
-              try {
-                var p = loadVersions();
-                if (p && typeof p.finally === 'function') {
-                  p.finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
-                } else {
-                  try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate');
-                }
-              } catch(e){ try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); }
+              // Always fetch fresh versions.json on manual refresh (force bypassing loadVersions cache)
+              fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); } catch(e){} }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; }).finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} if (spinner) spinner.classList.remove('rotate'); });
             });
           }
           // render fixed traceroute-to-uplink results when provided by /status
@@ -2879,37 +2873,44 @@ function renderVersionsPanel(v) {
   var container = document.createElement('div');
   container.className = 'versions-container';
 
-  // Header section with system overview
+  // Compact Header section (single-line) with system overview and right-aligned badges
   var headerCard = document.createElement('div');
-  headerCard.className = 'panel panel-primary';
+  // use panel-default for a smaller visual footprint
+  headerCard.className = 'panel panel-default';
   var headerBody = document.createElement('div');
   headerBody.className = 'panel-body';
+  // make it a compact single-line flex row
+  headerBody.style.display = 'flex';
+  headerBody.style.alignItems = 'center';
+  headerBody.style.justifyContent = 'space-between';
+  headerBody.style.padding = '6px 10px';
 
-  var headerRow = document.createElement('div');
-  headerRow.className = 'row';
-
-  // Left side - System info
+  // Left side - minimal System info
   var leftCol = document.createElement('div');
-  leftCol.className = 'col-md-6';
+  leftCol.className = 'header-left';
+  leftCol.style.display = 'flex';
+  leftCol.style.flexDirection = 'column';
+  leftCol.style.fontSize = '13px';
+  leftCol.style.fontWeight = '600';
   var systemInfo = document.createElement('div');
-  systemInfo.innerHTML = '<h4><i class="glyphicon glyphicon-hdd"></i> ' + (v.hostname || 'System') + '</h4>';
-  systemInfo.innerHTML += '<p class="text-muted">' + (v.system || 'Unknown system') + ' • ' + (v.ipv4 || 'No IP') + '</p>';
+  var smallInfo = (v.system ? v.system + ' • ' : '') + (v.ipv4 || 'No IP');
+  systemInfo.innerHTML = '<div style="font-weight:700">' + (v.hostname || 'System') + '</div><div style="font-size:11px;color:#666;margin-top:2px;">' + smallInfo + '</div>';
   leftCol.appendChild(systemInfo);
 
   // Right side - Status badges
   var rightCol = document.createElement('div');
-  rightCol.className = 'col-md-6 text-right';
+  rightCol.className = 'header-right';
+  rightCol.style.display = 'flex';
+  rightCol.style.alignItems = 'center';
+  rightCol.style.gap = '10px';
   var badgeContainer = document.createElement('div');
-  badgeContainer.style.marginTop = '10px';
-
-  // Refresh button for Versions (moved to global header). Keep spinner element id.
-  var refreshBtn = document.createElement('button');
-  refreshBtn.id = 'refresh-versions';
-  refreshBtn.className = 'btn btn-sm btn-primary';
-  refreshBtn.style.marginTop = '15px';
-  refreshBtn.innerHTML = '<span class="spin" id="refresh-versions-spinner"></span> <i class="glyphicon glyphicon-refresh"></i> Refresh';
-  // Place the refresh button above the badges on narrow viewports
-  rightCol.appendChild(refreshBtn);
+  badgeContainer.className = 'status-badges';
+  // Row wrapper for left and right columns
+  var headerRow = document.createElement('div');
+  headerRow.style.display = 'flex';
+  headerRow.style.alignItems = 'center';
+  headerRow.style.justifyContent = 'space-between';
+  headerRow.style.width = '100%';
 
   // Compact status badge helper per user rules: show green OK (with check) when binary exists and running,
   // red X when binary exists but not running, grey X when binary not present.
@@ -2969,6 +2970,13 @@ function renderVersionsPanel(v) {
     }
   } catch (e) { /* ignore UI errors */ }
 
+  // Refresh button for Versions (moved to global header). Keep spinner element id.
+  var refreshBtn = document.createElement('button');
+  refreshBtn.id = 'refresh-versions';
+  refreshBtn.className = 'btn btn-xs btn-default';
+  refreshBtn.title = 'Refresh versions';
+  refreshBtn.innerHTML = '<span class="spin" id="refresh-versions-spinner"></span> <i class="glyphicon glyphicon-refresh"></i>';
+  rightCol.appendChild(refreshBtn);
   rightCol.appendChild(badgeContainer);
   headerRow.appendChild(leftCol);
   headerRow.appendChild(rightCol);
