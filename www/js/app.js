@@ -982,14 +982,10 @@ function populateOlsrLinksTable(links) {
       routesCell.style.cursor='pointer'; routesCell.title='Click to view routes via this neighbor';
       routesCell.addEventListener('click', function(){ showRoutesFor(l.remote); });
     }
-    // incorporate small metric badges into routes cell (avoid an extra column that shifts nodes)
-    try {
-      var badgeSpan = document.createElement('span');
-      badgeSpan.className = 'metric-badge routes small';
-      badgeSpan.style.marginLeft = '6px';
-      badgeSpan.textContent = 'R:' + (l.routes || '0');
-      routesCell.appendChild(badgeSpan);
-    } catch(e){}
+  // Previously we appended an extra metric badge inside the Routes cell
+  // (e.g. a blue bootstrap-styled pill). That duplicated the numeric value
+  // visually; keep only the plain numeric/text routes value to avoid
+  // duplicate rendering and conserve horizontal space.
     tr.appendChild(routesCell);
     // nodes column: show numeric count and tooltip with names (avoid duplicating long text in table)
     var nodeCount = '';
