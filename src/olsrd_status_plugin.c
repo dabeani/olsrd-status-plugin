@@ -3394,7 +3394,12 @@ static int h_status_ping(http_request_t *r) {
   gettimeofday(&tv, NULL);
   unsigned long long ms = (unsigned long long)tv.tv_sec * 1000ULL + (unsigned long long)(tv.tv_usec / 1000ULL);
   int n = snprintf(out, sizeof(out), "{\"ts\":%llu}\n", ms);
-  if (n < 0) n = 0; if (n >= (int)sizeof(out)) n = (int)sizeof(out) - 1;
+  if (n < 0) {
+    n = 0;
+  }
+  if (n >= (int)sizeof(out)) {
+    n = (int)sizeof(out) - 1;
+  }
   http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, n);
   return 0;
 }
