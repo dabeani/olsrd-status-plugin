@@ -421,12 +421,13 @@ static void *connection_worker(void *arg) {
   char *q = strchr(path, '?'); if (q) { *q = 0; size_t qlen = strnlen(q+1, sizeof(r->query)-1); if (qlen >= sizeof(r->query)-1) qlen = sizeof(r->query)-1; memcpy(r->query, q+1, qlen); r->query[qlen]=0; urldecode(r->query); }
   size_t plen = strnlen(path, sizeof(r->path)-1); if (plen >= sizeof(r->path)-1) plen = sizeof(r->path)-1; memcpy(r->path, path, plen); r->path[plen]=0;
   char *hosth = strcasestr(sp2+1, "\nHost:"); if (hosth) { hosth += 6; while (*hosth==' ' || *hosth=='\t') hosth++; char *e = strpbrk(hosth, "\r\n"); if (e) *e = 0; size_t hlen = strnlen(hosth, sizeof(r->host)-1); if (hlen >= sizeof(r->host)-1) hlen = sizeof(r->host)-1; memcpy(r->host, hosth, hlen); r->host[hlen]=0; }
-  if (g_log_access) fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r->method, r->path, r->client_ip, r->query, r->host);
+  /* Request line: only emit when per-request debug is enabled */
+  if (g_log_request_debug) fprintf(stderr, "[httpd] request: %s %s from %s query='%s' host='%s'\n", r->method, r->path, r->client_ip, r->query, r->host);
   /* Optional per-endpoint request debug logging (disabled by default). When enabled,
    * emit an abbreviated line for GET /status/stats requests to help diagnosing UI fetches.
    */
   if (g_log_request_debug && strcmp(r->method, "GET") == 0 && strcmp(r->path, "/status/stats") == 0) {
-    if (g_log_access) fprintf(stderr, "[httpd][debug] request: %s %s from %s\n", r->method, r->path, r->client_ip);
+    fprintf(stderr, "[httpd][debug] request: %s %s from %s\n", r->method, r->path, r->client_ip);
   }
 
   /* Enforce allow-list even for static assets */

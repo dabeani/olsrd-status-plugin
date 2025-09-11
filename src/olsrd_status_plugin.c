@@ -327,6 +327,13 @@ static void endpoint_coalesce_finish(endpoint_coalesce_t *e, char *newbuf, size_
 static endpoint_coalesce_t g_traceroute_co;
 static endpoint_coalesce_t g_discover_co;
 static endpoint_coalesce_t g_devices_co;
+/* Coalescer TTLs (seconds) - defaults mirror previous hardcoded values */
+static int g_coalesce_devices_ttl = 5;
+static int g_coalesce_discover_ttl = 10;
+static int g_coalesce_traceroute_ttl = 5;
+static int g_cfg_coalesce_devices_ttl_set = 0;
+static int g_cfg_coalesce_discover_ttl_set = 0;
+static int g_cfg_coalesce_traceroute_ttl_set = 0;
 /* --- end coalescing helper --- */
 
 /* Debug counters for diagnostics */
@@ -4485,6 +4492,9 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_log_force", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_force, .addon = {0} },
   { .name = "log_request_debug", .set_plugin_parameter = &set_int_param, .data = &g_log_request_debug, .addon = {0} },
   { .name = "log_buf_lines", .set_plugin_parameter = &set_int_param, .data = &g_log_buf_lines, .addon = {0} },
+  { .name = "coalesce_devices_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_devices_ttl, .addon = {0} },
+  { .name = "coalesce_discover_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_discover_ttl, .addon = {0} },
+  { .name = "coalesce_traceroute_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_traceroute_ttl, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
   { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
@@ -4867,9 +4877,9 @@ int olsrd_plugin_init(void) {
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
   /* start background workers */
   /* init endpoint coalescing helpers (short TTLs) */
-  endpoint_coalesce_init(&g_traceroute_co, 5);
-  endpoint_coalesce_init(&g_discover_co, 10);
-  endpoint_coalesce_init(&g_devices_co, 5);
+  endpoint_coalesce_init(&g_traceroute_co, g_coalesce_traceroute_ttl);
+  endpoint_coalesce_init(&g_discover_co, g_coalesce_discover_ttl);
+  endpoint_coalesce_init(&g_devices_co, g_coalesce_devices_ttl);
   start_devices_worker();
   /* start node DB background worker */
   start_nodedb_worker();
