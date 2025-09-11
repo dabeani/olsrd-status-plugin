@@ -214,6 +214,95 @@ static int g_fetch_worker_running = 0;
 /* max seconds to wait when a caller requests wait=1 to avoid indefinite block */
 static int g_fetch_wait_timeout = 30;
 
+/* --- endpoint coalescing helper ---
+ * Simple per-endpoint serializer that optionally caches the last payload for a short TTL.
+ * It allows multiple concurrent HTTP requests for the same endpoint to avoid duplicating
+ * expensive work (external commands, broadcasts). Concurrent callers either get a
+ * recent cached response or wait for the in-flight worker to finish and then use its result.
+ */
+typedef struct {
+  pthread_mutex_t m;
+  pthread_cond_t cv;
+  int busy;
+  char *cached;
+  size_t cached_len;
+  time_t ts;
+  int ttl;
+} endpoint_coalesce_t;
+
+static void endpoint_coalesce_init(endpoint_coalesce_t *e, int ttl) {
+  if (!e) return;
+  pthread_mutex_init(&e->m, NULL);
+  pthread_cond_init(&e->cv, NULL);
+  e->busy = 0;
+  e->cached = NULL;
+  e->cached_len = 0;
+  e->ts = 0;
+  e->ttl = ttl;
+}
+
+/* Try to start work: if returns 1 and *out != NULL => caller should immediately return cached payload (caller owns *out)
+ * If returns 0 => caller should perform the heavy work and later call endpoint_coalesce_finish().
+ */
+static int endpoint_coalesce_try_start(endpoint_coalesce_t *e, char **out, size_t *outlen) {
+  if (!e || !out) return 0;
+  time_t now = time(NULL);
+  pthread_mutex_lock(&e->m);
+  if (e->cached && e->cached_len > 0 && (now - e->ts) <= e->ttl) {
+    *out = malloc(e->cached_len + 1);
+    if (*out) {
+      memcpy(*out, e->cached, e->cached_len + 1);
+      if (outlen) *outlen = e->cached_len;
+      pthread_mutex_unlock(&e->m);
+      return 1;
+    }
+  }
+  if (e->busy) {
+    while (e->busy) pthread_cond_wait(&e->cv, &e->m);
+    if (e->cached && e->cached_len > 0 && (time(NULL) - e->ts) <= e->ttl) {
+      *out = malloc(e->cached_len + 1);
+      if (*out) {
+        memcpy(*out, e->cached, e->cached_len + 1);
+        if (outlen) *outlen = e->cached_len;
+        pthread_mutex_unlock(&e->m);
+        return 1;
+      }
+    }
+    pthread_mutex_unlock(&e->m);
+    return 0;
+  }
+  e->busy = 1;
+  pthread_mutex_unlock(&e->m);
+  return 0;
+}
+
+/* Finish work: provide malloc'd payload newbuf (ownership transferred). The helper will copy into cache
+ * and free newbuf. If newbuf==NULL the cache is cleared.
+ */
+static void endpoint_coalesce_finish(endpoint_coalesce_t *e, char *newbuf, size_t newlen) {
+  if (!e) { if (newbuf) free(newbuf); return; }
+  pthread_mutex_lock(&e->m);
+  if (e->cached) { free(e->cached); e->cached = NULL; e->cached_len = 0; }
+  if (newbuf && newlen > 0) {
+    e->cached = malloc(newlen + 1);
+    if (e->cached) {
+      memcpy(e->cached, newbuf, newlen + 1);
+      e->cached_len = newlen;
+      e->ts = time(NULL);
+    }
+  }
+  if (newbuf) free(newbuf);
+  e->busy = 0;
+  pthread_cond_broadcast(&e->cv);
+  pthread_mutex_unlock(&e->m);
+}
+
+/* Per-endpoint coalesce instances */
+static endpoint_coalesce_t g_traceroute_co;
+static endpoint_coalesce_t g_discover_co;
+static endpoint_coalesce_t g_devices_co;
+/* --- end coalescing helper --- */
+
 /* Debug counters for diagnostics */
 /* Debug counters for diagnostics: use C11 atomics when available for lock-free updates */
 #if HAVE_C11_ATOMICS
@@ -3081,6 +3170,15 @@ static int h_devices_json(http_request_t *r) {
   char *udcopy = NULL; size_t udlen = 0;
   int have_ud = 0, have_arp = 0;
 
+  /* try to serve cached merged devices JSON via coalescer */
+  char *cached = NULL; size_t cached_len = 0;
+  if (endpoint_coalesce_try_start(&g_devices_co, &cached, &cached_len)) {
+    if (cached) {
+      http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, cached, cached_len); free(cached); return 0;
+    }
+    /* otherwise fall through to build fresh output */
+  }
+
   /* grab snapshot of cached normalized ubnt devices if present */
   pthread_mutex_lock(&g_devices_cache_lock);
   if (g_devices_cache && g_devices_cache_len > 0) {
@@ -3181,9 +3279,17 @@ static int h_devices_json(http_request_t *r) {
 
   http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, len);
 
+  /* Prepare a malloc'd copy for caching (ownership will be given to coalescer) */
+  char *cache_copy = NULL; size_t cache_len = 0;
+  if (out) {
+    cache_len = len;
+    cache_copy = malloc(cache_len + 1);
+    if (cache_copy) { memcpy(cache_copy, out, cache_len); cache_copy[cache_len] = '\0'; }
+  }
   if (out) free(out);
   if (udcopy) free(udcopy);
   if (arp) free(arp);
+  endpoint_coalesce_finish(&g_devices_co, cache_copy, cache_len);
   return 0;
 }
 
@@ -3623,21 +3729,51 @@ static int h_status_traceroute(http_request_t *r) {
 
   /* Run traceroute and parse lines into simple objects (reuse same parsing as h_status) */
   {
+    /* coalesce concurrent traceroute work */
+    char *cached = NULL; size_t cached_len = 0;
+    if (endpoint_coalesce_try_start(&g_traceroute_co, &cached, &cached_len)) {
+      if (cached) {
+        http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, cached, cached_len);
+        free(cached);
+        return 0;
+      }
+      /* fell through to perform work */
+    }
     const char *trpath = (g_traceroute_path[0]) ? g_traceroute_path : "traceroute";
     size_t cmdlen = strlen(trpath) + strlen(traceroute_to) + 64;
     char *cmd = (char*)malloc(cmdlen);
-    if (!cmd) { TAPP("\"trace_to_uplink\":[] }"); http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen); return 0; }
+    if (!cmd) { TAPP("\"trace_to_uplink\":[] }"); http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen); endpoint_coalesce_finish(&g_traceroute_co, NULL, 0); return 0; }
     snprintf(cmd, cmdlen, "%s -4 -w 1 -q 1 %s", trpath, traceroute_to);
     char *tout = NULL; size_t t_n = 0;
     if (util_exec(cmd, &tout, &t_n) != 0 || !tout || t_n==0) {
       free(cmd);
-      TAPP("\"trace_to_uplink\":[] }"); http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen);
+      TAPP("\"trace_to_uplink\":[] }");
+      /* prepare a malloc'd copy for cache */
+      char *resp_copy = strdup(outbuf);
+      size_t resp_len = resp_copy ? strlen(resp_copy) : 0;
+      http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen);
+      endpoint_coalesce_finish(&g_traceroute_co, resp_copy, resp_len);
       if (tout) free(tout);
       return 0;
     }
     free(cmd);
+    /* We'll build the full JSON into a malloc'd buffer so it can be cached. */
+    size_t resp_cap = 8192; size_t resp_len = 0; char *resp = malloc(resp_cap);
+    if (!resp) {
+      if (tout) free(tout);
+      endpoint_coalesce_finish(&g_traceroute_co, NULL, 0);
+      TAPP("\"trace_to_uplink\":[] }"); http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen); return 0;
+    }
+    resp[0] = '\0';
+    /* copy existing header content from outbuf into resp */
+    size_t header_len = outlen;
+    if (resp_len + header_len + 1 > resp_cap) { size_t nc = resp_cap * 2 + header_len + 1024; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
+    memcpy(resp + resp_len, outbuf, header_len); resp_len += header_len; resp[resp_len] = '\0';
     /* append array start */
-    TAPP("\"trace_to_uplink\":[");
+    const char *arr_start = "\"trace_to_uplink\":[";
+    size_t as = strlen(arr_start);
+    if (resp_len + as + 16 > resp_cap) { size_t nc = resp_cap * 2 + as + 1024; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
+    memcpy(resp + resp_len, arr_start, as); resp_len += as; resp[resp_len] = '\0';
     char *p = tout; char *line; int first = 1;
     while ((line = strsep(&p, "\n")) != NULL) {
       if (!line || !*line) continue;
@@ -3653,17 +3789,31 @@ static int h_status_traceroute(http_request_t *r) {
         snprintf(prev_tok,sizeof(prev_tok),"%s",tok); tok=strtok_r(NULL," ",&save); idx++; }
       if(seen_paren_ip){ snprintf(ip,sizeof(ip),"%s",raw_ip_paren); snprintf(host,sizeof(host),"%s",raw_host); } else { if(raw_host[0]){ int is_ip=1; for(char *c=raw_host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } } if(is_ip) snprintf(ip,sizeof(ip),"%.*s", (int)sizeof(ip)-1, raw_host); else snprintf(host,sizeof(host),"%.*s", (int)sizeof(host)-1, raw_host); } }
       free(norm);
-      if (!first) TAPP(","); first = 0;
-      /* escape values simply */
+      /* append comma if needed */
+      if (!first) {
+        if (resp_len + 2 > resp_cap) { size_t nc = resp_cap * 2 + 1024; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
+        memcpy(resp + resp_len, ",", 1); resp_len += 1; resp[resp_len] = '\0';
+      }
+      first = 0;
+      /* escape values simply and append object */
       char esc_ip[128]="", esc_host[512]="", esc_ping[128]="";
-      { size_t pp=0; for(size_t i=0; ip[i] && pp+2<sizeof(esc_ip); ++i){ char c=ip[i]; if(c=='"'||c=='\\'){ esc_ip[pp++]='\\'; esc_ip[pp++]=c; } else esc_ip[pp++]=c; } esc_ip[pp]=0; }
-      { size_t pp=0; for(size_t i=0; host[i] && pp+2<sizeof(esc_host); ++i){ char c=host[i]; if(c=='"'||c=='\\'){ esc_host[pp++]='\\'; esc_host[pp++]=c; } else esc_host[pp++]=host[i]; } esc_host[pp]=0; }
-      { size_t pp=0; for(size_t i=0; ping[i] && pp+2<sizeof(esc_ping); ++i){ char c=ping[i]; if(c=='"'||c=='\\'){ esc_ping[pp++]='\\'; esc_ping[pp++]=c; } else esc_ping[pp++]=ping[i]; } esc_ping[pp]=0; }
-      TAPP("{\"hop\":%s,\"ip\":\"%s\",\"host\":\"%s\",\"ping\":\"%s\"}", hop, esc_ip, esc_host, esc_ping);
+      { size_t pp=0; for(size_t i=0; ip[i] && pp+2<sizeof(esc_ip); ++i){ char c=ip[i]; if(c=='\"'||c=='\\'){ esc_ip[pp++]='\\'; esc_ip[pp++]=c; } else esc_ip[pp++]=c; } esc_ip[pp]=0; }
+      { size_t pp=0; for(size_t i=0; host[i] && pp+2<sizeof(esc_host); ++i){ char c=host[i]; if(c=='\"'||c=='\\'){ esc_host[pp++]='\\'; esc_host[pp++]=c; } else esc_host[pp++]=host[i]; } esc_host[pp]=0; }
+      { size_t pp=0; for(size_t i=0; ping[i] && pp+2<sizeof(esc_ping); ++i){ char c=ping[i]; if(c=='\"'||c=='\\'){ esc_ping[pp++]='\\'; esc_ping[pp++]=c; } else esc_ping[pp++]=ping[i]; } esc_ping[pp]=0; }
+      /* build object string */
+      char obj[1024]; int wn = snprintf(obj, sizeof(obj), "{\"hop\":%s,\"ip\":\"%s\",\"host\":\"%s\",\"ping\":\"%s\"}", hop, esc_ip, esc_host, esc_ping);
+      if (wn > 0) {
+        if (resp_len + (size_t)wn + 16 > resp_cap) { size_t nc = resp_cap * 2 + (size_t)wn + 4096; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
+        memcpy(resp + resp_len, obj, (size_t)wn); resp_len += (size_t)wn; resp[resp_len] = '\0';
+      }
     }
-    TAPP("] }");
-    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, outbuf, outlen);
+    /* close array/object */
+    if (resp_len + 4 > resp_cap) { size_t nc = resp_cap + 64; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
+    memcpy(resp + resp_len, "] }", 3); resp_len += 3; resp[resp_len] = '\0';
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, resp, resp_len);
     if (tout) free(tout);
+    /* cache and finish coalescing (endpoint_coalesce_finish takes ownership of resp) */
+    endpoint_coalesce_finish(&g_traceroute_co, resp, resp_len);
     return 0;
   }
 }
@@ -4465,6 +4615,10 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/traceroute", &h_traceroute);
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
   /* start background workers */
+  /* init endpoint coalescing helpers (short TTLs) */
+  endpoint_coalesce_init(&g_traceroute_co, 5);
+  endpoint_coalesce_init(&g_discover_co, 10);
+  endpoint_coalesce_init(&g_devices_co, 5);
   start_devices_worker();
   /* start node DB background worker */
   start_nodedb_worker();
@@ -4827,6 +4981,11 @@ static int h_discover(http_request_t *r) {
  */
 static int h_discover_ubnt(http_request_t *r) {
   char *devices_json = NULL; size_t devices_n = 0;
+  /* Try to serve from coalescing cache first or wait for ongoing work */
+  if (endpoint_coalesce_try_start(&g_discover_co, &devices_json, &devices_n)) {
+    if (devices_json) { send_json(r, devices_json); free(devices_json); return 0; }
+    /* otherwise fall through to attempt discovery */
+  }
   /* Try immediate internal aggregated discovery first (fast path) */
   if (ubnt_discover_output(&devices_json, &devices_n) != 0 || !devices_json || devices_n == 0) {
     /* enqueue and wait briefly as fallback */
@@ -4926,11 +5085,20 @@ static int h_discover_ubnt(http_request_t *r) {
   json_buf_append(&b,&len,&cap, "]}}\n");
 
   /* Return assembled JSON */
+  /* prepare string to cache: ensure malloc'd buffer owned by coalescer */
+  char *cache_copy = NULL; size_t cache_len = 0;
+  if (b) {
+    cache_len = len;
+    cache_copy = malloc(cache_len + 1);
+    if (cache_copy) { memcpy(cache_copy, b, cache_len); cache_copy[cache_len] = '\0'; }
+  }
   http_send_status(r, 200, "OK");
   http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
   http_write(r, b, len);
   free(b);
   if (devices_json) free(devices_json);
+  /* finish coalescing and store cache (cache_copy ownership transferred) */
+  endpoint_coalesce_finish(&g_discover_co, cache_copy, cache_len);
   return 0;
 }
 
