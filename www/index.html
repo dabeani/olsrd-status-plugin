@@ -400,12 +400,15 @@
         </div>
       </div>
 
-      <!-- Minimal sticky footer with two-dot request/response indicators -->
-      <footer id="status-footer" style="position:fixed; left:0; right:0; bottom:0; height:18px; background:transparent; z-index:2400; pointer-events:none;">
-        <div style="max-width:100%; margin:0 auto; padding:2px 12px; height:100%; display:flex; align-items:center; justify-content:flex-end;">
-          <div id="footer-indicators" style="pointer-events:auto; display:flex; gap:6px; align-items:center;">
-            <div id="footer-req-dot" class="footer-dot footer-dot-off" title="Outgoing requests"></div>
-            <div id="footer-res-dot" class="footer-dot footer-dot-off" title="Responses received"></div>
+      <!-- Minimal sticky footer with pending-request count and served-by on the left -->
+      <footer id="status-footer" style="position:fixed; left:0; right:0; bottom:0; height:28px; background:#f1f1f1; z-index:2400; pointer-events:none;">
+        <div style="max-width:100%; margin:0 auto; padding:4px 12px; height:100%; display:flex; align-items:center; justify-content:space-between;">
+          <div style="pointer-events:auto; display:flex; align-items:center; gap:8px; color:#666; font-size:12px;">Served by olsrd-status-plugin</div>
+          <div id="footer-indicators" style="pointer-events:auto; display:flex; gap:12px; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="font-size:12px; color:#666;">Pending:</div>
+              <div id="footer-pending-count" class="footer-pending">0</div>
+            </div>
           </div>
         </div>
       </footer>
@@ -415,7 +418,7 @@
         <div id="action-toast-body" style="background:#333; color:#fff; padding:8px 12px; border-radius:6px; box-shadow:0 6px 16px rgba(0,0,0,0.25);">Action</div>
       </div>
 
-      <footer style="margin-top:20px" class="small-muted">Served by olsrd-status-plugin</footer>
+  <!-- legacy served-by footer removed (moved into sticky footer) -->
     </div>
 
     <!-- jQuery + Bootstrap JS (CDN) -->

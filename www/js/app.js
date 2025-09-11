@@ -166,31 +166,27 @@ if (!window.fetch) {
   };
 }
 
-// Footer indicators: manage request/response dots
+// Footer pending-request counter: show the number of in-flight fetches
 (function(){
   var _pendingFetches = 0;
-  function setDot(elId, cls) {
+  function updateFooterPending() {
     try {
-      var el = document.getElementById(elId);
+  var el = document.getElementById('footer-pending-count');
       if (!el) return;
-      el.className = 'footer-dot ' + cls;
+      el.textContent = String(_pendingFetches);
+  var badge = el;
+  if (_pendingFetches > 0) badge.classList.add('nonzero'); else badge.classList.remove('nonzero');
     } catch(e) {}
   }
-  function pulseReq() { setDot('footer-req-dot','footer-dot-req'); setTimeout(function(){ setDot('footer-req-dot','footer-dot-off'); }, 600); }
-  function pulseRes() { setDot('footer-res-dot','footer-dot-res'); setTimeout(function(){ setDot('footer-res-dot','footer-dot-off'); }, 800); }
 
   var origFetch = window.fetch;
   window.fetch = function(url, opts) {
-    try {
-      _pendingFetches++;
-      // pulse the request dot once per fetch start
-      pulseReq();
-    } catch(e) {}
+    try { _pendingFetches++; updateFooterPending(); } catch(e) {}
     return origFetch.apply(this, arguments).then(function(resp){
-      try { _pendingFetches = Math.max(0,_pendingFetches-1); pulseRes(); } catch(e) {}
+      try { _pendingFetches = Math.max(0,_pendingFetches-1); updateFooterPending(); } catch(e) {}
       return resp;
     }).catch(function(err){
-      try { _pendingFetches = Math.max(0,_pendingFetches-1); pulseRes(); } catch(e) {}
+      try { _pendingFetches = Math.max(0,_pendingFetches-1); updateFooterPending(); } catch(e) {}
       throw err;
     });
   };
@@ -2991,13 +2987,7 @@ function renderVersionsPanel(v) {
     }
   } catch (e) { /* ignore UI errors */ }
 
-  // Refresh button for Versions (moved to global header). Keep spinner element id.
-  var refreshBtn = document.createElement('button');
-  refreshBtn.id = 'refresh-versions';
-  refreshBtn.className = 'btn btn-xs btn-default';
-  refreshBtn.title = 'Refresh versions';
-  refreshBtn.innerHTML = '<i class="glyphicon glyphicon-refresh"></i>';
-  rightCol.appendChild(refreshBtn);
+  // append badges to the right column (no refresh button per user request)
   rightCol.appendChild(badgeContainer);
   headerRow.appendChild(leftCol);
   headerRow.appendChild(rightCol);
