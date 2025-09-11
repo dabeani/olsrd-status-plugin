@@ -167,12 +167,16 @@ if (!window.fetch) {
 }
 
 // Global td helper: create a TD element. By default it sets textContent to avoid HTML injection.
-// Pass second argument `true` to allow HTML (kept for legacy call-sites that expect innerHTML).
-function td(val, allowHtml) {
+// Pass second argument `true` to allow HTML (legacy) - but we now avoid innerHTML and always create safe text nodes.
+function td(val/*, allowHtml - legacy */) {
   var td = document.createElement('td');
-  if (allowHtml) td.innerHTML = val || '';
-  else td.textContent = (typeof val === 'undefined' || val === null) ? '' : String(val);
+  if (typeof val === 'undefined' || val === null) td.textContent = ''; else td.textContent = String(val);
   return td;
+}
+
+// Safely remove all children from an element (avoids innerHTML = '')
+function clearChildren(el) {
+  try { if (!el) return; while (el.firstChild) el.removeChild(el.firstChild); } catch(e){}
 }
 
 // Footer pending-request counter: show the number of in-flight fetches
@@ -752,9 +756,26 @@ function populateOlsrLinksTable(links) {
   // attempt to resolve a primary node name for the remote IP using cached nodedb
   var nodeName = '';
   try { nodeName = getNodeNameForIp(l.remote) || ''; } catch(e) { nodeName = ''; }
-  // prefer explicit primary name from node_names (first entry) otherwise resolved name
-  var primary = nodeName || '';
-  try { if (l.node_names && typeof l.node_names === 'string') { var parts = l.node_names.split(',').map(function(s){return s.trim();}).filter(function(x){return x.length}); if (parts.length) primary = parts[0]; } } catch(e) {}
+  // prefer a name from l.node_names that maps to the remote IP in the nodedb.
+  var primary = '';
+  try {
+    var parts = [];
+    if (l.node_names && typeof l.node_names === 'string') parts = l.node_names.split(',').map(function(s){return s.trim();}).filter(function(x){return x.length});
+    // if nodedb exists, search for a part whose nodedb entry points to this remote IP
+    if (parts.length && window._nodedb_cache) {
+      for (var pi=0; pi<parts.length; pi++) {
+        var pname = parts[pi];
+        // scan nodedb for an entry whose name equals pname and whose ip/host/match contains l.remote
+        var foundMatch = false;
+        Object.keys(window._nodedb_cache).some(function(k){ var v = window._nodedb_cache[k]; if (!v) return false; if (v.n === pname) { if (k === l.remote || (v.h && v.h === l.remote) || (v.m && v.m === l.remote)) { foundMatch = true; return true; } } return false; });
+        if (foundMatch) { primary = pname; break; }
+      }
+    }
+    // if we didn't find a part matching nodedb, but getNodeNameForIp returned a name that's in parts, prefer it
+    if (!primary && nodeName && parts.indexOf(nodeName) !== -1) primary = nodeName;
+    // otherwise fallback: prefer nodeName (resolved from nodedb by IP), then first part
+    if (!primary) primary = nodeName || (parts.length ? parts[0] : '');
+  } catch(e) { primary = nodeName || (l.node_names ? String(l.node_names).split(',')[0] : ''); }
   var nodeTd = td(primary);
   if (l.node_names) { nodeTd.title = l.node_names; }
   tr.appendChild(nodeTd);
@@ -1036,7 +1057,7 @@ function showNodesFor(remoteIp, nodeNames) {
     return;
   }
 
-  fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ try{ window._nodedb_cache = nb || {}; var found = findNodes(nb || {}); window._nodedb_cache_list = found; if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; } renderRows(found); if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2); showModal('node-modal'); }catch(e){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error rendering nodes</td></tr>'; if(bodyPre) bodyPre.textContent='Error'; showModal('node-modal'); } }).catch(function(){ if(tbody) tbody.innerHTML='<tr><td colspan="6" class="text-danger">Error loading nodedb.json</td></tr>'; if(bodyPre) bodyPre.textContent='Error loading nodedb.json'; showModal('node-modal'); });
+  fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){ try{ window._nodedb_cache = nb || {}; var found = findNodes(nb || {}); window._nodedb_cache_list = found; if (countBadge) { countBadge.style.display='inline-block'; countBadge.textContent = found.length; } renderRows(found); if (bodyPre) bodyPre.textContent = JSON.stringify(found, null, 2); showModal('node-modal'); }catch(e){ if(tbody){ clearChildren(tbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=6; td.className='text-danger'; td.textContent='Error rendering nodes'; tr.appendChild(td); tbody.appendChild(tr);} if(bodyPre) bodyPre.textContent='Error'; showModal('node-modal'); } }).catch(function(){ if(tbody){ clearChildren(tbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=6; td.className='text-danger'; td.textContent='Error loading nodedb.json'; tr.appendChild(td); tbody.appendChild(tr);} if(bodyPre) bodyPre.textContent='Error loading nodedb.json'; showModal('node-modal'); });
   // attach header sort clicks for fetched path as well
   try {
     var headers = document.querySelectorAll('#node-modal-table thead th[data-key]');
@@ -1444,8 +1465,8 @@ function renderCard(opts) {
     if (!container && opts.containerId) container = document.getElementById(opts.containerId);
     if (!container) return;
 
-    // clear and build panel
-    container.innerHTML = '';
+  // clear and build panel
+  clearChildren(container);
     var panel = document.createElement('div'); panel.className = opts.panelClass || 'panel panel-default';
     var heading = document.createElement('div'); heading.className = 'panel-heading';
     heading.style.display = 'flex'; heading.style.justifyContent = 'space-between'; heading.style.alignItems = 'center';
@@ -1459,13 +1480,13 @@ function renderCard(opts) {
     panel.appendChild(heading);
 
     var body = document.createElement('div'); body.className = 'panel-body'; if (opts.bodyStyle) body.style.cssText = opts.bodyStyle;
-    // contentHTML convenience
-    if (opts.contentHTML) { var content = document.createElement('div'); content.innerHTML = opts.contentHTML; body.appendChild(content); }
+  // contentHTML convenience (use textContent to avoid raw HTML)
+  if (opts.contentHTML) { var content = document.createElement('div'); content.textContent = opts.contentHTML; body.appendChild(content); }
 
     // render callback may populate body and headerRight
     try { if (typeof opts.render === 'function') opts.render(body, headerRight); } catch (e) { /* swallow UI render errors */ }
 
-    if (opts.smallHelp) { var help = document.createElement('div'); help.className = 'small-muted'; help.style.marginTop = '8px'; help.innerHTML = opts.smallHelp; body.appendChild(help); }
+  if (opts.smallHelp) { var help = document.createElement('div'); help.className = 'small-muted'; help.style.marginTop = '8px'; help.textContent = opts.smallHelp; body.appendChild(help); }
 
     panel.appendChild(body);
     container.appendChild(panel);
@@ -2450,7 +2471,7 @@ document.addEventListener('DOMContentLoaded', function() {
           var needFetch = !window._olsrLoaded || !olsrtbody || (olsrtbody && olsrtbody.querySelectorAll('tr').length === 0);
           console.log('OLSR tab - needFetch:', needFetch, 'tbody exists:', !!olsrtbody, 'current rows:', olsrtbody ? olsrtbody.querySelectorAll('tr').length : 0);
           if (needFetch) {
-            try { if (olsrtbody) { olsrtbody.innerHTML = ''; var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=12; td.className='text-muted'; td.textContent='Loading…'; tr.appendChild(td); olsrtbody.appendChild(tr); } } catch(e){}
+            try { if (olsrtbody) { clearChildren(olsrtbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=12; td.className='text-muted'; td.textContent='Loading…'; tr.appendChild(td); olsrtbody.appendChild(tr); } } catch(e){}
             // Fetch status to populate OLSR links
             safeFetchStatus({cache:'no-store'}).then(function(st){
               try {
@@ -2478,7 +2499,7 @@ document.addEventListener('DOMContentLoaded', function() {
               console.error('Failed to fetch connections data');
               var tbody = document.querySelector('#connectionsTable tbody');
               if (tbody) {
-                tbody.innerHTML = ''; var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=6; td.className='text-muted'; td.textContent='No connection data available. This tab requires backend API access.'; tr.appendChild(td); tbody.appendChild(tr);
+                clearChildren(tbody); var tr=document.createElement('tr'); var td=document.createElement('td'); td.colSpan=6; td.className='text-muted'; td.textContent='No connection data available. This tab requires backend API access.'; tr.appendChild(td); tbody.appendChild(tr);
               }
               setTabError('tab-connections');
             });
