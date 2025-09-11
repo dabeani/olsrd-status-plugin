@@ -763,6 +763,22 @@ function populateDevicesTable(devices, airos) {
 function populateOlsrLinksTable(links) {
   var tbody = document.querySelector('#olsrLinksTable tbody');
   if (!tbody) return; clearChildren(tbody);
+  // If we don't have a loaded nodedb cache yet, fetch it first so name
+  // resolution can prefer canonical node names (same behavior as Connections tab).
+  // Avoid repeated fetches by using a fetching flag. After load, re-run this
+  // function to populate the table with enriched names.
+  try {
+    if (!window._nodedb_cache && !window._nodedb_fetching) {
+      window._nodedb_fetching = true;
+      fetch('/nodedb.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(nb){
+        try { window._nodedb_cache = nb || {}; } catch(e) { window._nodedb_cache = {}; }
+        window._nodedb_fetching = false;
+        try { populateOlsrLinksTable(links); } catch(e) {}
+      }).catch(function(){ window._nodedb_fetching = false; try { populateOlsrLinksTable(links); } catch(e) {} });
+      // Defer actual rendering until we have attempted to fetch nodedb
+      return;
+    }
+  } catch(e) {}
   // diagnostics: lightweight logging to help trace empty tabs issue
   try { if (window._uiDebug) console.debug('populateOlsrLinksTable called, links=', (links && links.length) || 0, 'tbodyExists=', !!tbody, 'tbodyClass=', tbody?tbody.className:'-'); } catch(e) {}
   if (!links || !Array.isArray(links) || links.length === 0) {
@@ -871,7 +887,22 @@ function populateOlsrLinksTable(links) {
     }
     
     // 4) If still not resolved, prefer first node_names entry
-    if (!resolved && parts.length) { resolved = parts[0]; reason = 'first-node_names-fallback'; }
+    if (!resolved && parts.length) {
+      // Avoid selecting short device-like names (e.g. 'eno', 'eth0') when a
+      // canonical node name can be obtained from nodedb for this remote IP.
+      try {
+        var firstPart = parts[0];
+        if (firstPart && firstPart.length <= 4) {
+          try {
+            if (typeof getNodeNameForIp === 'function') {
+              var alt = getNodeNameForIp(remote);
+              if (alt) { resolved = alt; reason = 'nodedb-prefer-over-short-node_names'; }
+            }
+          } catch(e) {}
+        }
+      } catch(e){}
+      if (!resolved) { resolved = parts[0]; reason = 'first-node_names-fallback'; }
+    }
     
     // 5) Prefer remote_host if available
     if (!resolved && link.remote_host) { resolved = link.remote_host; reason = 'remote_host-fallback'; }
