@@ -1,0 +1,6 @@
+branch: fix/olsr-links-node-name-resolution
+summary: Prefer nodedb cache for node name resolution in OLSR Links; avoid device-like node_names when canonical name exists
+
+notes:
+- Update `www/js/app.js` to lazily load `/nodedb.json` before rendering links and prefer canonical nodedb names.
+- Small heuristic added to avoid selecting short device names (<=4 chars) from `node_names` when nodedb canonical name available.

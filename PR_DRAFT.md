@@ -22,6 +22,13 @@ Testing performed
 - Live verification against a running plugin instance: compared reported `/olsr/links` values to computed results derived from `/olsr/raw` + `nodedb.json`. Most gateways matched; a couple of small mismatches identified and noted for follow-up.
 - Unit tests: `tests/test_cidr_lookup.py` passes locally.
 
+How to test the UI fix
+
+- Deploy this branch to a test instance and ensure the web UI loads the updated `www/js/app.js` (clear browser cache).
+- Open the OLSR Links tab and verify nodes that previously showed short device names (e.g. `eno`, `ramp8`) are now displayed with canonical node names from `nodedb.json` (e.g. `2345falke`, `falke-bb`).
+- Optionally enable UI debug in the browser console (`window._uiDebug = true`) and watch console messages for "OLSR link node resolution" which will include the `reason` (e.g., `nodedb-cidr-or-key`, `node_names->nodedb-match`, or `first-node_names-fallback`).
+
+
 Checklist for reviewers
 
 - [ ] Code review for correctness and potential edge cases (malformed node_db JSON, huge node_db size).
