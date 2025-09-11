@@ -329,11 +329,9 @@ static endpoint_coalesce_t g_discover_co;
 static endpoint_coalesce_t g_devices_co;
 /* Coalescer TTLs (seconds) - defaults mirror previous hardcoded values */
 static int g_coalesce_devices_ttl = 5;
-static int g_coalesce_discover_ttl = 10;
+static int g_coalesce_discover_ttl = 300;
 static int g_coalesce_traceroute_ttl = 5;
-static int g_cfg_coalesce_devices_ttl_set = 0;
-static int g_cfg_coalesce_discover_ttl_set = 0;
-static int g_cfg_coalesce_traceroute_ttl_set = 0;
+/* configuration-set flags intentionally omitted: coalescer TTLs accept env/PlParam but do not track PlParam precedence here */
 /* --- end coalescing helper --- */
 
 /* Debug counters for diagnostics */
