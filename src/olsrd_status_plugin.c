@@ -1921,6 +1921,39 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
                   else if(strcmp(kv[i].key,"essid")==0 && !devices[idx].have_essid){ snprintf(devices[idx].essid,sizeof(devices[idx].essid),"%s",kv[i].value); devices[idx].have_essid=1; }
                   else if(strcmp(kv[i].key,"firmware")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; }
                   else if(strcmp(kv[i].key,"fwversion")==0 && !devices[idx].have_firmware){ snprintf(devices[idx].firmware,sizeof(devices[idx].firmware),"%s",kv[i].value); devices[idx].have_firmware=1; devices[idx].have_fwversion=1; }
+                  /* Heuristic: handle generic json_<TAG> and str_<N> entries produced by ubnt_discover parse fallback */
+                  else if (strncmp(kv[i].key, "json_", 5) == 0) {
+                    /* attempt to extract common fields from embedded JSON */
+                    char *valptr = NULL; size_t vlen = 0;
+                    if (!devices[idx].have_hostname && find_json_string_value(kv[i].value, "hostname", &valptr, &vlen)) {
+                      size_t L = vlen < sizeof(devices[idx].hostname)-1 ? vlen : sizeof(devices[idx].hostname)-1; memcpy(devices[idx].hostname, valptr, L); devices[idx].hostname[L]=0; devices[idx].have_hostname=1;
+                    } else if (!devices[idx].have_hostname && find_json_string_value(kv[i].value, "name", &valptr, &vlen)) {
+                      size_t L = vlen < sizeof(devices[idx].hostname)-1 ? vlen : sizeof(devices[idx].hostname)-1; memcpy(devices[idx].hostname, valptr, L); devices[idx].hostname[L]=0; devices[idx].have_hostname=1;
+                    }
+                    if (!devices[idx].have_product && find_json_string_value(kv[i].value, "product", &valptr, &vlen)) {
+                      size_t L = vlen < sizeof(devices[idx].product)-1 ? vlen : sizeof(devices[idx].product)-1; memcpy(devices[idx].product, valptr, L); devices[idx].product[L]=0; devices[idx].have_product=1;
+                    }
+                    if (!devices[idx].have_firmware && find_json_string_value(kv[i].value, "fwversion", &valptr, &vlen)) {
+                      size_t L = vlen < sizeof(devices[idx].firmware)-1 ? vlen : sizeof(devices[idx].firmware)-1; memcpy(devices[idx].firmware, valptr, L); devices[idx].firmware[L]=0; devices[idx].have_firmware=1; devices[idx].have_fwversion=1;
+                    }
+                  }
+                  else if (strncmp(kv[i].key, "str_", 4) == 0) {
+                    const char *s = kv[i].value;
+                    size_t sl = s ? strlen(s) : 0;
+                    /* prefer hostname if looks like hostname (no spaces, contains dash or dot, reasonable length) */
+                    if (!devices[idx].have_hostname && sl >= 3 && sl < (sizeof(devices[idx].hostname)-1) && strchr(s,' ') == NULL && (strchr(s,'-') || strchr(s,'.'))) {
+                      snprintf(devices[idx].hostname, sizeof(devices[idx].hostname), "%s", s); devices[idx].have_hostname = 1;
+                    }
+                    /* product heuristics: contains common product tokens */
+                    if (!devices[idx].have_product && (strstr(s,"EdgeRouter") || strstr(s,"ER-") || strstr(s,"ER-X") || strstr(s,"ERX") || strstr(s,"ER"))) {
+                      snprintf(devices[idx].product, sizeof(devices[idx].product), "%s", s); devices[idx].have_product = 1;
+                    }
+                    /* firmware heuristics: contains 'v' followed by digit */
+                    if (!devices[idx].have_firmware && strstr(s, "v") && (strpbrk(s, "0123456789") != NULL)) {
+                      /* accept if looks like version string */
+                      if (sl < sizeof(devices[idx].firmware)-1) { snprintf(devices[idx].firmware, sizeof(devices[idx].firmware), "%s", s); devices[idx].have_firmware = 1; }
+                    }
+                  }
                 }
                 /* Second pass: detect indexed ipv4_N / hwaddr_N pairs and create extra devices */
                 for(size_t i=0;i<kvn;i++){
