@@ -821,6 +821,7 @@ static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r
 static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
+static int h_platform_json(http_request_t *r);
 static int h_fetch_metrics(http_request_t *r);
 static int h_prometheus_metrics(http_request_t *r);
 static int h_fetch_debug(http_request_t *r);
@@ -4718,6 +4719,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/nodedb.json", &h_nodedb);
   http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
   http_server_register_handler("/fetch_debug", &h_fetch_debug);
+  http_server_register_handler("/platform.json", &h_platform_json);
   http_server_register_handler("/log", &h_log);
   http_server_register_handler("/traceroute", &h_traceroute);
   fprintf(stderr, "[status-plugin] listening on %s:%d (assets: %s)\n", g_bind, g_port, g_asset_root);
@@ -5424,6 +5426,20 @@ static int h_versions_json(http_request_t *r) {
   if (homes_out) free(homes_out);
   if (md5_out) free(md5_out);
   return 0;
+  return 0;
+}
+
+/* Minimal platform.json handler: returns basic platform info for frontend heuristics */
+static int h_platform_json(http_request_t *r) {
+  char buf[512];
+  /* Provide a tiny JSON structure the frontend can use; keep it safe and simple */
+  const char *hostname = "";
+  gethostname((char*)buf, sizeof(buf));
+  buf[sizeof(buf)-1]=0;
+  /* Example keys: vendor, model, hostname */
+  char out[1024];
+  snprintf(out, sizeof(out), "{\"vendor\":\"generic\",\"model\":\"generic\",\"hostname\":\"%s\"}\n", buf);
+  send_json(r, out);
   return 0;
 }
 

@@ -1,0 +1,80 @@
+[
+  {
+    "type": "console",
+    "level": "log",
+    "text": "Tab switched to: #tab-status",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2417,
+      "columnNumber": 14
+    }
+  },
+  {
+    "type": "console",
+    "level": "log",
+    "text": "Active pane: tab-status display: block classes: tab-pane active",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2418,
+      "columnNumber": 14
+    }
+  },
+  {
+    "type": "console",
+    "level": "log",
+    "text": "Loading content for tab: #tab-status",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2466,
+      "columnNumber": 12
+    }
+  },
+  {
+    "type": "console",
+    "level": "log",
+    "text": "Loading status tab content...",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2498,
+      "columnNumber": 16
+    }
+  },
+  {
+    "type": "console",
+    "level": "log",
+    "text": "Fetching /status/lite API...",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2502,
+      "columnNumber": 20
+    }
+  },
+  {
+    "type": "console",
+    "level": "log",
+    "text": "ensureTraceroutePreloaded: start",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2136,
+      "columnNumber": 18
+    }
+  },
+  {
+    "type": "console",
+    "level": "error",
+    "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "location": {
+      "url": "http://193.238.158.74/platform.json"
+    }
+  },
+  {
+    "type": "console",
+    "level": "log",
+    "text": "Status data received: JSHandle@array",
+    "location": {
+      "url": "http://193.238.158.74/js/app.js",
+      "lineNumber": 2503,
+      "columnNumber": 91
+    }
+  }
+]
