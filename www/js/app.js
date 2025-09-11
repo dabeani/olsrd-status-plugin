@@ -738,7 +738,22 @@ function populateOlsrLinksTable(links) {
   if (l.node_names) { nodeTd.title = l.node_names; }
   tr.appendChild(nodeTd);
     // LQ / NLQ as numeric badges
-    function mkLqBadge(val){ var v = parseFloat(String(val||'')||'0'); var cls = 'lq-low'; if (!isFinite(v) || v <= 0) cls='lq-high'; else if (v < 0.5) cls='lq-low'; else if (v < 0.85) cls='lq-med'; else cls='lq-high'; return '<span class="lq-badge '+cls+'">'+String(val)+'</span>'; }
+    // LQ / NLQ as numeric badges
+    // Treat values >= 1.0 as good (green). Values below 1.0 become progressively more red.
+    function mkLqBadge(val){
+      var v = parseFloat(String(val||'')||'0');
+      var cls = 'lq-high'; // default: bad (red)
+      if (!isFinite(v) || v <= 0) {
+        cls = 'lq-high';
+      } else if (v >= 1.0) {
+        cls = 'lq-low'; // green
+      } else if (v >= 0.85) {
+        cls = 'lq-med'; // amber
+      } else {
+        cls = 'lq-high'; // red
+      }
+      return '<span class="lq-badge '+cls+'">'+String(val)+'</span>';
+    }
     tr.appendChild(td(mkLqBadge(l.lq)));
     tr.appendChild(td(mkLqBadge(l.nlq)));
     // cost numeric rendering
@@ -773,6 +788,12 @@ function populateOlsrLinksTable(links) {
       routesCell.style.cursor='pointer'; routesCell.title='Click to view routes via this neighbor';
       routesCell.addEventListener('click', function(){ showRoutesFor(l.remote); });
     }
+    // incorporate small metric badges into routes cell (avoid an extra column that shifts nodes)
+    try {
+      var metricsInline = '';
+      metricsInline += '<span class="metric-badge routes small" style="margin-left:6px;">R:'+ (l.routes || '0') +'</span>';
+      routesCell.innerHTML = (routesCell.innerHTML || '') + metricsInline;
+    } catch(e){}
     tr.appendChild(routesCell);
     // nodes column: show numeric count and tooltip with names (avoid duplicating long text in table)
     var nodeCount = '';
@@ -784,11 +805,6 @@ function populateOlsrLinksTable(links) {
       if (parseInt(nodeCount,10) > 0) { nodesCell.style.cursor = 'pointer'; nodesCell.title = l.node_names; nodesCell.addEventListener('click', function(){ showNodesFor(l.remote, l.node_names); }); }
     }
   // metric badges (sparklines removed for stability)
-  var metricsHtml = '';
-  metricsHtml += '<span class="metric-badge routes small">R:'+ (l.routes || '0') +'</span>';
-  var metricsTd = td(metricsHtml);
-  metricsTd.title = 'Routes: ' + (l.routes||'0') + (l.is_default? ' • Default route':'');
-  tr.appendChild(metricsTd);
   // nodes column (detailed node names + click handler)
   tr.appendChild(nodesCell);
   // Actions column
@@ -1278,19 +1294,20 @@ function renderLineGraph(canvasId, series, color, yLabel) {
   if (!data.length) return;
   var minY = Math.min.apply(null, data), maxY = Math.max.apply(null, data);
   if (minY === maxY) { minY = 0; maxY = maxY + 1; }
-  var pad = 18;
-  // Draw axes
-  ctx.strokeStyle = '#bbb';
+  var pad = 12;
+  // Draw background grid lines
+  ctx.strokeStyle = '#f0f0f0';
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad);
-  ctx.stroke();
+  for (var gy=0; gy<4; gy++) {
+    var yy = pad + ((h-2*pad) * gy/3);
+    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(w-pad, yy); ctx.stroke();
+  }
+  // Axes subtle lines
+  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad); ctx.stroke();
   // Y axis label
-  ctx.fillStyle = '#666';
-  ctx.font = '11px sans-serif';
-  ctx.fillText(yLabel, 2, pad-4);
-  // X axis label
-  ctx.fillText('Samples', w-pad-40, h-pad+14);
+  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
+  ctx.fillText(yLabel, 4, pad+6);
   // Draw line
   ctx.strokeStyle = color || '#0074d9';
   ctx.lineWidth = 2;
@@ -1301,6 +1318,16 @@ function renderLineGraph(canvasId, series, color, yLabel) {
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.stroke();
+  // Fill area under curve for better visibility
+  ctx.globalAlpha = 0.08; ctx.fillStyle = color || '#0074d9';
+  ctx.beginPath();
+  for (var i=0; i<data.length; i++) {
+    var x = pad + ((w-2*pad) * i/(data.length-1));
+    var y = h-pad - ((h-2*pad) * (data[i]-minY)/(maxY-minY));
+    if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.lineTo(w-pad, h-pad); ctx.lineTo(pad, h-pad); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 1.0;
   // Draw points
   ctx.fillStyle = color || '#0074d9';
   for (var i=0; i<data.length; i++) {

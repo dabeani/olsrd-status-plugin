@@ -90,6 +90,12 @@
 .lq-low { background:#2ecc71; }
 .lq-med { background:#f6c85f; color:#5a3b00; }
 .lq-high { background:#e74c3c; }
+/* Emphasize that lq-low == good (green), lq-high == poor (red). */
+
+/* Statistics block sizing */
+#stats-graphs { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start; }
+#stats-graphs .stats-block { flex:1; min-width:240px; }
+#stats-graphs .stats-block canvas { width:100%; height:120px; background:#fafafa; border:1px solid #eee; border-radius:4px; }
 /* ETX badge: green good -> red bad */
 .etx-badge { display:inline-block; padding:3px 6px; border-radius:6px; font-size:11px; color:#fff; margin-right:6px; }
 .etx-good { background:#2ecc71; }
