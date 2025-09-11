@@ -63,13 +63,17 @@ ASSETDIR ?= $(SHAREDIR)/www
 
 SCRIPTS := scripts/fetch-assets.sh scripts/debug-plugin.sh
 
-.PHONY: all clean status_plugin status_plugin_clean install uninstall status_plugin_install status_plugin_uninstall
+.PHONY: all clean status_plugin status_plugin_clean install uninstall status_plugin_install status_plugin_uninstall all_with_cli
 
+# Optional CLI binary. Building the plugin alone is the default; use `make all_with_cli`
 CLI_BIN := rev/discover/ubnt_discover_cli
 
 .PHONY: ubnt_discover_cli
 
-all: status_plugin ubnt_discover_cli
+all: status_plugin
+
+# Convenience target to build plugin + CLI
+all_with_cli: status_plugin ubnt_discover_cli
 
 ubnt_discover_cli: $(CLI_BIN)
 

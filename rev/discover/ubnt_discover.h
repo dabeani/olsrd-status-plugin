@@ -18,7 +18,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <netinet/in.h>
-#include <sys/socket.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -44,11 +43,10 @@ int ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, siz
  */
 int ubnt_open_broadcast_socket(uint16_t port_bind);
 
-/* Open a UDP socket for broadcast like ubnt_open_broadcast_socket(), but bind
- * the socket to the given local IPv4 address (as a string). If local_ip is
- * NULL the behavior matches ubnt_open_broadcast_socket(). Returns socket fd or -1.
+/* Bind a UDP socket to a specific local IPv4 address and port for per-interface
+ * broadcast probing. Returns socket fd >=0 or -1 on error.
  */
-int ubnt_open_broadcast_socket_bound(const char *local_ip, uint16_t port_bind);
+int ubnt_open_broadcast_socket_bound(const char *local_ipv4, uint16_t port_bind);
 
 /* Utility: hex dump (for debugging) */
 void ubnt_hexdump(const void *buf, size_t len);
