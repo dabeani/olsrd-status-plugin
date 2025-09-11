@@ -65,7 +65,16 @@ SCRIPTS := scripts/fetch-assets.sh scripts/debug-plugin.sh
 
 .PHONY: all clean status_plugin status_plugin_clean install uninstall status_plugin_install status_plugin_uninstall
 
-all: status_plugin
+CLI_BIN := rev/discover/ubnt_discover_cli
+
+.PHONY: ubnt_discover_cli
+
+all: status_plugin ubnt_discover_cli
+
+ubnt_discover_cli: $(CLI_BIN)
+
+$(CLI_BIN): rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(HDRS)
+	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(LDLIBS)
 
 $(BUILDDIR)/$(SONAME): $(SRCS) $(HDRS) | $(BUILDDIR)
 	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ $(SRCS) $(LDFLAGS) $(LDLIBS)

@@ -148,6 +148,9 @@ static int g_cfg_ubnt_cache_ttl_s_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
+/* Optional PlParam/env to force-enable fetch queue logging even when otherwise disabled */
+static int g_fetch_log_force = 0;
+static int g_cfg_fetch_log_force_set = 0;
 /* debug toggle: when set, emit extra per-request debug lines for specific endpoints (env/plugin param) */
 int g_log_request_debug __attribute__((visibility("default"))) = 0; /* default: off */
 static int g_cfg_log_request_debug_set = 0;
@@ -1376,25 +1379,29 @@ static int neighbor_twohop_for_ip(const char *section, const char *ip) {
 
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
 static void __attribute__((unused)) arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
-  if (mac_out && mac_len) mac_out[0]=0;
-  if (host_out && host_len) host_out[0]=0;
-  if(!ip||!*ip) return;
+  if (mac_out && mac_len) mac_out[0] = '\0';
+  if (host_out && host_len) host_out[0] = '\0';
+  if (!ip || !*ip) return;
   FILE *f = fopen("/proc/net/arp", "r");
   if (f) {
     char line[512];
-    if(!fgets(line,sizeof(line),f)) { fclose(f); f=NULL; }
-    while (fgets(line,sizeof(line),f)) {
-      char ipf[128], hw[128];
-      if (sscanf(line, "%127s %*s %*s %127s", ipf, hw) == 2) {
-        if (strcmp(ipf, ip)==0) {
+    /* skip header */
+    if (!fgets(line, sizeof(line), f)) { fclose(f); f = NULL; }
+    while (f && fgets(line, sizeof(line), f)) {
+      char ipf[128] = "", hw[128] = "", dev[64] = "";
+      if (sscanf(line, "%127s %*s %*s %127s %*s %63s", ipf, hw, dev) >= 2) {
+        if (strcmp(ipf, ip) == 0) {
           if (mac_out && mac_len) {
-            size_t hwlen=strlen(hw); if(hwlen>=mac_len) hwlen=mac_len-1; memcpy(mac_out,hw,hwlen); mac_out[hwlen]=0;
+            size_t hwlen = strlen(hw);
+            if (hwlen >= mac_len) hwlen = mac_len - 1;
+            memcpy(mac_out, hw, hwlen);
+            mac_out[hwlen] = '\0';
           }
           break;
         }
       }
     }
-    fclose(f);
+    if (f) fclose(f);
   }
   if (host_out && host_len) {
     struct in_addr ina;
@@ -1402,7 +1409,7 @@ static void __attribute__((unused)) arp_enrich_ip(const char *ip, char *mac_out,
       char _rhost[NI_MAXHOST]; _rhost[0] = '\0';
       if (resolve_ip_to_hostname(ip, _rhost, sizeof(_rhost)) == 0) {
         if (host_len > 0) {
-          snprintf(host_out, host_len, "%.*s", (int)(host_len - 1), _rhost);
+          snprintf(host_out, host_len, "%s", _rhost);
           host_out[host_len - 1] = '\0';
         }
       }
@@ -4470,6 +4477,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
   { .name = "fetch_auto_refresh_ms", .set_plugin_parameter = &set_int_param, .data = &g_fetch_auto_refresh_ms, .addon = {0} },
   { .name = "fetch_log_queue", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_queue, .addon = {0} },
+  { .name = "fetch_log_force", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_force, .addon = {0} },
   { .name = "log_request_debug", .set_plugin_parameter = &set_int_param, .data = &g_log_request_debug, .addon = {0} },
   { .name = "log_buf_lines", .set_plugin_parameter = &set_int_param, .data = &g_log_buf_lines, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
@@ -4659,6 +4667,27 @@ int olsrd_plugin_init(void) {
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_LOG_QUEUE value: %s (ignored)\n", env_lq);
     }
 
+    /* Allow an env or PlParam to force-enable fetch logging even if fetch_log_queue was set to 0
+     * This is useful to temporarily unsilence logs without changing the main config file.
+     * Accept either OLSRD_STATUS_FETCH_LOG_FORCE or the convenience alias OLSRD_STATUS_FETCH_LOG_UNSILENCE.
+     */
+    if (!g_cfg_fetch_log_force_set) {
+      const char *env_ff = getenv("OLSRD_STATUS_FETCH_LOG_FORCE");
+      if ((!env_ff || !env_ff[0]) && getenv("OLSRD_STATUS_FETCH_LOG_UNSILENCE")) env_ff = getenv("OLSRD_STATUS_FETCH_LOG_UNSILENCE");
+      if (env_ff && env_ff[0]) {
+        char *endptr2 = NULL; long vf = strtol(env_ff, &endptr2, 10);
+        if (endptr2 && *endptr2 == '\0' && (vf == 0 || vf == 1)) {
+          g_fetch_log_force = (int)vf;
+          fprintf(stderr, "[status-plugin] setting fetch_log_force from env: %d\n", g_fetch_log_force);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_LOG_FORCE value: %s (ignored)\n", env_ff);
+      }
+    }
+
+    /* If force is set (via PlParam or env), always enable fetch queue logging */
+    if (g_fetch_log_force) {
+      g_fetch_log_queue = 1;
+      fprintf(stderr, "[status-plugin] fetch logging forced ON via fetch_log_force\n");
+    }
     /* discovery interval env override (seconds) */
     if (!g_cfg_devices_discover_interval_set) {
       const char *env_di = getenv("OLSRD_STATUS_DISCOVER_INTERVAL");

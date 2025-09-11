@@ -15,11 +15,42 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
 
-#include "../src/ubnt_discover.h"
+#include "ubnt_discover.h"
+
+/* Minimal stub used when building CLI standalone to satisfy plugin_log_trace calls */
+#include <stdarg.h>
+/* Prototype matching src/status_log.h to satisfy -Wmissing-prototypes */
+void plugin_log_trace(const char *fmt, ...) __attribute__((format(printf,1,2)));
+
+/* Implementation for standalone CLI */
+void plugin_log_trace(const char *fmt, ...) {
+    /* Format into a local buffer first. The compiler warns about non-literal
+     * format strings; silence that warning locally.
+     */
+    char buf[1024];
+    va_list ap; va_start(ap, fmt);
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+    va_end(ap);
+    buf[sizeof(buf)-1] = '\0';
+    fprintf(stderr, "%s\n", buf);
+}
 
 int main(void) {
     /* Bind to the known UBNT discovery port so devices that reply to 10001 reach us.
