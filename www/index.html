@@ -403,7 +403,11 @@
       <!-- Minimal sticky footer with pending-request count and served-by on the left -->
       <footer id="status-footer" style="position:fixed; left:0; right:0; bottom:0; height:28px; background:#f1f1f1; z-index:2400; pointer-events:none;">
         <div style="max-width:100%; margin:0 auto; padding:4px 12px; height:100%; display:flex; align-items:center; justify-content:space-between;">
-          <div style="pointer-events:auto; display:flex; align-items:center; gap:8px; color:#666; font-size:12px;">Served by olsrd-status-plugin</div>
+          <div style="pointer-events:auto; display:flex; align-items:center; gap:8px; color:#666; font-size:12px;">
+            <span id="footer-served">Served by olsrd-status-plugin</span>
+            <span style="color:#999;">|</span>
+            <span id="footer-latency" style="color:#666; font-size:12px;">RTT: -- ms</span>
+          </div>
           <div id="footer-indicators" style="pointer-events:auto; display:flex; gap:12px; align-items:center;">
             <div style="display:flex; align-items:center; gap:8px;">
               <div style="font-size:12px; color:#666;">Pending:</div>

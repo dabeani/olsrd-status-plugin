@@ -175,3 +175,9 @@
 .footer-dot-off { background:#bdbdbd; }
 .footer-dot-req { background: #f0ad4e; box-shadow: 0 0 6px rgba(240,173,78,0.45); }
 .footer-dot-res { background: #5cb85c; box-shadow: 0 0 8px rgba(92,184,92,0.45); }
+
+/* Footer latency text */
+#footer-latency, #footer-latency * { color: #666; font-size:12px; }
+.footer-latency-ok { color: #2ecc71; }
+.footer-latency-warn { color: #f0ad4e; }
+.footer-latency-bad { color: #e74c3c; }

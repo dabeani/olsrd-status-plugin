@@ -192,6 +192,49 @@ if (!window.fetch) {
   };
 })();
 
+// RTT / latency measurement for footer display
+(function(){
+  var lastRtt = null;
+  var pingPathCandidates = ['/status/ping','/status/lite'];
+  function updateLatencyText(rtt){
+    try{
+      var el = document.getElementById('footer-latency');
+      if(!el) return;
+      if(typeof rtt !== 'number' || isNaN(rtt)) { el.textContent = 'RTT: -- ms'; el.className = ''; return; }
+      var txt = 'RTT: ' + String(Math.round(rtt)) + ' ms';
+      el.textContent = txt;
+      // small heuristic thresholds
+      el.className = '';
+      if (rtt < 120) el.classList.add('footer-latency-ok');
+      else if (rtt < 400) el.classList.add('footer-latency-warn');
+      else el.classList.add('footer-latency-bad');
+    }catch(e){}
+  }
+
+  function tryPingPath(idx){
+    if (idx >= pingPathCandidates.length) return Promise.reject(new Error('no ping path'));
+    var p = pingPathCandidates[idx];
+    var t0 = Date.now();
+    return fetch(p, {cache:'no-store', method:'GET'}).then(function(r){
+      var t1 = Date.now();
+      if (!r || !r.ok) {
+        // try next candidate
+        return tryPingPath(idx+1);
+      }
+      lastRtt = t1 - t0;
+      updateLatencyText(lastRtt);
+      return lastRtt;
+    }).catch(function(){
+      return tryPingPath(idx+1);
+    });
+  }
+
+  function pingOnce(){ tryPingPath(0).catch(function(){ updateLatencyText(null); }); }
+
+  // Start periodic ping and run once immediately after DOM ready
+  document.addEventListener('DOMContentLoaded', function(){ pingOnce(); window.setInterval(pingOnce, 10000); });
+})();
+
 window.refreshTab = function(id, url) {
   var el = document.getElementById(id);
   if (el) el.textContent = 'Loading…';
