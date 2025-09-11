@@ -144,7 +144,7 @@ static int g_cfg_ubnt_probe_window_ms_set = 0;
 static int g_fetch_log_queue = 1;
 static int g_cfg_fetch_log_queue_set = 0;
 /* debug toggle: when set, emit extra per-request debug lines for specific endpoints (env/plugin param) */
-int g_log_request_debug = 0; /* default: off */
+int g_log_request_debug __attribute__((visibility("default"))) = 0; /* default: off */
 static int g_cfg_log_request_debug_set = 0;
 /* (moved) fetch_reporter defined after fetch queue structures so it can reference them */
 
