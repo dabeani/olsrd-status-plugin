@@ -22,7 +22,11 @@
 #include "../src/ubnt_discover.h"
 
 int main(void) {
-    int sock = ubnt_open_broadcast_socket(0);
+    /* Bind to the known UBNT discovery port so devices that reply to 10001 reach us.
+     * Some devices send responses to port 10001 rather than the probe's ephemeral
+     * source port. Binding to 10001 increases discovery yield on many networks.
+     */
+    int sock = ubnt_open_broadcast_socket(10001);
     if (sock < 0) {
         perror("socket");
         return 1;

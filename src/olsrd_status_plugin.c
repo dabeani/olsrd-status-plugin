@@ -1910,7 +1910,13 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
   struct sockaddr_in sin; memset(&sin, 0, sizeof(sin)); memcpy(&sin, ifa->ifa_addr, sizeof(sin));
   inet_ntop(AF_INET, &sin.sin_addr, local_ip, sizeof(local_ip));
 
-        int s = ubnt_open_broadcast_socket_bound(local_ip, 0);
+  /* Try binding to the well-known UBNT discovery port first so devices
+   * that reply to 10001 reach us. Fall back to ephemeral port 0 if bind
+   * to 10001 fails (permission or port in use). Binding by local IP
+   * allows multiple per-interface sockets on the same port.
+   */
+  int s = ubnt_open_broadcast_socket_bound(local_ip, 10001);
+  if (s < 0) s = ubnt_open_broadcast_socket_bound(local_ip, 0);
         if (s < 0) continue;
 
         struct sockaddr_in dst; memset(&dst,0,sizeof(dst)); dst.sin_family=AF_INET; dst.sin_port=htons(10001); dst.sin_addr.s_addr=inet_addr("255.255.255.255");
@@ -5175,7 +5181,12 @@ static int h_discover_ubnt(http_request_t *r) {
       json_buf_append(&b, &len, &cap, "\"local_ip\":\""); json_append_escaped(&b,&len,&cap, local_ip); json_buf_append(&b,&len,&cap,"\"");
 
       /* probe using bound socket */
-      int s = ubnt_open_broadcast_socket_bound(local_ip, 0);
+  /* See note above: prefer binding to 10001 to capture replies sent to
+   * the well-known discovery port; fall back to an ephemeral port when
+   * bind to 10001 fails.
+   */
+  int s = ubnt_open_broadcast_socket_bound(local_ip, 10001);
+  if (s < 0) s = ubnt_open_broadcast_socket_bound(local_ip, 0);
       if (s < 0) {
         json_buf_append(&b,&len,&cap, ",\"socket\":false}");
         continue;
