@@ -254,18 +254,23 @@ function clearChildren(el) {
 // Footer diagnostics drawer: open/close and populate from endpoints
 (function(){
   function el(id){ return document.getElementById(id); }
-  // Tolerant JSON parser: replace raw newlines inside string literals with \n and retry
+  // Tolerant JSON parser: fixes raw newlines/tabs inside strings and
+  // optionally extracts the last complete top-level JSON object from noisy text.
   function safeParseJson(text){
+    // Fast path
     try { return JSON.parse(text); } catch(e) {}
-    try {
+
+    // 1) Normalize raw control chars inside strings (\n, \r, \t) -> escaped
+    function normalizeStringControls(s){
       var out = '';
       var inStr = false, esc = false;
-      for (var i=0;i<text.length;i++){
-        var ch = text.charAt(i);
+      for (var i=0;i<s.length;i++){
+        var ch = s.charAt(i);
         if (inStr) {
           if (esc) { out += ch; esc = false; continue; }
           if (ch === '\\') { out += ch; esc = true; continue; }
           if (ch === '\n' || ch === '\r') { out += '\\n'; continue; }
+          if (ch === '\t') { out += '\\t'; continue; }
           if (ch === '"') { inStr = false; out += ch; continue; }
           out += ch;
         } else {
@@ -273,10 +278,67 @@ function clearChildren(el) {
           out += ch;
         }
       }
-      return JSON.parse(out);
-    } catch(e2) {
-      throw e2;
+      return out;
     }
+
+    // 2) Extract parseable JSON candidates (balanced top-level {...} or [...])
+    function extractJsonCandidates(s){
+      var out = [];
+      var inStr = false, esc = false, start = -1, depth = 0, openCh = '';
+      for (var i=0;i<s.length;i++){
+        var ch = s.charAt(i);
+        if (inStr) {
+          if (esc) { esc = false; continue; }
+          if (ch === '\\') { esc = true; continue; }
+          if (ch === '"') { inStr = false; }
+          continue;
+        } else {
+          if (ch === '"') { inStr = true; continue; }
+          if (depth === 0) {
+            if (ch === '{' || ch === '[') { start = i; depth = 1; openCh = ch; continue; }
+          } else {
+            if (ch === '{' || ch === '[') { depth++; continue; }
+            if (ch === '}' || ch === ']') {
+              depth--;
+              if (depth === 0 && start >= 0) {
+                var cand = s.slice(start, i+1);
+                out.push(cand);
+                start = -1; openCh = '';
+              }
+            }
+          }
+        }
+      }
+      return out;
+    }
+
+    // Attempt normalized parse
+    try { return JSON.parse(normalizeStringControls(String(text||''))); } catch(e2) {}
+
+    // Attempt candidates from noisy text
+    try {
+      var cands = extractJsonCandidates(String(text||''));
+      // Prefer a candidate that contains likely diagnostics keys
+      var keys = ['versions','globals','capabilities','summary','fetch_debug'];
+      var best = null, bestScore = -1;
+      for (var i=0;i<cands.length;i++){
+        var c = cands[i];
+        try {
+          var obj = JSON.parse(c);
+          var score = 0;
+          if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+            for (var k=0;k<keys.length;k++) if (Object.prototype.hasOwnProperty.call(obj, keys[k])) score++;
+          }
+          if (score > bestScore) { bestScore = score; best = obj; }
+        } catch(_) {}
+      }
+      if (best) return best;
+      // Fallback: return the last parseable candidate
+      for (var j=cands.length-1;j>=0;j--){ try { return JSON.parse(cands[j]); } catch(_){} }
+    } catch(e3) {}
+
+    // Give up with the original error
+    throw new Error('Invalid JSON');
   }
   function showDiagnostics(open){
     var panel = el('footer-diagnostics-panel');
@@ -431,8 +493,8 @@ function clearChildren(el) {
         var body = el('footer-diagnostics-body'); if(!body) return;
         if (viewToggle.textContent.trim() === 'Compact') { viewToggle.textContent = 'Raw'; // show raw pre
           var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = '';
-          // fetch latest diagnostics and render raw
-          fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){ try { pre.textContent = JSON.stringify(j, null, 2); } catch(e){ pre.textContent = String(j); } });
+          // fetch latest diagnostics and render raw (tolerant parse)
+          fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ var j = safeParseJson(txt); try { pre.textContent = JSON.stringify(j, null, 2); } catch(e){ pre.textContent = String(j); } });
           clearChildren(body); body.appendChild(pre);
         } else { viewToggle.textContent = 'Compact'; fetchAllAndRender(); }
         ev.stopPropagation();
