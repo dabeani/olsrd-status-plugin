@@ -806,32 +806,6 @@ function hideModal(id) {
 
 // Modal keyboard handling: Esc to close and focus trap within modal-panel
 window._modalKeyHandler = null;
-function _setupModalKeyboard(modalEl) {
-  try {
-    if (!modalEl) return;
-    // remove existing handler if any
-    if (window._modalKeyHandler) { document.removeEventListener('keydown', window._modalKeyHandler); window._modalKeyHandler = null; }
-    var panel = modalEl.querySelector('.modal-panel');
-    var focusableSelector = 'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    window._modalKeyHandler = function(e){
-      if (e.key === 'Escape' || e.key === 'Esc') { hideModal(modalEl.id); return; }
-      if (e.key === 'Tab') {
-        // focus trap
-        var nodes = panel ? Array.prototype.slice.call(panel.querySelectorAll(focusableSelector)) : [];
-        if (!nodes || nodes.length === 0) return;
-        var first = nodes[0], last = nodes[nodes.length-1];
-        if (e.shiftKey) {
-          if (document.activeElement === first) { last.focus(); e.preventDefault(); }
-        } else {
-          if (document.activeElement === last) { first.focus(); e.preventDefault(); }
-        }
-      }
-    };
-    document.addEventListener('keydown', window._modalKeyHandler);
-    // focus first focusable element if present
-    try { var first = panel.querySelector(focusableSelector); if (first) first.focus(); } catch(e){}
-  } catch(e) {}
-}
 
 // Tab status indicator functions
 function updateTabStatus(tabId, status) {
