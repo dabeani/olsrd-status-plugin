@@ -3423,6 +3423,15 @@ static int h_devices_json(http_request_t *r) {
   int have_ud = 0, have_arp = 0;
   int want_lite = 0;
   if (r && r->query[0] && strstr(r->query, "lite=1")) want_lite = 1;
+  /* Optional: allow clients to request an immediate discovery refresh via ?refresh=1
+   * This is useful for live debugging when the cached devices array is empty.
+   * Calling fetch_discover_once() synchronously will perform a discovery pass
+   * and (if successful) update g_devices_cache which we'll snapshot below.
+   */
+  int want_refresh = 0; char qpval[32] = "";
+  if (r && r->query[0] && get_query_param(r, "refresh", qpval, sizeof(qpval))) {
+    if (qpval[0] == '\0' || strcmp(qpval, "1") == 0 || strcmp(qpval, "true") == 0) want_refresh = 1;
+  }
 
   /* try to serve cached merged devices JSON via coalescer */
   char *cached = NULL; size_t cached_len = 0;
@@ -3431,6 +3440,15 @@ static int h_devices_json(http_request_t *r) {
       http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, cached, cached_len); free(cached); return 0;
     }
     /* otherwise fall through to build fresh output */
+  }
+
+  /* If the client requested a refresh, perform a synchronous discovery pass so
+   * the subsequent cache snapshot may contain fresh data. This call may block
+   * while discovery runs; it's intended for debugging and interactive use.
+   */
+  if (want_refresh) {
+    if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] devices: refresh requested via query, running discovery now\n");
+    fetch_discover_once();
   }
 
   /* grab snapshot of cached normalized ubnt devices if present */
