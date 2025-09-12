@@ -507,7 +507,15 @@ function clearChildren(el) {
         clearChildren(body);
         var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = 'Loading...'; body.appendChild(pre);
         fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
-          var j = safeParseJson(txt);
+          var j;
+          try {
+            j = safeParseJson(txt);
+          } catch (pe) {
+            // Show raw snippet to aid debugging instead of hiding it behind a generic error
+            var snippet = String(txt || '').slice(0, 4000);
+            pre.textContent = 'Error parsing JSON: ' + String(pe) + '\n--- Response snippet (first 4000 chars) ---\n' + snippet;
+            return;
+          }
           // flatten client-side
           var out = [];
           function flatten(o, prefix){
@@ -519,7 +527,7 @@ function clearChildren(el) {
             for (var ki=0; ki<keys.length; ki++){ var k = keys[ki]; var p = prefix ? (prefix + '.' + k) : k; flatten(o[k], p); }
           }
           flatten(j,''); pre.textContent = out.join('\n');
-        }).catch(function(e){ pre.textContent = 'Error: ' + String(e); });
+        }).catch(function(e){ pre.textContent = 'Fetch error: ' + String(e); });
         ev.stopPropagation();
       });
     }
