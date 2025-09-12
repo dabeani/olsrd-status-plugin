@@ -267,6 +267,20 @@ function clearChildren(el) {
     return {box:box, body:body};
   }
 
+  // Collapsible box with copy button (returns {wrap, body, copyBtn})
+  function makeCollapsibleBox(title){
+    var wrap = document.createElement('div'); wrap.className = 'diag-box';
+    var header = document.createElement('div'); header.style.display='flex'; header.style.alignItems='center'; header.style.justifyContent='space-between';
+    var t = document.createElement('div'); t.className='diag-title'; t.textContent = title; header.appendChild(t);
+    var btns = document.createElement('div');
+    var copyBtn = document.createElement('button'); copyBtn.className='btn btn-xs btn-default'; copyBtn.textContent='Copy'; copyBtn.style.marginLeft='6px';
+    btns.appendChild(copyBtn);
+    header.appendChild(btns);
+    wrap.appendChild(header);
+    var body = document.createElement('div'); body.className='diag-body'; wrap.appendChild(body);
+    return {wrap:wrap, body:body, copyBtn:copyBtn};
+  }
+
   function kvRow(k,v){
     var row = document.createElement('div'); row.className='diag-row';
     var key = document.createElement('div'); key.className='diag-key'; key.textContent = k; row.appendChild(key);
@@ -322,15 +336,19 @@ function clearChildren(el) {
         sb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(s, null, 2)); }catch(e){} });
     }
 
-    // globals (g_ variables) - grouped display
+    // globals (g_ variables) - grouped display (respect advanced toggle)
       if (payloads.globals) {
+        var showAdvanced = false;
+        try { var tgl = document.getElementById('footer-globals-toggle'); if (tgl && tgl.checked) showAdvanced = true; } catch(e){}
         var gb = makeCollapsibleBox('Globals'); body.appendChild(gb.wrap);
         var g = payloads.globals;
         try {
-          // known groups: config, fetch, metrics, workers, nodedb, arp, coalesce, debug
-          ['config','fetch','metrics','workers','nodedb','arp','coalesce','debug'].forEach(function(group){
+          // groups available from server. When not advanced, show a compact subset
+          var groups = ['config','metrics','fetch','workers'];
+          if (showAdvanced) groups = ['config','fetch','metrics','workers','nodedb','fetch_opts','ubnt','arp','coalesce','debug'];
+          groups.forEach(function(group){
             if (g[group]) {
-              var title = group.charAt(0).toUpperCase() + group.slice(1);
+              var title = group.charAt(0).toUpperCase() + group.slice(1).replace('_',' ');
               var grp = document.createElement('div'); grp.className = 'diag-subgroup';
               var h = document.createElement('div'); h.className='diag-subtitle'; h.textContent = title; grp.appendChild(h);
               var keys = Object.keys(g[group]).sort();

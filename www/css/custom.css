@@ -212,3 +212,5 @@
 .diag-box header, .diag-box .diag-title { display:block; }
 .diag-body pre { background:#fcfcfc; border:1px solid #eee; padding:8px; border-radius:4px; font-size:12px; }
 .diag-box .diag-body { white-space:normal; }
+.diag-subgroup { margin-bottom:8px; border-top:1px dashed #eee; padding-top:8px; }
+.diag-subtitle { font-weight:700; margin-bottom:6px; font-size:12px; color:#333; }
