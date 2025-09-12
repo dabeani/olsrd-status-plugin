@@ -1497,14 +1497,6 @@ function showNodesFor(remoteIp, nodeNames) {
 
 // Cache for parsed routes from status payload
 var _rawRoutesCache = null;
-function ensureRawRoutes(statusObj) {
-  if (_rawRoutesCache) return _rawRoutesCache;
-  if (statusObj && statusObj.olsr_routes_raw && typeof statusObj.olsr_routes_raw === 'object') {
-    _rawRoutesCache = statusObj.olsr_routes_raw; return _rawRoutesCache;
-  }
-  return null;
-}
-
 function showRoutesFor(remoteIp) {
   var modal = document.getElementById('route-modal');
   if (!modal) return;
