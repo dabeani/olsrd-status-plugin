@@ -937,9 +937,11 @@ function populateOlsrLinksTable(links) {
     }
     tr.appendChild(td(mkLqBadge(l.lq)));
     try {
-      var nlqTd = document.createElement('td');
-      nlqTd.appendChild(td(mkLqBadge(l.nlq)));
-      tr.appendChild(nlqTd);
+      // Create a single TD that contains the NLQ badge. Previously we
+      // accidentally nested a TD inside another TD which duplicated the
+      // rendered content and broke table semantics.
+      var nlqCell = td(mkLqBadge(l.nlq));
+      tr.appendChild(nlqCell);
     } catch(e) { tr.appendChild(td(mkLqBadge(l.nlq))); }
     // cost numeric rendering
     var costVal = l.cost || '';
