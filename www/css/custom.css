@@ -222,3 +222,17 @@
 #status-footer #footer-indicators { display:flex; align-items:center; gap:8px; }
 #status-footer #footer-indicators > div { display:flex; align-items:center; gap:6px; }
 #status-footer .footer-small-icon { font-size:13px; color:#666; }
+/* truncated single-line with ellipsis and tooltip support */
+.footer-trunc { max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:middle; }
+.footer-trunc.short { max-width:120px; }
+
+/* move indicators slightly to the right so 'Served by' sits left */
+#status-footer #footer-indicators { margin-left:12px; }
+
+/* Responsive: hide some footer items on narrow screens to avoid wrapping */
+@media (max-width:600px) {
+  #status-footer #footer-last-updated { display:none; }
+  #status-footer .footer-diag-summary { display:none; }
+  #status-footer .footer-sep { display:none; }
+  #status-footer #footer-last-request { max-width:90px; }
+}
