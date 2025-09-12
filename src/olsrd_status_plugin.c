@@ -178,7 +178,7 @@ static char *filter_devices_array(const char *in, int lite, int drop_empty, size
   const char *p = in; while (*p && isspace((unsigned char)*p)) p++;
   if (*p != '[') return NULL;
   p++; /* skip '[' */
-  const char *whitelist[] = { "ipv4","hwaddr","hostname","product","fwversion","essid","uptime" };
+  const char *whitelist[] = { "ipv4","hwaddr","hostname","product","fwversion","firmware","essid","uptime" };
   size_t wcount = sizeof(whitelist)/sizeof(whitelist[0]);
   size_t cap = strlen(in) + 32; char *out = malloc(cap); if (!out) return NULL; size_t len = 0; out[len++]='['; int first_obj_out = 1;
   int depth = 0; const char *obj_start = NULL; const char *q = p;
@@ -5461,7 +5461,7 @@ static int h_discover_ubnt(http_request_t *r) {
           /* build a new object */
           if (slim_len+1 >= cap2) { cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; }
           slimmed[slim_len++]='{';
-          const char *whitelist[] = { "\"ipv4\"", "\"hwaddr\"", "\"hostname\"", "\"product\"", "\"fwversion\"", "\"essid\"", "\"uptime\"" };
+          const char *whitelist[] = { "\"ipv4\"", "\"hwaddr\"", "\"hostname\"", "\"product\"", "\"fwversion\"", "\"firmware\"", "\"essid\"", "\"uptime\"" };
           int added_field = 0;
           for (size_t wi=0; wi < sizeof(whitelist)/sizeof(whitelist[0]); wi++) {
             const char *k = whitelist[wi];
