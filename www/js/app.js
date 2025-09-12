@@ -216,6 +216,8 @@ function clearChildren(el) {
   window.fetch = function(url, opts) {
     try {
       _pendingFetches++; updateFooterPending();
+      // turn on the footer dot to indicate activity
+      try { var fd = document.getElementById('footer-dot'); if (fd) { fd.classList.remove('footer-dot-off'); fd.classList.add('footer-dot-on'); } } catch(e) {}
       // Record last requested endpoint in footer (strip query string and host)
       try {
         var u = String(url || '');
@@ -235,9 +237,14 @@ function clearChildren(el) {
     } catch(e) {}
     return origFetch.apply(this, arguments).then(function(resp){
       try { _pendingFetches = Math.max(0,_pendingFetches-1); updateFooterPending(); } catch(e) {}
+      // flip footer dot off after a short delay so rapid requests don't flicker
+      try { setTimeout(function(){ var fd=document.getElementById('footer-dot'); if(fd){ fd.classList.remove('footer-dot-on'); fd.classList.add('footer-dot-off'); } }, 180); } catch(e) {}
+      // update compact last-updated mirror in footer immediately when a response returns
+      try { if (resp && resp.ok) { var now = new Date().toLocaleString(); var fel = document.getElementById('footer-last-updated'); if (fel) fel.textContent = now; var main = document.getElementById('last-updated'); if (main) main.textContent = now; } } catch(e) {}
       return resp;
     }).catch(function(err){
       try { _pendingFetches = Math.max(0,_pendingFetches-1); updateFooterPending(); } catch(e) {}
+      try { setTimeout(function(){ var fd=document.getElementById('footer-dot'); if(fd){ fd.classList.remove('footer-dot-on'); fd.classList.add('footer-dot-off'); } }, 180); } catch(e) {}
       throw err;
     });
   };
@@ -318,6 +325,19 @@ function clearChildren(el) {
     // small footer row showing endpoint names/timestamp
     var meta = document.createElement('div'); meta.className='diag-small'; meta.style.width='100%'; meta.style.marginTop='8px';
     meta.textContent = 'Snapshot at: ' + new Date().toLocaleString(); body.appendChild(meta);
+
+    // Populate compact footer summary with a few useful metrics if present
+    try {
+      var fs = document.getElementById('footer-diag-summary');
+      if (fs) {
+        var parts = [];
+        try { if (payloads.summary && payloads.summary.hostname) parts.push(payloads.summary.hostname); } catch(e){}
+        try { if (payloads.summary && (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)) parts.push('Nodes:' + (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)); } catch(e){}
+        try { if (payloads.summary && (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)) parts.push('Routes:' + (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)); } catch(e){}
+        try { if (payloads.fetch_debug && payloads.fetch_debug.queue_length) parts.push('Q:' + payloads.fetch_debug.queue_length); } catch(e){}
+        fs.textContent = parts.join(' • ') || '\u00A0';
+      }
+    } catch(e) {}
   }
 
   function fetchAllAndRender(){
