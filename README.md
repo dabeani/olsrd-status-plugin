@@ -399,6 +399,24 @@ This behavior is best-effort and non-fatal: missing fields will be shown as `-` 
 * Endpoint intentionally unauthenticated for embedded deployment simplicity; place behind firewall or restrict `bind` to management network if needed.
 * All parsing is defensive with bounds checks; malformed upstream JSON will degrade gracefully (empty arrays / zero counts) rather than crash.
 
+## Recent local changes (developer notes)
+
+The local tree includes a few recent, small developer-focused improvements you may find useful when testing or extending the UI:
+
+- Combined diagnostics endpoint: `/diagnostics.json` now aggregates the small set of diagnostic endpoints into one JSON blob with top-level keys: `versions`, `capabilities`, `fetch_debug`, and `summary`. This reduces client-side parallel requests and simplifies the diagnostics drawer logic in the SPA.
+
+- Frontend wiring: the Web UI (`www/js/app.js`) now prefers `/diagnostics.json` for the diagnostics drawer and falls back to the original endpoints (`/versions.json`, `/capabilities`, `/fetch_debug`, `/status/summary`) when the combined endpoint is unavailable.
+
+- Smoke test: a tiny Node smoke-test script has been added at `www/test/diagnostics-smoke.js`. It launches a small local server serving a sample `/diagnostics.json` payload and validates the expected top-level keys. Run it with:
+
+```bash
+node www/test/diagnostics-smoke.js
+```
+
+- Compiler warning fix: a minor -Wpointer-bool-conversion warning (about using an array identifier in a boolean context) was fixed in `src/olsrd_status_plugin.c` by introducing a small local `const char *dbgmsg` variable before formatting JSON. This silences the warning across compilers without changing runtime behavior.
+
+These changes are intentionally small and non-invasive. If you want the smoke test wired into the existing test scripts (`www/test/package.json`), or prefer the diagnostics endpoint to include additional fields (platform, nodedb summary, etc.), I can add those as a follow-up.
+
 ## Extending
 Typical extension points inside `src/olsrd_status_plugin.c`:
 * Add new counters in `normalize_olsrd_links()`.
