@@ -232,7 +232,8 @@ function clearChildren(el) {
         // For readability show only last path segment(s) up to two levels
         var parts = path.split('/').filter(function(p){ return p && p.length; });
         var disp = parts.length === 0 ? '/' : (parts.length <= 2 ? parts.join('/') : parts.slice(-2).join('/'));
-        var lr = document.getElementById('footer-last-request'); if (lr) lr.textContent = disp;
+        // write via helper so truncation tooltips are handled
+        try { setFooterText('footer-last-request', disp); } catch(e) { var lr = document.getElementById('footer-last-request'); if (lr) lr.textContent = disp; }
       } catch(e) {}
     } catch(e) {}
     return origFetch.apply(this, arguments).then(function(resp){
@@ -240,7 +241,7 @@ function clearChildren(el) {
       // flip footer dot off after a short delay so rapid requests don't flicker
       try { setTimeout(function(){ var fd=document.getElementById('footer-dot'); if(fd){ fd.classList.remove('footer-dot-on'); fd.classList.add('footer-dot-off'); } }, 180); } catch(e) {}
       // update compact last-updated mirror in footer immediately when a response returns
-      try { if (resp && resp.ok) { var now = new Date().toLocaleString(); var fel = document.getElementById('footer-last-updated'); if (fel) fel.textContent = now; var main = document.getElementById('last-updated'); if (main) main.textContent = now; } } catch(e) {}
+  try { if (resp && resp.ok) { var now = new Date().toLocaleString(); try { setFooterText('footer-last-updated', now); } catch(e) { var fel = document.getElementById('footer-last-updated'); if (fel) fel.textContent = now; } var main = document.getElementById('last-updated'); if (main) main.textContent = now; } } catch(e) {}
       return resp;
     }).catch(function(err){
       try { _pendingFetches = Math.max(0,_pendingFetches-1); updateFooterPending(); } catch(e) {}
@@ -388,7 +389,7 @@ function clearChildren(el) {
         try { if (payloads.versions && (payloads.versions.plugin_version || payloads.versions.version)) parts.push('ver:' + (payloads.versions.plugin_version || payloads.versions.version)); } catch(e){}
         try { if (payloads.summary && (payloads.summary.uptime_linux || payloads.summary.uptime)) parts.push('up:' + (payloads.summary.uptime_linux || payloads.summary.uptime)); } catch(e){}
         try { if (payloads.summary && (payloads.summary.memory || payloads.summary.mem || payloads.summary.ram)) parts.push('mem:' + (payloads.summary.memory || payloads.summary.mem || payloads.summary.ram)); } catch(e){}
-        fs.textContent = parts.join(' • ') || '\u00A0';
+        try { setFooterText('footer-diag-summary', parts.join(' • ') || '\u00A0'); } catch(e) { fs.textContent = parts.join(' • ') || '\u00A0'; }
       }
     } catch(e) {}
   }
@@ -1976,9 +1977,24 @@ function setLastUpdated(ts) {
     var text = ts || new Date().toLocaleString();
     if (el) el.textContent = text;
     // also mirror a compact last-updated timestamp into the sticky footer center
+    try { setFooterText('footer-last-updated', text); } catch(e) { try { var fel = document.getElementById('footer-last-updated'); if (fel) fel.textContent = text; } catch(e) {} }
+  } catch(e) {}
+}
+
+// Helper to set footer textContent and add a title when the content is visually truncated
+function setFooterText(id, text) {
+  try {
+    var el = document.getElementById(id);
+    if (!el) return;
+    // set text content first
+    el.textContent = String(text == null ? '' : text);
+    // If the element has the truncation class, set title attribute so the full text appears on hover
     try {
-      var fel = document.getElementById('footer-last-updated');
-      if (fel) fel.textContent = text;
+      if (el.classList && el.classList.contains('footer-trunc')) {
+        el.setAttribute('title', String(text == null ? '' : text));
+      } else {
+        el.removeAttribute('title');
+      }
     } catch(e) {}
   } catch(e) {}
 }
