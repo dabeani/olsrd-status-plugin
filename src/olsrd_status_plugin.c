@@ -196,22 +196,56 @@ static char *filter_devices_array(const char *in, int lite, int drop_empty, size
         int first_field = 1;
         const char *kp = obj_start+1; /* inside object */
         while (kp < obj_end) {
-          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
-            if (kp>=obj_end || *kp=='}') break;
-          if (*kp!='"') { kp++; continue; }
-          const char *key_start = kp+1; const char *key_p = key_start;
-          while (key_p < obj_end && *key_p!='"') { if (*key_p=='\\' && key_p+1<obj_end) key_p+=2; else key_p++; }
-          if (key_p>=obj_end) break; const char *key_end = key_p; kp = key_p+1;
-          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
-          if (kp>=obj_end || *kp!=':') break; kp++; /* skip ':' */
-          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
-          if (kp>=obj_end) break;
-          const char *val_start = kp; const char *val_end = NULL;
-          if (*kp=='"') { /* string */
-            kp++; while (kp < obj_end && *kp!='"') { if (*kp=='\\' && kp+1<obj_end) kp+=2; else kp++; }
-            if (kp>=obj_end) break; kp++; val_end = kp; /* include closing quote */
-          } else { /* primitive */
-            while (kp < obj_end && *kp!=',' && *kp!='}') kp++;
+          while (kp < obj_end && isspace((unsigned char)*kp)) {
+            kp++;
+          }
+          if (kp>=obj_end || *kp=='}') {
+            break;
+          }
+          if (*kp != '"') {
+            kp++;
+            continue;
+          }
+          const char *key_start = kp + 1;
+          const char *key_p = key_start;
+          while (key_p < obj_end && *key_p != '"') {
+            if (*key_p == '\\' && key_p + 1 < obj_end) key_p += 2;
+            else key_p++;
+          }
+          if (key_p >= obj_end) {
+            break;
+          }
+          const char *key_end = key_p;
+          kp = key_p + 1;
+          while (kp < obj_end && isspace((unsigned char)*kp)) {
+            kp++;
+          }
+          if (kp>=obj_end || *kp != ':') {
+            break;
+          }
+          kp++; /* skip ':' */
+          while (kp < obj_end && isspace((unsigned char)*kp)) {
+            kp++;
+          }
+          if (kp>=obj_end) {
+            break;
+          }
+          const char *val_start = kp;
+          const char *val_end = NULL;
+          if (*kp == '"') {
+            /* string */
+            kp++;
+            while (kp < obj_end && *kp != '"') {
+              if (*kp == '\\' && kp + 1 < obj_end) kp += 2; else kp++;
+            }
+            if (kp >= obj_end) {
+              break;
+            }
+            kp++;
+            val_end = kp; /* include closing quote */
+          } else {
+            /* primitive */
+            while (kp < obj_end && *kp != ',' && *kp != '}') kp++;
             val_end = kp;
           }
           /* capture raw key and value substrings */
@@ -3388,7 +3422,7 @@ static int h_devices_json(http_request_t *r) {
   char *udcopy = NULL; size_t udlen = 0;
   int have_ud = 0, have_arp = 0;
   int want_lite = 0;
-  if (r && r->query && strstr(r->query, "lite=1")) want_lite = 1;
+  if (r && r->query[0] && strstr(r->query, "lite=1")) want_lite = 1;
 
   /* try to serve cached merged devices JSON via coalescer */
   char *cached = NULL; size_t cached_len = 0;
@@ -5405,7 +5439,7 @@ static int h_discover_ubnt(http_request_t *r) {
 
   /* Optional slimming: unless query contains full=1, we strip each device object to a minimal set of keys */
   int want_full = 0;
-  if (r && r->query && strstr(r->query, "full=1")) want_full = 1;
+  if (r && r->query[0] && strstr(r->query, "full=1")) want_full = 1;
 
   char *slimmed = NULL; size_t slim_len = 0;
   if (!want_full && devices_json && devices_n > 0) {
@@ -5452,8 +5486,11 @@ static int h_discover_ubnt(http_request_t *r) {
             if (added_field) { if (slim_len+1 >= cap2) { cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; } slimmed[slim_len++]=','; }
             if (!slimmed) break;
             /* copy key:value pair */
-            size_t need = strlen(k) + (size_t)(val_end - (found + strlen(k))); /* approximate */
-            if (slim_len + (val_end - found) >= cap2) { while (slim_len + (val_end - found) >= cap2) cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; }
+            if (slim_len + (val_end - found) >= cap2) {
+              while (slim_len + (val_end - found) >= cap2) cap2 *= 2;
+              slimmed = realloc(slimmed, cap2);
+              if (!slimmed) break;
+            }
             if (!slimmed) break;
             memcpy(slimmed + slim_len, found, (size_t)(val_end - found));
             slim_len += (size_t)(val_end - found);
