@@ -4031,7 +4031,10 @@ static int h_status_traceroute(http_request_t *r) {
             memcpy(traceroute_to, line + plen, cplen); traceroute_to[cplen] = '\0'; traceroute_to_set = 1;
           }
         }
-        if (!nl) break; line = nl + 1;
+        if (!nl) {
+          break;
+        }
+        line = nl + 1;
       }
       free(s);
     }
@@ -5473,9 +5476,15 @@ static int h_discover_ubnt(http_request_t *r) {
             /* find value substring: start after colon, handle simple primitives or quoted strings */
             const char *val_start = found + strlen(k);
             const char *colon = val_start; while (colon < obj_end && *colon != ':') colon++;
-            if (colon>=obj_end) continue; colon++; /* skip ':' */
+            if (colon>=obj_end) {
+              continue;
+            }
+            colon++; /* skip ':' */
             while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
-            if (colon>=obj_end) continue; val_start = colon; const char *val_end = val_start;
+            if (colon>=obj_end) {
+              continue;
+            }
+            val_start = colon; const char *val_end = val_start;
             if (*val_start=='"') { /* string */
               val_end++; while (val_end < obj_end && *val_end!='"') { if (*val_end=='\\' && val_end+1<obj_end) val_end+=2; else val_end++; }
               if (val_end<obj_end) val_end++; /* include closing quote */
