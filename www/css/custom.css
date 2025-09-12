@@ -177,10 +177,13 @@
 .footer-pending.nonzero { background:#f0ad4e; box-shadow: 0 0 6px rgba(240,173,78,0.35); color:#222; }
 
 /* keep legacy footer dots definitions for compatibility (not used by current markup) */
-.footer-dot { width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 0 rgba(0,0,0,0); transition: box-shadow 300ms ease, background-color 300ms ease; }
+.footer-dot { width:10px; height:10px; border-radius:50%; background:#ccc; box-shadow:0 0 0 rgba(0,0,0,0); transition: box-shadow 300ms ease, background-color 300ms ease, transform 120ms ease; }
 .footer-dot-off { background:#bdbdbd; }
-.footer-dot-req { background: #f0ad4e; box-shadow: 0 0 6px rgba(240,173,78,0.45); }
+.footer-dot-req { background: #f0ad4e; box-shadow: 0 0 8px rgba(240,173,78,0.45); }
 .footer-dot-res { background: #5cb85c; box-shadow: 0 0 8px rgba(92,184,92,0.45); }
+.footer-dot-err { background: #e74c3c; box-shadow: 0 0 10px rgba(231,76,60,0.55); transform: scale(1.06); }
+/* pending tooltip styling hint: ensure tooltip via title attribute shows full pending endpoints */
+.footer-pending[title] { cursor: help; }
 
 /* Footer latency text */
 #footer-latency, #footer-latency * { color: #666; font-size:12px; }

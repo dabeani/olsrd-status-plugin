@@ -21,7 +21,7 @@ if (!window.JSON) {
           json.push((arr ? "" : '"' + k + '":') + window.JSON.stringify(obj[k]));
         }
       }
-      return (arr ? "[" : "{") + json.join(",") + (arr ? "]" : "}");
+      return (arr ? "[" : "{") + json.join(',') + (arr ? "]" : "}");
     }
   };
 }
@@ -335,6 +335,10 @@ function clearChildren(el) {
         try { if (payloads.summary && (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)) parts.push('Nodes:' + (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)); } catch(e){}
         try { if (payloads.summary && (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)) parts.push('Routes:' + (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)); } catch(e){}
         try { if (payloads.fetch_debug && payloads.fetch_debug.queue_length) parts.push('Q:' + payloads.fetch_debug.queue_length); } catch(e){}
+        // additional fields: plugin version, uptime, memory
+        try { if (payloads.versions && (payloads.versions.plugin_version || payloads.versions.version)) parts.push('ver:' + (payloads.versions.plugin_version || payloads.versions.version)); } catch(e){}
+        try { if (payloads.summary && (payloads.summary.uptime_linux || payloads.summary.uptime)) parts.push('up:' + (payloads.summary.uptime_linux || payloads.summary.uptime)); } catch(e){}
+        try { if (payloads.summary && (payloads.summary.memory || payloads.summary.mem || payloads.summary.ram)) parts.push('mem:' + (payloads.summary.memory || payloads.summary.mem || payloads.summary.ram)); } catch(e){}
         fs.textContent = parts.join(' • ') || '\u00A0';
       }
     } catch(e) {}
