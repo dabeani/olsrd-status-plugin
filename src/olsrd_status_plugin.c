@@ -574,6 +574,53 @@ static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const cha
   return 0;
 }
 
+/*
+ * Extract the first top-level JSON value (object or array) from a noisy input string.
+ * Returns a newly allocated, NUL-terminated string containing the JSON value, or
+ * NULL if no suitable JSON start was found or allocation failed. The caller must
+ * free() the returned string. This performs a minimal brace/balance scan and
+ * attempts to ignore quoted strings and escaped characters so producers that
+ * accidentally include banners or newlines around valid JSON will still emit
+ * a strict JSON fragment here.
+ */
+static char *extract_first_json_value(const char *s) {
+  if (!s) return NULL;
+  const char *p = s;
+  /* find first '{' or '[' */
+  while (*p && *p != '{' && *p != '[') p++;
+  if (!*p) return NULL;
+  char open = *p;
+  char close = (open == '{') ? '}' : ']';
+  int depth = 0;
+  int in_str = 0;
+  int escaped = 0;
+  const char *q = p;
+  while (*q) {
+    char c = *q;
+    if (in_str) {
+      if (escaped) { escaped = 0; }
+      else if (c == '\\') { escaped = 1; }
+      else if (c == '"') { in_str = 0; }
+    } else {
+      if (c == '"') { in_str = 1; }
+      else if (c == open) { depth++; }
+      else if (c == close) {
+        depth--;
+        if (depth == 0) { q++; break; }
+      }
+    }
+    q++;
+  }
+  if (depth != 0) return NULL; /* unbalanced, give up */
+  size_t len = (size_t)(q - p);
+  char *out = malloc(len + 1);
+  if (!out) return NULL;
+  memcpy(out, p, len);
+  out[len] = '\0';
+  return out;
+}
+
+
 /* Global short-lived cache for local HTTP calls (thread-safe, small TTL) */
 #define LOCAL_CACHE_ENTRIES 64
 #define LOCAL_CACHE_TTL_SEC 1
@@ -4342,10 +4389,25 @@ static int h_diagnostics_json(http_request_t *r) {
 
   /* assemble final payload */
   char *out = NULL; size_t outcap = 2048, outlen = 0; out = malloc(outcap); if(!out){ if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; } out[0]=0;
-  if (json_appendf(&out, &outlen, &outcap, "{") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
-  if (json_appendf(&out, &outlen, &outcap, "\"versions\":%s,", versions ? versions : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  /* sanitize embedded fragments: extract first JSON value from generated pieces if necessary */
+  char *versions_clean = NULL;
+  if (versions) {
+    versions_clean = extract_first_json_value(versions);
+    if (!versions_clean) {
+      /* fallback: strip leading/trailing whitespace and use as-is */
+      versions_clean = strdup(versions);
+    }
+  }
+  char *fetchbuf_clean = NULL;
+  if (fetchbuf) {
+    fetchbuf_clean = extract_first_json_value(fetchbuf);
+    if (!fetchbuf_clean) fetchbuf_clean = strdup(fetchbuf);
+  }
+
+  if (json_appendf(&out, &outlen, &outcap, "{") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); if(versions_clean) free(versions_clean); if(fetchbuf_clean) free(fetchbuf_clean); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"versions\":%s,", versions_clean ? versions_clean : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); if(versions_clean) free(versions_clean); if(fetchbuf_clean) free(fetchbuf_clean); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"capabilities\":%s,", capbuf[0] ? capbuf : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
-  if (json_appendf(&out, &outlen, &outcap, "\"fetch_debug\":%s,", fetchbuf ? fetchbuf : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"fetch_debug\":%s,", fetchbuf_clean ? fetchbuf_clean : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); if(versions_clean) free(versions_clean); if(fetchbuf_clean) free(fetchbuf_clean); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"summary\":%s", summary ? summary : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   /* globals: expose selected g_ variables for frontend diagnostics (grouped) */
   {
@@ -4383,6 +4445,8 @@ static int h_diagnostics_json(http_request_t *r) {
 
   if (versions) free(versions);
   if (fetchbuf) free(fetchbuf);
+  if (versions_clean) free(versions_clean);
+  if (fetchbuf_clean) free(fetchbuf_clean);
   if (summary) free(summary);
 
   http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, outlen); free(out);
