@@ -254,6 +254,30 @@ function clearChildren(el) {
 // Footer diagnostics drawer: open/close and populate from endpoints
 (function(){
   function el(id){ return document.getElementById(id); }
+  // Tolerant JSON parser: replace raw newlines inside string literals with \n and retry
+  function safeParseJson(text){
+    try { return JSON.parse(text); } catch(e) {}
+    try {
+      var out = '';
+      var inStr = false, esc = false;
+      for (var i=0;i<text.length;i++){
+        var ch = text.charAt(i);
+        if (inStr) {
+          if (esc) { out += ch; esc = false; continue; }
+          if (ch === '\\') { out += ch; esc = true; continue; }
+          if (ch === '\n' || ch === '\r') { out += '\\n'; continue; }
+          if (ch === '"') { inStr = false; out += ch; continue; }
+          out += ch;
+        } else {
+          if (ch === '"') { inStr = true; out += ch; continue; }
+          out += ch;
+        }
+      }
+      return JSON.parse(out);
+    } catch(e2) {
+      throw e2;
+    }
+  }
   function showDiagnostics(open){
     var panel = el('footer-diagnostics-panel');
     if(!panel) return;
@@ -370,12 +394,10 @@ function clearChildren(el) {
     // Prefer the combined diagnostics endpoint if available
     fetch('/diagnostics.json', {cache:'no-store'}).then(function(r){
       if (!r || !r.ok) throw new Error('no diagnostics');
-      return r.json();
-    }).then(function(j){
-      // Render the full diagnostics payload so every key/value returned by
-      // /diagnostics.json is visible in the Diagnostics menu (not just a
-      // small subset). This ensures newly-added groups on the server are
-      // immediately visible in the compact grid.
+      return r.text();
+    }).then(function(txt){
+      // tolerant parse so we always render all keys
+      var j = safeParseJson(txt);
       try { renderDiagnostics(j); } catch(e) { renderDiagnostics(p); }
     }).catch(function(){
       // fallback to original parallel fetches
@@ -422,7 +444,8 @@ function clearChildren(el) {
         var body = el('footer-diagnostics-body'); if(!body) return;
         clearChildren(body);
         var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = 'Loading...'; body.appendChild(pre);
-        fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+        fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
+          var j = safeParseJson(txt);
           // flatten client-side
           var out = [];
           function flatten(o, prefix){
