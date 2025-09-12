@@ -322,6 +322,26 @@ function clearChildren(el) {
         sb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(s, null, 2)); }catch(e){} });
     }
 
+    // globals (g_ variables) - grouped display
+      if (payloads.globals) {
+        var gb = makeCollapsibleBox('Globals'); body.appendChild(gb.wrap);
+        var g = payloads.globals;
+        try {
+          // known groups: config, fetch, metrics, workers, nodedb, arp, coalesce, debug
+          ['config','fetch','metrics','workers','nodedb','arp','coalesce','debug'].forEach(function(group){
+            if (g[group]) {
+              var title = group.charAt(0).toUpperCase() + group.slice(1);
+              var grp = document.createElement('div'); grp.className = 'diag-subgroup';
+              var h = document.createElement('div'); h.className='diag-subtitle'; h.textContent = title; grp.appendChild(h);
+              var keys = Object.keys(g[group]).sort();
+              keys.forEach(function(k){ grp.appendChild(kvRow(k, g[group][k])); });
+              gb.body.appendChild(grp);
+            }
+          });
+        } catch(e) { gb.body.appendChild(kvRow('error', String(e))); }
+        gb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(g, null, 2)); }catch(e){} });
+    }
+
     // small footer row showing endpoint names/timestamp
     var meta = document.createElement('div'); meta.className='diag-small'; meta.style.width='100%'; meta.style.marginTop='8px';
     meta.textContent = 'Snapshot at: ' + new Date().toLocaleString(); body.appendChild(meta);

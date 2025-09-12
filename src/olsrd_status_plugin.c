@@ -4347,6 +4347,35 @@ static int h_diagnostics_json(http_request_t *r) {
   if (json_appendf(&out, &outlen, &outcap, "\"capabilities\":%s,", capbuf[0] ? capbuf : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"fetch_debug\":%s,", fetchbuf ? fetchbuf : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"summary\":%s", summary ? summary : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  /* globals: expose selected g_ variables for frontend diagnostics (grouped) */
+  {
+    unsigned long d=0,rr=0,s=0,ur=0,un=0;
+    /* Use macros to load metrics in a threadsafe/portable way (atomics or mutex) */
+    METRIC_LOAD_ALL(d,rr,s);
+    METRIC_LOAD_UNIQUE(ur,un);
+
+    /* fetch queue length already computed as qlen above */
+    if (json_appendf(&out, &outlen, &outcap, ",\"globals\":{") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+    if (json_appendf(&out, &outlen, &outcap, "\"config\":{\"bind\":\"%s\",\"port\":%d,\"enable_ipv6\":%d,\"asset_root\":\"%s\"},", g_bind, g_port, g_enable_ipv6, g_asset_root) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+    if (json_appendf(&out, &outlen, &outcap, "\"fetch\":{\"queue_max\":%d,\"retries\":%d,\"backoff_initial\":%d,\"queue_warn\":%d,\"queue_crit\":%d,\"queue_length\":%d},", g_fetch_queue_max, g_fetch_retries, g_fetch_backoff_initial, g_fetch_queue_warn, g_fetch_queue_crit, qlen) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"metrics\":{\"fetch_dropped\":%lu,\"fetch_retries\":%lu,\"fetch_successes\":%lu,\"unique_routes\":%lu,\"unique_nodes\":%lu},", d, rr, s, ur, un) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+    if (json_appendf(&out, &outlen, &outcap, "\"workers\":{\"fetch_worker_running\":%d,\"nodedb_worker_running\":%d,\"devices_worker_running\":%d},", g_fetch_worker_running, g_nodedb_worker_running, g_devices_worker_running) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+    if (json_appendf(&out, &outlen, &outcap, "\"nodedb\":{\"cfg_port_set\":%d,\"cfg_nodedb_ttl_set\":%d,\"cfg_nodedb_write_disk_set\":%d,\"cfg_nodedb_url_set\":%d,\"cfg_net_count\":%d,\"nodedb_ttl\":%d,\"nodedb_last_fetch\":%d,\"nodedb_cached_len\":%d,\"nodedb_fetch_in_progress\":%d,\"nodedb_write_disk\":%d,\"nodedb_startup_wait\":%d},",
+                          g_cfg_port_set, g_cfg_nodedb_ttl_set, g_cfg_nodedb_write_disk_set, g_cfg_nodedb_url_set, g_cfg_net_count,
+                          g_nodedb_ttl, (int)g_nodedb_last_fetch, (int)g_nodedb_cached_len, g_nodedb_fetch_in_progress, g_nodedb_write_disk, g_nodedb_startup_wait) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+    if (json_appendf(&out, &outlen, &outcap, "\"fetch_opts\":{\"fetch_log_queue\":%d,\"cfg_fetch_log_queue_set\":%d,\"fetch_log_force\":%d,\"cfg_fetch_log_force_set\":%d,\"fetch_report_interval\":%d,\"cfg_fetch_report_set\":%d,\"fetch_auto_refresh_ms\":%d,\"cfg_fetch_auto_refresh_set\":%d},",
+                          g_fetch_log_queue, g_cfg_fetch_log_queue_set, g_fetch_log_force, g_cfg_fetch_log_force_set, g_fetch_report_interval, g_cfg_fetch_report_set, g_fetch_auto_refresh_ms, g_cfg_fetch_auto_refresh_set) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+    if (json_appendf(&out, &outlen, &outcap, "\"ubnt\":{\"devices_discover_interval\":%d,\"ubnt_probe_window_ms\":%d,\"ubnt_cache_ttl_s\":%d},", g_devices_discover_interval, g_ubnt_probe_window_ms, g_ubnt_cache_ttl_s) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+    if (json_appendf(&out, &outlen, &outcap, "\"arp\":{\"arp_cache_len\":%d,\"arp_cache_ts\":%d,\"arp_cache_ttl_s\":%d},", g_arp_cache_len, (int)g_arp_cache_ts, g_arp_cache_ttl_s) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+    if (json_appendf(&out, &outlen, &outcap, "\"coalesce\":{\"devices_ttl\":%d,\"discover_ttl\":%d,\"traceroute_ttl\":%d},", g_coalesce_devices_ttl, g_coalesce_discover_ttl, g_coalesce_traceroute_ttl) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+    if (json_appendf(&out, &outlen, &outcap, "\"debug\":{\"log_request_debug\":%d,\"last_fetch_msg\":\"%s\"}", g_log_request_debug, g_debug_last_fetch_msg) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  }
   if (json_appendf(&out, &outlen, &outcap, "}\n") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
   if (versions) free(versions);
