@@ -11,7 +11,4 @@ Thumbs.db
 # specials
 build/
 smoke-*.log
-tools/remote/*.headers
-tools/remote/*.json
-tools/remote/*.log
-tools/remote/*.txt
+tools/

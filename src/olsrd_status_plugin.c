@@ -2933,10 +2933,8 @@ static int h_status(http_request_t *r) {
   /* legacy compatibility: expose olsrd4watchdog object with state on/off to match bmk-webstatus style */
   APPEND(",\"olsrd4watchdog\":{\"state\":\"%s\"}", olsrd_on?"on":"off");
 
-  /* include raw olsr JSON for neighbors/routes/topology when available to mimic python script */
-  if (olsr_neighbors_raw && olnn>0) { APPEND(",\"olsr_neighbors_raw\":%s", olsr_neighbors_raw); }
+  /* include raw olsr routes JSON when available; avoid including raw neighbors/topology to slim payload */
   if (olsr_routes_raw && olr>0) { APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw); }
-  if (olsr_topology_raw && olt>0) { APPEND(",\"olsr_topology_raw\":%s", olsr_topology_raw); }
 
   if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; }
 
@@ -3113,35 +3111,12 @@ static int h_status(http_request_t *r) {
     } else if (generate_versions_json(&vtmp, &vtmp_n) == 0 && vtmp && vtmp_n>0) {
       vtmp_owned = 1;
     }
+    /* keep versions-derived data generation but avoid emitting autoupdate/wizards here to reduce payload */
     if (vtmp && vtmp_n > 0) {
-      char *autoup = NULL; size_t alen = 0;
-      if (extract_json_value(vtmp, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
-        APPEND(",\"autoupdate\":%s", autoup);
-        free(autoup);
-      } else {
-        APPEND(",\"autoupdate\":{}" );
-      }
-      /* wizards boolean copied as 'wizards' top-level key (legacy) */
-      char *wiz = NULL; if (extract_json_value(vtmp, "autoupdate_wizards_installed", &wiz, NULL)==0 && wiz) {
-        /* value in versions is a string; keep as string to avoid surprises */
-        APPEND(",\"wizards\":%s", wiz);
-        free(wiz);
-      } else {
-        APPEND(",\"wizards\":\"no\"");
-      }
       if (vtmp_owned) { free(vtmp); vtmp = NULL; }
-    } else {
-      APPEND(",\"autoupdate\":{}" );
-      APPEND(",\"wizards\":\"no\"");
     }
-
-  /* homes and bootimage: emit simple defaults (generate_versions_json has its own detailed output elsewhere) */
-  APPEND(",\"homes\":[]");
+  /* bootimage: emit minimal placeholder (detailed info is in versions JSON elsewhere) */
   APPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
-
-  /* linklocals and local_ips: emit empty placeholders for compatibility */
-  APPEND(",\"local_ips\":[]");
-  APPEND(",\"linklocals\":[]");
   }
   APPEND("\n}\n");
 
@@ -3170,19 +3145,6 @@ static int h_status_compat(http_request_t *r) {
   /* airosdata */
   if (airos_raw && airos_n>0) CAPPEND("\"airosdata\":%s", airos_raw); else CAPPEND("\"airosdata\":{}");
 
-  /* autoupdate + wizards from versions JSON if available */
-  if (vgen && vgen_n>0) {
-    char *autoup = NULL; size_t alen = 0;
-    if (extract_json_value(vgen, "autoupdate_settings", &autoup, &alen) == 0 && autoup) {
-      CAPPEND(",\"autoupdate\":%s", autoup);
-      free(autoup);
-    } else {
-      CAPPEND(",\"autoupdate\":{}");
-    }
-    char *wiz = NULL; if (extract_json_value(vgen, "autoupdate_wizards_installed", &wiz, NULL) == 0 && wiz) { CAPPEND(",\"wizards\":%s", wiz); free(wiz); } else { CAPPEND(",\"wizards\":\"no\""); }
-  } else {
-    CAPPEND(",\"autoupdate\":{}"); CAPPEND(",\"wizards\":\"no\"");
-  }
 
   /* bootimage minimal: try to extract md5 from generated versions JSON */
   if (vgen && vgen_n>0) {
@@ -3204,9 +3166,8 @@ static int h_status_compat(http_request_t *r) {
   CAPPEND(",\"devices\":[]");
   }
 
-  CAPPEND(",\"homes\":[]");
-  CAPPEND(",\"linklocals\":[]");
-  CAPPEND(",\"local_ips\":[]");
+  /* compat payload: keep minimal bootimage/devices; skip autoupdate/wizards/homes/local placeholders to reduce size */
+  CAPPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
   /* olsrd4watchdog state: detect olsrd process presence */
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   CAPPEND(",\"olsrd4watchdog\":{\"state\":\"%s\"}", olsrd_on?"on":"off");
