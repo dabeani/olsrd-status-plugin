@@ -52,6 +52,7 @@ Example `/versions.json` snippet (best-effort fields shown):
 | `/status` | Full status: system, versions, devices, links, neighbors, routes/topology raw, diagnostics.
 | `/status/olsr` | Focused OLSR subset (fast link/neighbor view + default route + flags).
 | `/status/lite` | Very fast status (omits heavy OLSR normalization) – good for frequent polling.
+| `/devices.json` | Cached UBNT discovery device list (optionally filtered). Supports `?lite=1`.
 | `/olsr/links` | Normalized link table (same shape as embedded in `/status`).
 | `/olsr/raw` | Concatenated raw JSON from OLSR endpoints (links/routes/topology) for debugging.
 | `/olsr/routes?via=IP` | Filtered routes via specific neighbor (or all).
@@ -65,6 +66,29 @@ Raw OLSR sections optionally embedded in `/status`:
 * `olsr_neighbors_raw`
 * `olsr_routes_raw`
 * `olsr_topology_raw`
+
+### `/devices.json` details
+
+The devices endpoint serves the normalized UBNT discovery results (not ARP synthesis) from the internal discovery cache. Its payload shape is:
+
+```json
+{ "devices": [ { "ipv4": "10.0.0.1", "hwaddr": "00:11:22:33:44:55", ... }, ... ], "airos": { /* optional airos info if present */ } }
+```
+
+Filtering modes:
+
+* Default (no query parameters):
+    * Removes any key whose value is an empty string `""` to reduce bloat.
+    * Retains the full remaining set of discovery keys (hostname/product/fwversion/essid/uptime/etc.).
+* `?lite=1`:
+    * Applies a whitelist of essential keys per object: `ipv4`, `hwaddr`, `hostname`, `product`, `fwversion`, `essid`, `uptime`.
+    * Also drops empty-string values like the default mode.
+
+Rationale: the UI only needs a small subset of fields for list rendering; slimming the JSON can significantly reduce bytes transferred when there are many devices. Operators or tooling that require the complete set can continue to use the default (non-lite) form.
+
+Caching: the endpoint participates in the same coalescer / TTL logic as UBNT discovery. A lite response is generated on demand from the cached full array; both forms share the underlying discovery snapshot so calling the lite variant does not trigger additional network probes.
+
+Note: ARP‑derived synthetic devices are intentionally excluded from `/devices.json` even when ARP fallback is enabled globally; the endpoint reflects only concrete discovery replies.
 
 ## Data Sources & Normalization Flow
 1. Probe local OLSR JSON endpoints (`:9090`, `:2006`, `:8123`) with short timeouts.
@@ -233,6 +257,16 @@ export OLSRD_STATUS_FETCH_BACKOFF_INITIAL=2
 ```
 
 Precedence: for all of the above the plugin parameter `PlParam` in `olsrd.conf` wins when present; otherwise the corresponding environment variable is used; otherwise the compiled default applies.
+
+### Discovery / devices specific tuning
+
+* `OLSRD_STATUS_UBNT_CACHE_TTL_S` / PlParam `ubnt_cache_ttl_s` – TTL (seconds) for the normalized UBNT discovery cache. Default: 300.
+* `OLSRD_STATUS_DISCOVER_INTERVAL` / PlParam `discover_interval` – (already documented above) controls how often a new active discovery cycle runs.
+* `OLSRD_STATUS_ALLOW_ARP_FALLBACK` / PlParam `allow_arp_fallback` – when set to `1` allows ARP‑synthesized devices in broader status aggregations (not `/devices.json`). Default: 0.
+* `OLSRD_STATUS_ARP_CACHE_TTL_S` / PlParam `arp_cache_ttl_s` – TTL (seconds) for the internal ARP JSON cache used when ARP fallback is enabled. Default: 5.
+* `OLSRD_STATUS_STATUS_DEVICES_MODE` / PlParam `status_devices_mode` – controls whether `/status` embeds the (potentially large) devices array: `0` omit devices, `1` include full list (default), `2` include only summary counts.
+
+These parameters let you tune payload size and refresh behavior independently: for example you can keep a short ARP cache TTL for fresher MAC/IP correlation while keeping a longer UBNT discovery TTL when device metadata changes rarely.
 
 Logging and debugging
 

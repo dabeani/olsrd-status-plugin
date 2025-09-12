@@ -163,6 +163,99 @@ static int g_fetch_log_force = 0;
 static int g_cfg_fetch_log_force_set = 0;
 /* Allow ARP fallback when explicitly enabled via env/PlParam. Default: 0 (disabled) */
 static int g_allow_arp_fallback = 0;
+/* Status devices inclusion mode: 0=omit devices array, 1=include full merged, 2=summary only */
+static int g_status_devices_mode = 1; /* default keep current behavior */
+
+/* Filter a normalized UBNT devices JSON array string.
+ * Options:
+ *   lite: keep only a whitelist of essential keys per object.
+ *   drop_empty: remove key:"" pairs.
+ * Returns newly malloc'ed filtered array string on success (caller must free),
+ * or NULL on failure (caller should keep original).
+ */
+static char *filter_devices_array(const char *in, int lite, int drop_empty, size_t *out_len) {
+  if (!in) return NULL;
+  const char *p = in; while (*p && isspace((unsigned char)*p)) p++;
+  if (*p != '[') return NULL;
+  p++; /* skip '[' */
+  const char *whitelist[] = { "ipv4","hwaddr","hostname","product","fwversion","essid","uptime" };
+  size_t wcount = sizeof(whitelist)/sizeof(whitelist[0]);
+  size_t cap = strlen(in) + 32; char *out = malloc(cap); if (!out) return NULL; size_t len = 0; out[len++]='['; int first_obj_out = 1;
+  int depth = 0; const char *obj_start = NULL; const char *q = p;
+  while (*q) {
+    if (*q=='{') { if (depth==0) obj_start = q; depth++; q++; continue; }
+    if (*q=='}') {
+      depth--; if (depth==0 && obj_start) {
+        const char *obj_end = q+1;
+        /* Process object */
+        /* We'll rebuild object content */
+        if (!first_obj_out) { if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; } out[len++]=','; }
+        first_obj_out = 0;
+        if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
+        out[len++]='{';
+        int first_field = 1;
+        const char *kp = obj_start+1; /* inside object */
+        while (kp < obj_end) {
+          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
+            if (kp>=obj_end || *kp=='}') break;
+          if (*kp!='"') { kp++; continue; }
+          const char *key_start = kp+1; const char *key_p = key_start;
+          while (key_p < obj_end && *key_p!='"') { if (*key_p=='\\' && key_p+1<obj_end) key_p+=2; else key_p++; }
+          if (key_p>=obj_end) break; const char *key_end = key_p; kp = key_p+1;
+          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
+          if (kp>=obj_end || *kp!=':') break; kp++; /* skip ':' */
+          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
+          if (kp>=obj_end) break;
+          const char *val_start = kp; const char *val_end = NULL;
+          if (*kp=='"') { /* string */
+            kp++; while (kp < obj_end && *kp!='"') { if (*kp=='\\' && kp+1<obj_end) kp+=2; else kp++; }
+            if (kp>=obj_end) break; kp++; val_end = kp; /* include closing quote */
+          } else { /* primitive */
+            while (kp < obj_end && *kp!=',' && *kp!='}') kp++;
+            val_end = kp;
+          }
+          /* capture raw key and value substrings */
+          size_t klen = (size_t)(key_end - key_start);
+          int keep = 1;
+          if (lite) {
+            keep = 0;
+            for (size_t wi=0; wi<wcount; wi++) if (klen == strlen(whitelist[wi]) && strncmp(key_start, whitelist[wi], klen)==0) { keep=1; break; }
+          }
+          if (keep && drop_empty && val_end > val_start && *val_start=='"' && (val_end - val_start)==2) {
+            /* value is "" -> drop */
+            keep = 0;
+          }
+          if (keep) {
+            /* append comma if needed */
+            if (!first_field) { if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; } out[len++]=','; }
+            first_field = 0;
+            /* append key */
+            size_t need = 2 + klen + 1 + (size_t)(val_end - val_start); /* quotes + key + colon + value */
+            if (len+need >= cap) { while (len+need >= cap) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
+            out[len++]='"'; memcpy(out+len, key_start, klen); len+=klen; out[len++]='"'; out[len++]=':'; memcpy(out+len, val_start, (size_t)(val_end - val_start)); len += (size_t)(val_end - val_start);
+          }
+          /* advance past optional comma */
+          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
+          if (kp < obj_end && *kp==',') kp++;
+        }
+        if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
+        out[len++]='}';
+        obj_start=NULL;
+      }
+      q++;
+      continue;
+    }
+    q++;
+  }
+  if (len+2 >= cap) { cap+=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
+  out[len++]=']'; out[len]='\0'; if (out_len) *out_len = len; return out;
+}
+/* ARP JSON cache */
+static char *g_arp_cache = NULL;          /* malloc'ed JSON array string */
+static size_t g_arp_cache_len = 0;        /* strlen(g_arp_cache) */
+static time_t g_arp_cache_ts = 0;         /* last build timestamp */
+static int g_arp_cache_ttl_s = 5;         /* default small TTL; configurable later */
+static pthread_mutex_t g_arp_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 /* debug toggle: when set, emit extra per-request debug lines for specific endpoints (env/plugin param) */
 int g_log_request_debug __attribute__((visibility("default"))) = 0; /* default: off */
 static int g_cfg_log_request_debug_set = 0;
@@ -1393,23 +1486,60 @@ static void __attribute__((unused)) arp_enrich_ip(const char *ip, char *mac_out,
 }
 
 /* Basic ARP table to JSON device list */
-static int devices_from_arp_json(char **out, size_t *outlen) {
-  if(!out||!outlen) return -1;
-  *out=NULL; *outlen=0;
-  FILE *f = fopen("/proc/net/arp","r"); if(!f) return -1; char *buf=NULL; size_t cap=2048,len=0; buf=malloc(cap); if(!buf){ fclose(f); return -1;} buf[0]=0; json_buf_append(&buf,&len,&cap,"["); int first=1; char line[512];
-  if(!fgets(line,sizeof(line),f)) { fclose(f); free(buf); return -1; }
-  while(fgets(line,sizeof(line),f)){
+/* Build fresh ARP JSON list (uncached). Caller owns returned buffer. */
+static int build_arp_json(char **out, size_t *outlen) {
+  if (!out || !outlen) return -1;
+  *out = NULL; *outlen = 0;
+  FILE *f = fopen("/proc/net/arp", "r");
+  if (!f) return -1;
+  char *buf = NULL; size_t cap = 2048, len = 0; buf = malloc(cap); if(!buf){ fclose(f); return -1; }
+  buf[0] = '\0';
+  json_buf_append(&buf, &len, &cap, "[");
+  int first = 1; char line[512];
+  if (!fgets(line, sizeof(line), f)) { fclose(f); free(buf); return -1; }
+  while (fgets(line, sizeof(line), f)) {
     char ip[128], hw[128], dev[64];
-    if (sscanf(line,"%127s %*s %*s %127s %*s %63s", ip, hw, dev) >=2) {
-      if(!first) json_buf_append(&buf,&len,&cap,",");
-      first=0;
-      json_buf_append(&buf,&len,&cap,"{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,ip);
-  json_buf_append(&buf,&len,&cap,",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
-  /* ARP-derived entries: no hostname/product; mark source explicitly */
-  json_buf_append(&buf,&len,&cap,",\"hostname\":\"\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\",\"source\":\"arp\"}");
+    if (sscanf(line, "%127s %*s %*s %127s %*s %63s", ip, hw, dev) >= 2) {
+      if (!first) json_buf_append(&buf, &len, &cap, ",");
+      first = 0;
+      json_buf_append(&buf, &len, &cap, "{\"ipv4\":"); json_append_escaped(&buf,&len,&cap,ip);
+      json_buf_append(&buf, &len, &cap, ",\"hwaddr\":"); json_append_escaped(&buf,&len,&cap,hw);
+      /* ARP-derived entries minimal fields */
+      json_buf_append(&buf,&len,&cap,",\"hostname\":\"\",\"product\":\"\",\"uptime\":\"\",\"mode\":\"\",\"essid\":\"\",\"firmware\":\"\",\"signal\":\"\",\"tx_rate\":\"\",\"rx_rate\":\"\",\"source\":\"arp\"}");
     }
   }
-  fclose(f); json_buf_append(&buf,&len,&cap,"]"); *out=buf; *outlen=len; return 0;
+  fclose(f);
+  json_buf_append(&buf, &len, &cap, "]");
+  *out = buf; *outlen = len; return 0;
+}
+
+/* Cached accessor for ARP JSON; returns dup the caller must free */
+static int get_arp_json_cached(char **out, size_t *outlen) {
+  if (!out || !outlen) return -1;
+  time_t now = time(NULL);
+  pthread_mutex_lock(&g_arp_cache_lock);
+  int fresh = (g_arp_cache && g_arp_cache_len > 0 && (g_arp_cache_ttl_s <= 0 || (now - g_arp_cache_ts) <= g_arp_cache_ttl_s));
+  if (fresh) {
+    char *dup = malloc(g_arp_cache_len + 1);
+    if (!dup) { pthread_mutex_unlock(&g_arp_cache_lock); return -1; }
+    memcpy(dup, g_arp_cache, g_arp_cache_len + 1);
+    *out = dup; *outlen = g_arp_cache_len;
+    pthread_mutex_unlock(&g_arp_cache_lock);
+    return 0;
+  }
+  pthread_mutex_unlock(&g_arp_cache_lock);
+  /* build fresh outside lock */
+  char *fresh_json = NULL; size_t fresh_len = 0;
+  if (build_arp_json(&fresh_json, &fresh_len) != 0) return -1;
+  pthread_mutex_lock(&g_arp_cache_lock);
+  if (g_arp_cache) free(g_arp_cache);
+  g_arp_cache = fresh_json; g_arp_cache_len = fresh_len; g_arp_cache_ts = now;
+  /* duplicate for caller */
+  char *dup = malloc(g_arp_cache_len + 1);
+  if (!dup) { pthread_mutex_unlock(&g_arp_cache_lock); return -1; }
+  memcpy(dup, g_arp_cache, g_arp_cache_len + 1);
+  pthread_mutex_unlock(&g_arp_cache_lock);
+  *out = dup; *outlen = fresh_len; return 0;
 }
 
 /* Obtain primary non-loopback IPv4 (best effort). */
@@ -3151,8 +3281,9 @@ static int h_status_lite(http_request_t *r) {
   APP_L(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev);
   APP_L(",\"hostname\":"); json_append_escaped(&buf,&len,&cap,def_hostname);
   APP_L("},");
-  /* devices: merge ubnt-discover normalized devices with ARP-derived devices so UI always sees both sources */
-  {
+  /* devices (mode-controlled): 0=omit, 1=full merged array (current default), 2=summary counts only */
+  if (g_status_devices_mode == 1) {
+    /* full merged array as before */
     char *ud = NULL; size_t udn = 0;
     char *arp = NULL; size_t arpn = 0;
     char *normalized = NULL; size_t nlen = 0;
@@ -3166,7 +3297,7 @@ static int h_status_lite(http_request_t *r) {
       free(ud); ud = NULL; udn = 0;
     }
     if (g_allow_arp_fallback) {
-      if (devices_from_arp_json(&arp, &arpn) == 0 && arp && arpn > 0) {
+      if (get_arp_json_cached(&arp, &arpn) == 0 && arp && arpn > 0) {
         have_arp = 1;
       }
     }
@@ -3242,6 +3373,30 @@ static int h_status_lite(http_request_t *r) {
       if (normalized) free(normalized);
       if (arp) free(arp);
     }
+  } else if (g_status_devices_mode == 2) {
+    /* summary only: counts of UBNT vs ARP vs total */
+    int count_ubnt = 0, count_arp = 0;
+    /* derive counts without emitting full arrays */
+    char *ud = NULL; size_t udn = 0; char *normalized = NULL; size_t nlen = 0;
+    if (ubnt_discover_output(&ud, &udn) == 0 && ud) {
+      if (normalize_ubnt_devices(ud, &normalized, &nlen) == 0 && normalized) {
+        /* count objects in normalized array (naive brace scan) */
+        const char *p = normalized; int depth = 0; int in_obj = 0;
+        while (*p) { if (*p=='{') { depth++; if (depth==1) { in_obj=1; count_ubnt++; } } else if (*p=='}') { if (depth==1 && in_obj) in_obj=0; depth--; } p++; }
+      }
+    }
+    if (ud) free(ud);
+    if (normalized) free(normalized);
+    if (g_allow_arp_fallback) {
+      char *arp = NULL; size_t arpn = 0;
+      if (get_arp_json_cached(&arp, &arpn) == 0 && arp) {
+        const char *p = arp; int depth=0; int in_obj=0; while (*p) { if (*p=='{'){ depth++; if(depth==1){ in_obj=1; count_arp++; } } else if (*p=='}'){ if(depth==1 && in_obj) in_obj=0; depth--; } p++; }
+        free(arp);
+      }
+    }
+    APP_L("\"devices_summary\":{\"ubnt\":%d,\"arp\":%d,\"total\":%d},", count_ubnt, count_arp, count_ubnt+count_arp);
+  } else {
+    /* mode 0: omit entirely */
   }
   /* airos data minimal */
   if(path_exists("/tmp/10-all.json")){ char *ar=NULL; size_t an=0; if(util_read_file("/tmp/10-all.json",&ar,&an)==0 && ar){ APP_L("\"airosdata\":%s,", ar); free(ar);} else APP_L("\"airosdata\":{},"); } else APP_L("\"airosdata\":{},");
@@ -3271,6 +3426,8 @@ static int h_devices_json(http_request_t *r) {
   char *arp = NULL; size_t arpn = 0;
   char *udcopy = NULL; size_t udlen = 0;
   int have_ud = 0, have_arp = 0;
+  int want_lite = 0;
+  if (r && r->query && strstr(r->query, "lite=1")) want_lite = 1;
 
   /* try to serve cached merged devices JSON via coalescer */
   char *cached = NULL; size_t cached_len = 0;
@@ -3316,11 +3473,24 @@ static int h_devices_json(http_request_t *r) {
   /* devices array */
   if (!have_ud) {
     json_buf_append(&out, &len, &cap, "\"devices\":[]");
+  } else if (!have_arp) {
+    /* Simple case: only UBNT devices present -> filter entire array in one go */
+    if (udcopy) {
+      size_t flen = 0; char *filtered = filter_devices_array(udcopy, want_lite ? 1 : 0, 1, &flen);
+      if (filtered) {
+        json_buf_append(&out, &len, &cap, "\"devices\":%s", filtered);
+        free(filtered);
+      } else {
+        json_buf_append(&out, &len, &cap, "\"devices\":%s", udcopy);
+      }
+    } else {
+      json_buf_append(&out, &len, &cap, "\"devices\":[]");
+    }
   } else {
+    /* (Rare) merge path when ARP fallback enabled: build merged list, then (optionally) we could post-filter later */
     json_buf_append(&out, &len, &cap, "\"devices\":[");
     int first = 1;
     if (have_ud && udcopy) {
-      /* udcopy is a JSON array; strip outer [ ] and emit elements */
       const char *s = udcopy; while (*s && isspace((unsigned char)*s)) s++; if (*s == '[') s++;
       const char *e = udcopy + udlen; while (e > s && isspace((unsigned char)*(e-1))) e--; if (e > s && *(e-1) == ']') e--;
       const char *p = s;
@@ -3858,33 +4028,19 @@ static int h_status_traceroute(http_request_t *r) {
       while (line && line < end) {
         char *nl = memchr(line, '\n', (size_t)(end - line));
         size_t linelen = nl ? (size_t)(nl - line) : (size_t)(end - line);
-        if (linelen > 0 && memmem(line, linelen, "traceroute_to", 12)) {
-          char *eq = memchr(line, '=', linelen);
-          if (eq) {
-            char *v = eq + 1; size_t vlen = (size_t)(end - v);
-            while (vlen && (v[vlen-1]=='\n' || v[vlen-1]=='\r' || v[vlen-1]==' ' || v[vlen-1]=='\'' || v[vlen-1]=='"' || v[vlen-1]==';')) vlen--;
-            while (vlen && (*v==' ' || *v=='\'' || *v=='"')) { v++; vlen--; }
-            if (vlen > 0) { size_t copy = vlen < sizeof(traceroute_to)-1 ? vlen : sizeof(traceroute_to)-1; memcpy(traceroute_to, v, copy); traceroute_to[copy]=0; traceroute_to_set = 1; }
+        if (linelen > 0) {
+          /* look for traceroute_to=VALUE */
+          const char *prefix = "traceroute_to="; size_t plen = strlen(prefix);
+          if (linelen > plen && strncmp(line, prefix, plen) == 0) {
+            size_t cplen = linelen - plen; if (cplen >= sizeof(traceroute_to)) cplen = sizeof(traceroute_to)-1;
+            memcpy(traceroute_to, line + plen, cplen); traceroute_to[cplen] = '\0'; traceroute_to_set = 1;
           }
         }
-        if (!nl) {
-          break;
-        }
-        line = nl + 1;
+        if (!nl) break; line = nl + 1;
       }
       free(s);
     }
-  }
-
-  /* fallback to default route or hardcoded if not set */
-  if (!traceroute_to_set || !traceroute_to[0]) {
-    char def_ip[64] = ""; char *rout = NULL; size_t rn = 0;
-    if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout, &rn) == 0 && rout) {
-      char *p = strstr(rout, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def_ip)) { strncpy(def_ip, p, L); def_ip[L] = 0; } } }
-      free(rout);
-    }
-    if (def_ip[0]) snprintf(traceroute_to, sizeof(traceroute_to), "%s", def_ip);
-    else snprintf(traceroute_to, sizeof(traceroute_to), "%s", "78.41.115.36");
+    if (!traceroute_to_set) snprintf(traceroute_to, sizeof(traceroute_to), "%s", "78.41.115.36");
   }
 
   /* Build minimal JSON response */
@@ -4501,6 +4657,8 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "discover_interval", .set_plugin_parameter = &set_int_param, .data = &g_devices_discover_interval, .addon = {0} },
   { .name = "ubnt_probe_window_ms", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_probe_window_ms, .addon = {0} },
   { .name = "ubnt_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_cache_ttl_s, .addon = {0} },
+  { .name = "arp_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_arp_cache_ttl_s, .addon = {0} },
+  { .name = "status_devices_mode", .set_plugin_parameter = &set_int_param, .data = &g_status_devices_mode, .addon = {0} },
 };
 
 void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, int *size) {
@@ -4753,6 +4911,28 @@ int olsrd_plugin_init(void) {
           g_ubnt_cache_ttl_s = (int)v;
           fprintf(stderr, "[status-plugin] setting ubnt cache ttl from env: %d s\n", g_ubnt_cache_ttl_s);
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_CACHE_TTL_S value: %s (ignored)\n", env_ct);
+      }
+    }
+    /* ARP cache TTL env override */
+    {
+      const char *env_at = getenv("OLSRD_STATUS_ARP_CACHE_TTL_S");
+      if (env_at && env_at[0]) {
+        char *endptr = NULL; long v = strtol(env_at, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 0 && v <= 86400) {
+          g_arp_cache_ttl_s = (int)v;
+          fprintf(stderr, "[status-plugin] setting arp cache ttl from env: %d s\n", g_arp_cache_ttl_s);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_ARP_CACHE_TTL_S value: %s (ignored)\n", env_at);
+      }
+    }
+    /* status devices mode env override */
+    {
+      const char *env_sdm = getenv("OLSRD_STATUS_DEVICES_MODE");
+      if (env_sdm && env_sdm[0]) {
+        char *endptr = NULL; long v = strtol(env_sdm, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 0 && v <= 2) {
+          g_status_devices_mode = (int)v;
+          fprintf(stderr, "[status-plugin] setting status devices mode from env: %d\n", g_status_devices_mode);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_DEVICES_MODE value: %s (ignored)\n", env_sdm);
       }
     }
   }
@@ -5260,6 +5440,84 @@ static int h_discover_ubnt(http_request_t *r) {
       }
     }
     pthread_mutex_unlock(&g_devices_cache_lock);
+  }
+
+  /* Optional slimming: unless query contains full=1, we strip each device object to a minimal set of keys */
+  int want_full = 0;
+  if (r && r->query && strstr(r->query, "full=1")) want_full = 1;
+
+  char *slimmed = NULL; size_t slim_len = 0;
+  if (!want_full && devices_json && devices_n > 0) {
+    /* very lightweight device array filtering: we expect devices_json to be a JSON array. We'll scan objects and copy only whitelisted keys */
+    const char *p = devices_json; while (*p && isspace((unsigned char)*p)) p++; if (*p=='[') p++;
+    /* allocate initial buffer */
+  size_t cap2 = devices_n + 128; slimmed = malloc(cap2); int first_obj = 1; if (slimmed) { slimmed[0]='['; slim_len=1; }
+    int depth = 0; const char *obj_start=NULL; const char *q = p;
+    while (slimmed && *q) {
+      if (*q=='{') { if (depth==0) obj_start=q; depth++; q++; continue; }
+      if (*q=='}') { depth--; if (depth==0 && obj_start) {
+          const char *obj_end = q+1; /* [obj_start,obj_end) */
+          /* extract minimal fields using naive scans (string matching) */
+          if (!first_obj) { if (slim_len+1 >= cap2) { cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; } slimmed[slim_len++]=','; }
+          first_obj=0;
+          /* build a new object */
+          if (slim_len+1 >= cap2) { cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; }
+          slimmed[slim_len++]='{';
+          const char *whitelist[] = { "\"ipv4\"", "\"hwaddr\"", "\"hostname\"", "\"product\"", "\"fwversion\"", "\"essid\"", "\"uptime\"" };
+          int added_field = 0;
+          for (size_t wi=0; wi < sizeof(whitelist)/sizeof(whitelist[0]); wi++) {
+            const char *k = whitelist[wi];
+            const char *kp = obj_start; const char *found=NULL;
+            while ((kp = strstr(kp, k)) && kp < obj_end) { /* ensure this is key followed by ':' */
+              const char *colon = kp + strlen(k);
+              while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
+              if (colon>=obj_end || *colon != ':') { kp += strlen(k); continue; }
+              found = kp; break;
+            }
+            if (!found) continue;
+            /* find value substring: start after colon, handle simple primitives or quoted strings */
+            const char *val_start = found + strlen(k);
+            const char *colon = val_start; while (colon < obj_end && *colon != ':') colon++;
+            if (colon>=obj_end) continue; colon++; /* skip ':' */
+            while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
+            if (colon>=obj_end) continue; val_start = colon; const char *val_end = val_start;
+            if (*val_start=='"') { /* string */
+              val_end++; while (val_end < obj_end && *val_end!='"') { if (*val_end=='\\' && val_end+1<obj_end) val_end+=2; else val_end++; }
+              if (val_end<obj_end) val_end++; /* include closing quote */
+            } else { /* number, bool, null */
+              while (val_end < obj_end && *val_end!=',' && *val_end!='}') val_end++;
+            }
+            /* append comma if needed */
+            if (added_field) { if (slim_len+1 >= cap2) { cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; } slimmed[slim_len++]=','; }
+            if (!slimmed) break;
+            /* copy key:value pair */
+            size_t need = strlen(k) + (size_t)(val_end - (found + strlen(k))); /* approximate */
+            if (slim_len + (val_end - found) >= cap2) { while (slim_len + (val_end - found) >= cap2) cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; }
+            if (!slimmed) break;
+            memcpy(slimmed + slim_len, found, (size_t)(val_end - found));
+            slim_len += (size_t)(val_end - found);
+            added_field++;
+          }
+          if (!slimmed) break;
+          if (slim_len+1 >= cap2) { cap2*=2; slimmed = realloc(slimmed, cap2); if(!slimmed) break; }
+          slimmed[slim_len++]='}';
+          obj_start=NULL;
+        }
+        q++; continue;
+      }
+      q++;
+    }
+    if (slimmed) {
+      if (slim_len+2 >= cap2) { cap2+=2; slimmed = realloc(slimmed, cap2); }
+      if (slimmed) { slimmed[slim_len++]=']'; slimmed[slim_len]='\0'; }
+    }
+    if (slimmed && slim_len>0) {
+      free(devices_json);
+      devices_json = slimmed;
+      devices_n = slim_len;
+    } else if (slimmed) {
+      free(slimmed);
+    }
   }
 
   /* Always produce a JSON object with 'devices' and 'debug' fields */
