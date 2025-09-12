@@ -202,6 +202,8 @@ function clearChildren(el) {
   var _pendingFetches = 0;
   function updateFooterPending() {
     try {
+  // keep internal pending counter for diagnostics but the UI now shows
+  // last-request text instead of a numeric pending badge.
   var el = document.getElementById('footer-pending-count');
       if (!el) return;
       el.textContent = String(_pendingFetches);
@@ -212,7 +214,25 @@ function clearChildren(el) {
 
   var origFetch = window.fetch;
   window.fetch = function(url, opts) {
-    try { _pendingFetches++; updateFooterPending(); } catch(e) {}
+    try {
+      _pendingFetches++; updateFooterPending();
+      // Record last requested endpoint in footer (strip query string and host)
+      try {
+        var u = String(url || '');
+        // If a Request object was passed, extract its url
+        if (typeof url === 'object' && url && url.url) u = url.url;
+        // Remove scheme and host if present
+        var path = u.replace(/^[a-z]+:\/\/[0-9a-zA-Z.:-]+/i, '');
+        // Strip query string and hash
+        path = path.split('?')[0].split('#')[0];
+        // Trim leading slashes
+        path = path.replace(/^\/+/,'');
+        // For readability show only last path segment(s) up to two levels
+        var parts = path.split('/').filter(function(p){ return p && p.length; });
+        var disp = parts.length === 0 ? '/' : (parts.length <= 2 ? parts.join('/') : parts.slice(-2).join('/'));
+        var lr = document.getElementById('footer-last-request'); if (lr) lr.textContent = disp;
+      } catch(e) {}
+    } catch(e) {}
     return origFetch.apply(this, arguments).then(function(resp){
       try { _pendingFetches = Math.max(0,_pendingFetches-1); updateFooterPending(); } catch(e) {}
       return resp;
@@ -1761,8 +1781,14 @@ updateUI = function(data) {
 // update last-updated timestamp helper (called from updateUI)
 function setLastUpdated(ts) {
   try {
-    var el = document.getElementById('last-updated'); if (!el) return;
-    var text = ts || new Date().toLocaleString(); el.textContent = text;
+    var el = document.getElementById('last-updated');
+    var text = ts || new Date().toLocaleString();
+    if (el) el.textContent = text;
+    // also mirror a compact last-updated timestamp into the sticky footer center
+    try {
+      var fel = document.getElementById('footer-last-updated');
+      if (fel) fel.textContent = text;
+    } catch(e) {}
   } catch(e) {}
 }
 
