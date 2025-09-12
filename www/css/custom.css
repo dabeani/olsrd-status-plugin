@@ -221,6 +221,12 @@
   Reduced font-size/line-height and scrollable max-height to fit more parameters */
 .diag-compact-pre { font-family: Monaco, Menlo, 'Ubuntu Mono', monospace; font-size:9px; line-height:1.0; white-space:pre-wrap; margin:0; max-height:14vh; overflow:auto; padding-right:6px; }
 
+/* New dense grid layout for diagnostics: tiny cards per key/value pair */
+.diag-compact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:6px; align-items:start; max-height:calc(22vh - 36px); overflow:auto; padding-right:6px; }
+.diag-compact-card { background:#fafafa; border:1px solid #eee; padding:6px 8px; border-radius:4px; display:flex; gap:6px; align-items:flex-start; font-size:10px; }
+.diag-compact-key { color:#333; font-weight:600; flex:0 0 48%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
+.diag-compact-val { color:#555; font-family: Monaco, Menlo, 'Ubuntu Mono', monospace; font-size:10px; line-height:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+
 /* Footer layout: use separators and right-aligned compact items */
 #status-footer .footer-sep { color:#bbb; margin:0 8px; }
 #status-footer #footer-indicators { display:flex; align-items:center; gap:8px; }

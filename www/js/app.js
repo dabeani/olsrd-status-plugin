@@ -331,18 +331,28 @@ function clearChildren(el) {
     var combined = {};
     try { Object.keys(payloads).forEach(function(k){ combined[k] = payloads[k]; }); } catch(e) {}
     var flat = flattenObject(combined, '');
-    // create pre with small monospace single-line entries
-    var pre = document.createElement('pre');
-    pre.className = 'diag-compact-pre';
-    pre.textContent = flat.join('\n');
-    // sizing and scroll handled by CSS so we can adjust compactness centrally
-    body.appendChild(pre);
+    // create a responsive compact grid of tiny key/value cards for maximum density
+    var grid = document.createElement('div'); grid.className = 'diag-compact-grid';
+    // put each flattened line into a tiny card: key on the left, value on the right (monospace)
+    for (var i = 0; i < flat.length; i++) {
+      var line = flat[i];
+      var eq = line.indexOf('=');
+      var key = eq >= 0 ? line.slice(0, eq) : line;
+      var val = eq >= 0 ? line.slice(eq+1) : '';
+      var card = document.createElement('div'); card.className = 'diag-compact-card';
+      var kdiv = document.createElement('div'); kdiv.className = 'diag-compact-key'; kdiv.textContent = key;
+      var vdiv = document.createElement('div'); vdiv.className = 'diag-compact-val'; vdiv.textContent = val;
+      card.appendChild(kdiv); card.appendChild(vdiv);
+      grid.appendChild(card);
+    }
+    body.appendChild(grid);
     // small snapshot line
     var meta = document.createElement('div'); meta.className='diag-small'; meta.style.marginTop='8px'; meta.textContent = 'Snapshot at: ' + new Date().toLocaleString(); body.appendChild(meta);
     // update compact footer summary too
     try {
       var parts = [];
-      try { if (payloads.summary && payloads.summary.hostname) parts.push(payloads.summary.hostname); } catch(e){}
+  // omit hostname from compact footer summary (user requested)
+  try { /* intentionally omitted hostname */ } catch(e){}
       try { if (payloads.summary && (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)) parts.push('Nodes:' + (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)); } catch(e){}
       try { if (payloads.summary && (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)) parts.push('Routes:' + (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)); } catch(e){}
       try { if (payloads.fetch_debug && payloads.fetch_debug.queue_length) parts.push('Q:' + payloads.fetch_debug.queue_length); } catch(e){}
