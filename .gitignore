@@ -12,3 +12,6 @@ Thumbs.db
 build/
 smoke-*.log
 tools/
+www/test/node_modules/.bin/esvalidate
+test/
+www/test/
