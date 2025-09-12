@@ -254,29 +254,38 @@ function clearChildren(el) {
 // Footer diagnostics drawer: open/close and populate from endpoints
 (function(){
   function el(id){ return document.getElementById(id); }
-  // Tolerant JSON parser: replace raw newlines inside string literals with \n and retry
+  // Tolerant JSON parser: normalize raw control chars inside strings and
+  // extract top-level JSON candidates from noisy text
   function safeParseJson(text){
     try { return JSON.parse(text); } catch(e) {}
-    try {
-      var out = '';
-      var inStr = false, esc = false;
-      for (var i=0;i<text.length;i++){
-        var ch = text.charAt(i);
-        if (inStr) {
-          if (esc) { out += ch; esc = false; continue; }
-          if (ch === '\\') { out += ch; esc = true; continue; }
-          if (ch === '\n' || ch === '\r') { out += '\\n'; continue; }
-          if (ch === '"') { inStr = false; out += ch; continue; }
-          out += ch;
-        } else {
-          if (ch === '"') { inStr = true; out += ch; continue; }
-          out += ch;
-        }
+    function normalize(s){
+      var out = ''; var inStr = false, esc = false;
+      for (var i=0;i<s.length;i++){ var ch = s.charAt(i);
+        if (inStr){ if (esc) { out += ch; esc = false; continue; } if (ch === '\\') { out += ch; esc = true; continue; } if (ch === '\n' || ch === '\r') { out += '\\n'; continue; } if (ch === '\t') { out += '\\t'; continue; } if (ch === '"') { inStr = false; out += ch; continue; } out += ch; }
+        else { if (ch === '"') { inStr = true; out += ch; continue; } out += ch; }
       }
-      return JSON.parse(out);
-    } catch(e2) {
-      throw e2;
+      return out;
     }
+    try { return JSON.parse(normalize(String(text||''))); } catch(e2){}
+    function extractCandidates(s){
+      var out = []; var inStr=false, esc=false, start=-1, depth=0;
+      for (var i=0;i<s.length;i++){ var c=s.charAt(i);
+        if (inStr){ if (esc) { esc=false; continue; } if (c==='\\') { esc=true; continue; } if (c==='"') { inStr=false; } continue; }
+        if (c==='"'){ inStr=true; continue; }
+        if (depth===0){ if (c==='{'||c==='['){ start=i; depth=1; } }
+        else { if (c==='{'||c==='[') depth++; else if (c==='}'||c===']'){ depth--; if (depth===0 && start>=0){ out.push(s.substring(start,i+1)); start=-1; } } }
+      }
+      return out;
+    }
+    try {
+      var cands = extractCandidates(String(text||''));
+      var keys = ['globals','versions','capabilities','summary','fetch_debug'];
+      var best=null, bestScore=-1;
+      for (var i=0;i<cands.length;i++){ try { var o = JSON.parse(cands[i]); if (o && typeof o === 'object' && !Array.isArray(o)){ var score=0; for (var k=0;k<keys.length;k++) if (Object.prototype.hasOwnProperty.call(o, keys[k])) score++; if (score>bestScore){ bestScore=score; best=o; } } } catch(_){} }
+      if (best) return best;
+      for (var j=cands.length-1;j>=0;j--){ try { return JSON.parse(cands[j]); } catch(_){} }
+    } catch(e3){}
+    throw new Error('Invalid JSON');
   }
   function showDiagnostics(open){
     var panel = el('footer-diagnostics-panel');
@@ -393,7 +402,7 @@ function clearChildren(el) {
     // fetch versions.json, capabilities, fetch_debug, status/summary in parallel
     // Prefer the combined diagnostics endpoint if available
     fetch('/diagnostics.json', {cache:'no-store'}).then(function(r){
-      if (!r || !r.ok) throw new Error('no diagnostics');
+        if (!r || !r.ok) throw new Error('Failed to fetch diagnostics');
       return r.text();
     }).then(function(txt){
       // tolerant parse so we always render all keys
