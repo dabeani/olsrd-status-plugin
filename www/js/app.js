@@ -287,6 +287,39 @@ function clearChildren(el) {
     } catch(e3){}
     throw new Error('Invalid JSON');
   }
+
+  // Extract a single top-level key's value from a noisy JSON text. Returns parsed value or null.
+  function extractTopLevelKey(text, key){
+    try {
+      if (!text || !key) return null;
+      var idx = text.indexOf('"' + key + '"');
+      if (idx === -1) return null;
+      var colon = text.indexOf(':', idx);
+      if (colon === -1) return null;
+      var i = colon + 1; while (i < text.length && /[\s\n\r\t]/.test(text.charAt(i))) i++;
+      var ch = text.charAt(i);
+      if (ch === '{' || ch === '[') {
+        var start = i; var depth = 0; var inStr = false; var esc = false;
+        for (var j = i; j < text.length; j++){
+          var c = text.charAt(j);
+          if (inStr) {
+            if (esc) { esc = false; continue; }
+            if (c === '\\') { esc = true; continue; }
+            if (c === '"') { inStr = false; }
+            continue;
+          } else {
+            if (c === '"') { inStr = true; continue; }
+            if (c === '{' || c === '[') { depth++; continue; }
+            if (c === '}' || c === ']') { depth--; if (depth === 0) { var cand = text.substring(start, j+1); try { return safeParseJson(cand); } catch(e){ return null; } } }
+          }
+        }
+      } else {
+        var start = i; var j = i; for (; j < text.length; j++) { var cc = text.charAt(j); if (cc === ',' || cc === '}' || cc === ']') break; }
+        var cand = text.substring(start, j).trim(); try { return JSON.parse(cand); } catch(e){ return null; }
+      }
+    } catch(e) { return null; }
+    return null;
+  }
   function showDiagnostics(open){
     var panel = el('footer-diagnostics-panel');
     if(!panel) return;
@@ -402,14 +435,28 @@ function clearChildren(el) {
     // fetch versions.json, capabilities, fetch_debug, status/summary in parallel
     // Prefer the combined diagnostics endpoint if available
     fetch('/diagnostics.json', {cache:'no-store'}).then(function(r){
-        if (!r || !r.ok) throw new Error('Failed to fetch diagnostics');
+      if (!r || !r.ok) throw new Error('Failed to fetch diagnostics');
       return r.text();
     }).then(function(txt){
-      // tolerant parse so we always render all keys
-      var j = safeParseJson(txt);
-      try { renderDiagnostics(j); } catch(e) { renderDiagnostics(p); }
+      // Try full tolerant parse first
+      try {
+        var j = safeParseJson(txt);
+        renderDiagnostics(j); return;
+      } catch(e) {}
+      // salvage top-level keys (globals etc.) from noisy text
+      try {
+        ['globals','versions','capabilities','fetch_debug','summary'].forEach(function(k){ try { var v = extractTopLevelKey(txt, k); if (v !== null) p[k] = v; } catch(e){} });
+      } catch(e){}
+      // fall back to per-endpoint fetches for anything missing
+      var tasks = [
+        fetch('/versions.json',{cache:'no-store'}).then(r=>r.json()).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
+        fetch('/capabilities',{cache:'no-store'}).then(r=>r.json()).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
+        fetch('/fetch_debug',{cache:'no-store'}).then(r=>r.json()).then(j=>p.fetch_debug=j).catch(function(e){ p.fetch_debug={error:String(e)}; }),
+        fetch('/status/summary',{cache:'no-store'}).then(r=>r.json()).then(j=>p.summary=j).catch(function(e){ p.summary={error:String(e)}; })
+      ];
+      Promise.all(tasks).then(function(){ renderDiagnostics(p); }).catch(function(){ renderDiagnostics(p); });
     }).catch(function(){
-      // fallback to original parallel fetches
+      // diagnostics endpoint completely unavailable: fetch per-endpoint
       var tasks = [
         fetch('/versions.json',{cache:'no-store'}).then(r=>r.json()).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
         fetch('/capabilities',{cache:'no-store'}).then(r=>r.json()).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
@@ -454,7 +501,13 @@ function clearChildren(el) {
         clearChildren(body);
         var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = 'Loading...'; body.appendChild(pre);
         fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
-          var j = safeParseJson(txt);
+          var j;
+          try { j = safeParseJson(txt); } catch(pe) {
+            // salvage globals if present
+            var salv = extractTopLevelKey(txt, 'globals');
+            if (salv !== null) j = { globals: salv };
+            else { var snippet = String(txt||'').slice(0,4000); pre.textContent = 'Error parsing JSON: '+String(pe)+'\n--- Response snippet ---\n'+snippet; return; }
+          }
           // flatten client-side
           var out = [];
           function flatten(o, prefix){
