@@ -368,11 +368,11 @@ function clearChildren(el) {
       if (!r || !r.ok) throw new Error('no diagnostics');
       return r.json();
     }).then(function(j){
-      try { p.versions = j.versions; } catch(e){ p.versions = {error:String(e)}; }
-      try { p.capabilities = j.capabilities; } catch(e){ p.capabilities = {error:'missing'}; }
-      try { p.fetch_debug = j.fetch_debug; } catch(e){ p.fetch_debug = {error:'missing'}; }
-      try { p.summary = j.summary; } catch(e){ p.summary = {error:'missing'}; }
-      renderDiagnostics(p);
+      // Render the full diagnostics payload so every key/value returned by
+      // /diagnostics.json is visible in the Diagnostics menu (not just a
+      // small subset). This ensures newly-added groups on the server are
+      // immediately visible in the compact grid.
+      try { renderDiagnostics(j); } catch(e) { renderDiagnostics(p); }
     }).catch(function(){
       // fallback to original parallel fetches
       var tasks = [
