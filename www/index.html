@@ -413,12 +413,28 @@
           </div>
         </main>
       </div>
-
-      <!-- Toast for critical fetch queue alerts -->
+  <!-- Toast for critical fetch queue alerts -->
       <div id="fetch-toast" style="display:none; position:fixed; right:18px; bottom:18px; z-index:2500;">
         <div id="fetch-toast-body" style="background:#b94a48; color:#fff; padding:12px 16px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.3);">
           <strong>Fetch queue critical</strong>
           <div id="fetch-toast-msg" style="font-size:12px; margin-top:6px;"></div>
+        </div>
+      </div>
+
+      <!-- Footer diagnostics drawer (hidden until opened) -->
+      <div id="footer-diagnostics-panel" class="footer-diagnostics" aria-hidden="true">
+        <div class="footer-diagnostics-inner">
+          <div class="footer-diagnostics-header">
+            <div style="font-weight:700;">Diagnostics</div>
+            <div style="margin-left:12px; color:#666; font-size:12px;">Live snapshot from endpoints</div>
+            <div style="margin-left:auto;">
+              <button id="footer-diagnostics-close" class="btn btn-xs btn-default">Close</button>
+            </div>
+          </div>
+          <div id="footer-diagnostics-body" class="footer-diagnostics-body">
+            <!-- content populated by JS -->
+            <div class="small-muted" style="padding:12px">Click open to load diagnostics.</div>
+          </div>
         </div>
       </div>
 
@@ -439,6 +455,8 @@
               <div>Last request:</div>
               <div id="footer-last-request" style="min-width:120px; text-align:left;">-</div>
             </div>
+            <!-- small handle to open diagnostics drawer -->
+            <div id="footer-diagnostics-handle" title="Open diagnostics" style="pointer-events:auto; margin-left:8px; padding:4px 8px; border-radius:4px; background:#eef3ff; color:#013369; font-size:12px; cursor:pointer; border:1px solid #c9deff;">Diagnostics</div>
           </div>
         </div>
       </footer>

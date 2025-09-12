@@ -243,6 +243,124 @@ function clearChildren(el) {
   };
 })();
 
+// Footer diagnostics drawer: open/close and populate from endpoints
+(function(){
+  function el(id){ return document.getElementById(id); }
+  function showDiagnostics(open){
+    var panel = el('footer-diagnostics-panel');
+    if(!panel) return;
+    if(open){ panel.setAttribute('aria-hidden','false'); panel.style.display='block'; }
+    else { panel.setAttribute('aria-hidden','true'); /* hide after transition */ setTimeout(function(){ try{ panel.style.display='none'; }catch(e){} }, 300); }
+  }
+
+  function makeBox(title){
+    var box = document.createElement('div'); box.className='diag-box';
+    var t = document.createElement('div'); t.className='diag-title'; t.textContent = title; box.appendChild(t);
+    var body = document.createElement('div'); body.className='diag-body'; box.appendChild(body);
+    return {box:box, body:body};
+  }
+
+  function kvRow(k,v){
+    var row = document.createElement('div'); row.className='diag-row';
+    var key = document.createElement('div'); key.className='diag-key'; key.textContent = k; row.appendChild(key);
+    var val = document.createElement('div'); val.className='diag-value';
+    try { if (typeof v === 'object') val.textContent = JSON.stringify(v, null, 2); else val.textContent = String(v); } catch(e){ val.textContent = String(v); }
+    row.appendChild(val);
+    return row;
+  }
+
+  function renderDiagnostics(payloads){
+    var body = el('footer-diagnostics-body'); if(!body) return;
+    try{ body.textContent=''; }catch(e){}
+    // versions.json
+      if(payloads.versions){
+        var vb = makeCollapsibleBox('Versions'); body.appendChild(vb.wrap);
+        var v = payloads.versions;
+        vb.body.appendChild(kvRow('plugin_version', v.plugin_version || v.version || '-'));
+        vb.body.appendChild(kvRow('olsrd', v.olsrd || (v.olsrd_details && v.olsrd_details.version) || '-'));
+        vb.body.appendChild(kvRow('system_type', v.system_type || '-'));
+        vb.body.appendChild(kvRow('autoupdate', (v.autoupdate_settings && v.autoupdate_settings) || '-'));
+        vb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(v, null, 2)); }catch(e){ } });
+    }
+    // capabilities
+      if(payloads.capabilities){
+        var cb = makeCollapsibleBox('Capabilities'); body.appendChild(cb.wrap);
+        var c = payloads.capabilities;
+        Object.keys(c).sort().forEach(function(k){ cb.body.appendChild(kvRow(k, c[k])); });
+        cb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(c, null, 2)); }catch(e){} });
+    }
+    // fetch_debug
+      if(payloads.fetch_debug){
+        var fb = makeCollapsibleBox('Fetch Queue'); body.appendChild(fb.wrap);
+        var f = payloads.fetch_debug;
+        fb.body.appendChild(kvRow('queue_length', f.queue_length || 0));
+        if(Array.isArray(f.requests)){
+          var txt = f.requests.map(function(r,i){ return 'req#'+i+': force='+r.force+' wait='+r.wait+' type='+r.type; }).join('\n');
+          var pre = document.createElement('pre'); pre.style.fontFamily='monospace'; pre.style.whiteSpace='pre-wrap'; pre.textContent = txt; fb.body.appendChild(pre);
+        }
+        if(f.debug) {
+          fb.body.appendChild(kvRow('enqueued', f.debug.enqueued));
+          fb.body.appendChild(kvRow('processed', f.debug.processed));
+          fb.body.appendChild(kvRow('last_fetch_msg', f.debug.last_fetch_msg));
+        }
+        fb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(f, null, 2)); }catch(e){} });
+    }
+    // status summary
+      if(payloads.summary){
+        var sb = makeCollapsibleBox('Status Summary'); body.appendChild(sb.wrap);
+        var s = payloads.summary;
+        sb.body.appendChild(kvRow('hostname', s.hostname || '-'));
+        sb.body.appendChild(kvRow('ip', s.ip || '-'));
+        sb.body.appendChild(kvRow('uptime', s.uptime_linux || s.uptime || '-'));
+        sb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(s, null, 2)); }catch(e){} });
+    }
+
+    // small footer row showing endpoint names/timestamp
+    var meta = document.createElement('div'); meta.className='diag-small'; meta.style.width='100%'; meta.style.marginTop='8px';
+    meta.textContent = 'Snapshot at: ' + new Date().toLocaleString(); body.appendChild(meta);
+  }
+
+  function fetchAllAndRender(){
+    var p = {};
+    // fetch versions.json, capabilities, fetch_debug, status/summary in parallel
+    // Prefer the combined diagnostics endpoint if available
+    fetch('/diagnostics.json', {cache:'no-store'}).then(function(r){
+      if (!r || !r.ok) throw new Error('no diagnostics');
+      return r.json();
+    }).then(function(j){
+      try { p.versions = j.versions; } catch(e){ p.versions = {error:String(e)}; }
+      try { p.capabilities = j.capabilities; } catch(e){ p.capabilities = {error:'missing'}; }
+      try { p.fetch_debug = j.fetch_debug; } catch(e){ p.fetch_debug = {error:'missing'}; }
+      try { p.summary = j.summary; } catch(e){ p.summary = {error:'missing'}; }
+      renderDiagnostics(p);
+    }).catch(function(){
+      // fallback to original parallel fetches
+      var tasks = [
+        fetch('/versions.json',{cache:'no-store'}).then(r=>r.json()).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
+        fetch('/capabilities',{cache:'no-store'}).then(r=>r.json()).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
+        fetch('/fetch_debug',{cache:'no-store'}).then(r=>r.json()).then(j=>p.fetch_debug=j).catch(function(e){ p.fetch_debug={error:String(e)}; }),
+        fetch('/status/summary',{cache:'no-store'}).then(r=>r.json()).then(j=>p.summary=j).catch(function(e){ p.summary={error:String(e)}; })
+      ];
+      Promise.all(tasks).then(function(){ renderDiagnostics(p); }).catch(function(){ renderDiagnostics(p); });
+    });
+  }
+
+  // wire footer click to toggle panel
+  document.addEventListener('DOMContentLoaded', function(){
+    var footer = el('status-footer'); if(!footer) return;
+    // clickable area: entire footer should open when clicked
+    footer.style.cursor='pointer'; footer.style.pointerEvents='auto';
+    footer.addEventListener('click', function(e){
+      var panel = el('footer-diagnostics-panel'); if(!panel) return;
+      var hidden = panel.getAttribute('aria-hidden') === 'true' || !panel.getAttribute('aria-hidden');
+      showDiagnostics(hidden);
+      if(hidden) fetchAllAndRender();
+      e.stopPropagation();
+    });
+    var closeBtn = el('footer-diagnostics-close'); if(closeBtn) closeBtn.addEventListener('click', function(ev){ showDiagnostics(false); ev.stopPropagation(); });
+  });
+})();
+
 // RTT / latency measurement for footer display
 (function(){
   var lastRtt = null;
@@ -2569,6 +2687,16 @@ document.addEventListener('DOMContentLoaded', function() {
     if (runBtn && !runBtn._wired) {
       runBtn.addEventListener('click', function(){ runTraceroute(); });
       runBtn._wired = true;
+    }
+  } catch(e) {}
+
+  // Ensure the compact global versions header is populated early so the
+  // sticky global header (outside of the Versions tab) is visible on first
+  // paint. This is intentionally lightweight and marks a global flag to
+  // avoid duplicate work when the Versions tab later lazy-loads.
+  try {
+    if (!window._versionsLoadedGlobal) {
+      fetch('/versions.json', {cache: 'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e) { var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; } }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
     }
   } catch(e) {}
 

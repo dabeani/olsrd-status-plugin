@@ -4257,6 +4257,102 @@ static int h_capabilities_local(http_request_t *r) {
   send_json(r, buf);
   return 0;
 }
+
+/* Combined diagnostics endpoint: aggregate versions, capabilities, fetch_debug and status summary */
+static int h_diagnostics_json(http_request_t *r) {
+  char *versions = NULL; size_t vlen = 0;
+  char capbuf[512]; capbuf[0]=0;
+  char *fetchbuf = NULL; size_t fcap = 1024, flen = 0;
+  char *summary = NULL;
+
+  /* versions.json: try internal generator */
+  if (generate_versions_json(&versions, &vlen) != 0 || !versions || vlen == 0) {
+    if (versions) { free(versions); versions = NULL; vlen = 0; }
+    versions = strdup("{}\n"); vlen = versions ? strlen(versions) : 0;
+  }
+
+  /* capabilities: replicate small generator from h_capabilities_local */
+  {
+    int airos = path_exists("/tmp/10-all.json");
+    int discover = 1;
+    int tracer = g_has_traceroute ? 1 : 0;
+    int show_admin = 0;
+    char *s = NULL; size_t sn = 0;
+    if (util_read_file("/config/custom/www/settings.inc", &s, &sn) == 0 && s && sn>0) {
+      const char *p = s; const char *end = s + sn;
+      while (p && p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        size_t linelen = nl ? (size_t)(nl - p) : (size_t)(end - p);
+        if (linelen > 0 && memmem(p, linelen, "show_link_to_adminlogin", strlen("show_link_to_adminlogin"))) {
+          const char *eq = memchr(p, '=', linelen);
+          if (eq) {
+            const char *v = eq + 1; size_t vlen2 = (size_t)(p + linelen - v);
+            while (vlen2 && (v[vlen2-1]=='\n' || v[vlen2-1]=='\r' || v[vlen2-1]==' ' || v[vlen2-1]=='\'' || v[vlen2-1]=='"' || v[vlen2-1]==';')) vlen2--;
+            while (vlen2 && (*v==' ' || *v=='\'' || *v=='"')) { v++; vlen2--; }
+            if (vlen2 > 0) {
+              char tmp[32]={0}; size_t copy = vlen2 < sizeof(tmp)-1 ? vlen2 : sizeof(tmp)-1; memcpy(tmp, v, copy); tmp[copy]=0;
+              if (atoi(tmp) != 0) show_admin = 1;
+            }
+          }
+        }
+        if (!nl) break;
+        p = nl + 1;
+      }
+      free(s);
+    }
+    snprintf(capbuf, sizeof(capbuf), "{\"is_edgerouter\":%s,\"is_linux_container\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s,\"show_admin_link\":%s}",
+      g_is_edgerouter?"true":"false", g_is_linux_container?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false", show_admin?"true":"false");
+  }
+
+  /* fetch_debug: mirror h_fetch_debug behavior */
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head;
+  while (it) { qlen++; it = it->next; }
+  fetchbuf = malloc(fcap); if (!fetchbuf) { pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; } fetchbuf[0]=0; flen=0;
+  if (json_appendf(&fetchbuf, &flen, &fcap, "{\"queue_length\":%d,\"requests\":[", qlen) != 0) { free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; }
+  it = g_fetch_q_head; int first = 1; while (it) {
+    if (!first) { if (json_appendf(&fetchbuf, &flen, &fcap, ",") != 0) { free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; } }
+    first = 0;
+    if (json_appendf(&fetchbuf, &flen, &fcap, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type) != 0) { free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; }
+    it = it->next;
+  }
+  unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
+  DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
+  {
+    int _cp_len = 0, _task_count = 0, _pool_enabled = 0, _pool_size = 0;
+    extern void httpd_get_runtime_stats(int*,int*,int*,int*);
+    httpd_get_runtime_stats(&_cp_len, &_task_count, &_pool_enabled, &_pool_size);
+    if (json_appendf(&fetchbuf, &flen, &fcap, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, g_debug_last_fetch_msg ? g_debug_last_fetch_msg : "", _cp_len, _task_count, _pool_enabled, _pool_size) != 0) {
+      free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
+    }
+  }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+
+  /* status summary: hostname, ip, uptime */
+  {
+    char hostname[256]=""; if (gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; else hostname[0]=0;
+    char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if (getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break;} } } if(ifap) freeifaddrs(ifap);} 
+    long uptime_seconds = get_uptime_seconds(); char uptime_h[160]=""; format_uptime_linux(uptime_seconds, uptime_h, sizeof(uptime_h));
+    size_t sl = snprintf(NULL,0,"{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime_linux\":\"%s\"}", hostname, ipaddr, uptime_h) + 1;
+    summary = malloc(sl); if (summary) snprintf(summary, sl, "{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime_linux\":\"%s\"}", hostname, ipaddr, uptime_h);
+  }
+
+  /* assemble final payload */
+  char *out = NULL; size_t outcap = 2048, outlen = 0; out = malloc(outcap); if(!out){ if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; } out[0]=0;
+  if (json_appendf(&out, &outlen, &outcap, "{") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"versions\":%s,", versions ? versions : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"capabilities\":%s,", capbuf[0] ? capbuf : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"fetch_debug\":%s,", fetchbuf ? fetchbuf : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"summary\":%s", summary ? summary : "{}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "}\n") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+
+  if (versions) free(versions);
+  if (fetchbuf) free(fetchbuf);
+  if (summary) free(summary);
+
+  http_send_status(r,200,"OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, outlen); free(out);
+  return 0;
+}
 /* duplicate include/global block removed */
 
 /* traceroute: run traceroute binary if available and return stdout as plain text */
@@ -5065,6 +5161,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/nodedb.json", &h_nodedb);
   http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
   http_server_register_handler("/fetch_debug", &h_fetch_debug);
+  http_server_register_handler("/diagnostics.json", &h_diagnostics_json);
   http_server_register_handler("/platform.json", &h_platform_json);
   http_server_register_handler("/log", &h_log);
   http_server_register_handler("/traceroute", &h_traceroute);
