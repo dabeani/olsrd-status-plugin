@@ -416,6 +416,28 @@ function clearChildren(el) {
         ev.stopPropagation();
       });
     }
+    var flattenBtn = el('diag-flatten-btn');
+    if (flattenBtn) {
+      flattenBtn.addEventListener('click', function(ev){
+        var body = el('footer-diagnostics-body'); if(!body) return;
+        clearChildren(body);
+        var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = 'Loading...'; body.appendChild(pre);
+        fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+          // flatten client-side
+          var out = [];
+          function flatten(o, prefix){
+            prefix = prefix || '';
+            if (o === null) { out.push(prefix + '=null'); return; }
+            if (typeof o === 'string' || typeof o === 'number' || typeof o === 'boolean') { out.push(prefix + '=' + String(o)); return; }
+            if (Array.isArray(o)) { if (o.length === 0) { out.push(prefix + '=[]'); return; } for (var i=0;i<o.length;i++){ flatten(o[i], prefix + '['+i+']'); } return; }
+            var keys = Object.keys(o).sort(); if (keys.length === 0) { out.push(prefix + '={}'); return; }
+            for (var ki=0; ki<keys.length; ki++){ var k = keys[ki]; var p = prefix ? (prefix + '.' + k) : k; flatten(o[k], p); }
+          }
+          flatten(j,''); pre.textContent = out.join('\n');
+        }).catch(function(e){ pre.textContent = 'Error: ' + String(e); });
+        ev.stopPropagation();
+      });
+    }
     // modal close
     var modalClose = el('diag-expand-close'); if (modalClose) modalClose.addEventListener('click', function(ev){ var m = el('diag-expand-modal'); if (m) { m.setAttribute('aria-hidden','true'); m.style.display='none'; } ev.stopPropagation(); });
     // hide modal on overlay click
