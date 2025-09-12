@@ -291,106 +291,62 @@ function clearChildren(el) {
     return row;
   }
 
+  // New compact diagnostics renderer: flatten all keys and print key=val per line
+  function flattenObject(obj, prefix) {
+    var out = [];
+    prefix = prefix || '';
+    if (obj === null || typeof obj === 'undefined') {
+      out.push(prefix + '=' + String(obj));
+      return out;
+    }
+    if (typeof obj !== 'object') {
+      out.push(prefix + '=' + String(obj));
+      return out;
+    }
+    if (Array.isArray(obj)) {
+      if (obj.length === 0) { out.push(prefix + '=[]'); return out; }
+      for (var i = 0; i < obj.length; i++) {
+        var p = prefix + '[' + i + ']';
+        out = out.concat(flattenObject(obj[i], p));
+      }
+      return out;
+    }
+    var keys = Object.keys(obj).sort();
+    if (keys.length === 0) { out.push(prefix + '={}'); return out; }
+    for (var ki = 0; ki < keys.length; ki++) {
+      var k = keys[ki];
+      var val = obj[k];
+      var pfx = prefix ? (prefix + '.' + k) : k;
+      if (val === null || typeof val === 'undefined') { out.push(pfx + '=' + String(val)); }
+      else if (typeof val === 'object') { out = out.concat(flattenObject(val, pfx)); }
+      else { out.push(pfx + '=' + String(val)); }
+    }
+    return out;
+  }
+
   function renderDiagnostics(payloads){
     var body = el('footer-diagnostics-body'); if(!body) return;
     try{ body.textContent=''; }catch(e){}
-    // versions.json
-      if(payloads.versions){
-        var vb = makeCollapsibleBox('Versions'); body.appendChild(vb.wrap);
-        var v = payloads.versions;
-        vb.body.appendChild(kvRow('plugin_version', v.plugin_version || v.version || '-'));
-        vb.body.appendChild(kvRow('olsrd', v.olsrd || (v.olsrd_details && v.olsrd_details.version) || '-'));
-        vb.body.appendChild(kvRow('system_type', v.system_type || '-'));
-        vb.body.appendChild(kvRow('autoupdate', (v.autoupdate_settings && v.autoupdate_settings) || '-'));
-        vb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(v, null, 2)); }catch(e){ } });
-    }
-    // capabilities
-      if(payloads.capabilities){
-        var cb = makeCollapsibleBox('Capabilities'); body.appendChild(cb.wrap);
-        var c = payloads.capabilities;
-        Object.keys(c).sort().forEach(function(k){ cb.body.appendChild(kvRow(k, c[k])); });
-        cb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(c, null, 2)); }catch(e){} });
-    }
-    // fetch_debug
-      if(payloads.fetch_debug){
-        var fb = makeCollapsibleBox('Fetch Queue'); body.appendChild(fb.wrap);
-        var f = payloads.fetch_debug;
-        fb.body.appendChild(kvRow('queue_length', f.queue_length || 0));
-        if(Array.isArray(f.requests)){
-          var txt = f.requests.map(function(r,i){ return 'req#'+i+': force='+r.force+' wait='+r.wait+' type='+r.type; }).join('\n');
-          var pre = document.createElement('pre'); pre.style.fontFamily='monospace'; pre.style.whiteSpace='pre-wrap'; pre.textContent = txt; fb.body.appendChild(pre);
-        }
-        if(f.debug) {
-          fb.body.appendChild(kvRow('enqueued', f.debug.enqueued));
-          fb.body.appendChild(kvRow('processed', f.debug.processed));
-          fb.body.appendChild(kvRow('last_fetch_msg', f.debug.last_fetch_msg));
-        }
-        fb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(f, null, 2)); }catch(e){} });
-    }
-    // status summary
-      if(payloads.summary){
-        var sb = makeCollapsibleBox('Status Summary'); body.appendChild(sb.wrap);
-        var s = payloads.summary;
-        sb.body.appendChild(kvRow('hostname', s.hostname || '-'));
-        sb.body.appendChild(kvRow('ip', s.ip || '-'));
-        sb.body.appendChild(kvRow('uptime', s.uptime_linux || s.uptime || '-'));
-        sb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(s, null, 2)); }catch(e){} });
-    }
-
-    // globals (g_ variables) - grouped display (respect advanced toggle)
-      if (payloads.globals) {
-        var showAdvanced = false;
-        try { var tgl = document.getElementById('footer-globals-toggle'); if (tgl && tgl.checked) showAdvanced = true; } catch(e){}
-        var gb = makeCollapsibleBox('Globals'); body.appendChild(gb.wrap);
-        var g = payloads.globals;
-        try {
-          // groups available from server. When not advanced, show a compact subset
-          var groups = ['config','metrics','fetch','workers'];
-          if (showAdvanced) groups = ['config','fetch','metrics','workers','nodedb','fetch_opts','ubnt','arp','coalesce','debug'];
-          groups.forEach(function(group){
-            if (g[group]) {
-              var title = group.charAt(0).toUpperCase() + group.slice(1).replace('_',' ');
-              var grp = document.createElement('div'); grp.className = 'diag-subgroup';
-              var hwrap = document.createElement('div'); hwrap.style.display='flex'; hwrap.style.alignItems='center'; hwrap.style.justifyContent='space-between';
-              var h = document.createElement('div'); h.className='diag-subtitle'; h.textContent = title; hwrap.appendChild(h);
-              var subBtns = document.createElement('div');
-              var subCopy = document.createElement('button'); subCopy.className='btn btn-xs btn-default diag-subcopy'; subCopy.style.marginLeft='6px';
-              try { subCopy.innerHTML = '<span class="glyphicon glyphicon-copy" aria-hidden="true"></span>'; } catch(e) { subCopy.textContent = 'Copy'; }
-              subBtns.appendChild(subCopy);
-              hwrap.appendChild(subBtns);
-              grp.appendChild(hwrap);
-              var keys = Object.keys(g[group]).sort();
-              keys.forEach(function(k){ grp.appendChild(kvRow(k, g[group][k])); });
-              // per-subgroup copy: assemble simple JSON of this subgroup
-              try {
-                subCopy.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(g[group], null, 2)); }catch(e){} });
-              } catch(e) {}
-              gb.body.appendChild(grp);
-            }
-          });
-        } catch(e) { gb.body.appendChild(kvRow('error', String(e))); }
-        gb.copyBtn.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(g, null, 2)); }catch(e){} });
-    }
-
-    // small footer row showing endpoint names/timestamp
-    var meta = document.createElement('div'); meta.className='diag-small'; meta.style.width='100%'; meta.style.marginTop='8px';
-    meta.textContent = 'Snapshot at: ' + new Date().toLocaleString(); body.appendChild(meta);
-
-    // Populate compact footer summary with a few useful metrics if present
+    // create a single compact preformatted listing
+    var combined = {};
+    try { Object.keys(payloads).forEach(function(k){ combined[k] = payloads[k]; }); } catch(e) {}
+    var flat = flattenObject(combined, '');
+    // create pre with small monospace single-line entries
+    var pre = document.createElement('pre');
+    pre.className = 'diag-compact-pre';
+    pre.textContent = flat.join('\n');
+    // sizing and scroll handled by CSS so we can adjust compactness centrally
+    body.appendChild(pre);
+    // small snapshot line
+    var meta = document.createElement('div'); meta.className='diag-small'; meta.style.marginTop='8px'; meta.textContent = 'Snapshot at: ' + new Date().toLocaleString(); body.appendChild(meta);
+    // update compact footer summary too
     try {
-      var fs = document.getElementById('footer-diag-summary');
-      if (fs) {
-        var parts = [];
-        try { if (payloads.summary && payloads.summary.hostname) parts.push(payloads.summary.hostname); } catch(e){}
-        try { if (payloads.summary && (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)) parts.push('Nodes:' + (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)); } catch(e){}
-        try { if (payloads.summary && (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)) parts.push('Routes:' + (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)); } catch(e){}
-        try { if (payloads.fetch_debug && payloads.fetch_debug.queue_length) parts.push('Q:' + payloads.fetch_debug.queue_length); } catch(e){}
-        // additional fields: plugin version, uptime, memory
-        try { if (payloads.versions && (payloads.versions.plugin_version || payloads.versions.version)) parts.push('ver:' + (payloads.versions.plugin_version || payloads.versions.version)); } catch(e){}
-        try { if (payloads.summary && (payloads.summary.uptime_linux || payloads.summary.uptime)) parts.push('up:' + (payloads.summary.uptime_linux || payloads.summary.uptime)); } catch(e){}
-        try { if (payloads.summary && (payloads.summary.memory || payloads.summary.mem || payloads.summary.ram)) parts.push('mem:' + (payloads.summary.memory || payloads.summary.mem || payloads.summary.ram)); } catch(e){}
-        try { setFooterText('footer-diag-summary', parts.join(' • ') || '\u00A0'); } catch(e) { fs.textContent = parts.join(' • ') || '\u00A0'; }
-      }
+      var parts = [];
+      try { if (payloads.summary && payloads.summary.hostname) parts.push(payloads.summary.hostname); } catch(e){}
+      try { if (payloads.summary && (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)) parts.push('Nodes:' + (payloads.summary.olsr_nodes_count || payloads.summary.olsr_nodes)); } catch(e){}
+      try { if (payloads.summary && (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)) parts.push('Routes:' + (payloads.summary.olsr_routes_count || payloads.summary.olsr_routes)); } catch(e){}
+      try { if (payloads.fetch_debug && payloads.fetch_debug.queue_length) parts.push('Q:' + payloads.fetch_debug.queue_length); } catch(e){}
+      try { setFooterText('footer-diag-summary', parts.join(' • ') || '\u00A0'); } catch(e) {}
     } catch(e) {}
   }
 
@@ -2364,8 +2320,7 @@ function populateFetchStats(fs) {
           // defer loading connections and versions until tab activation to speed initial paint
           var _connectionsLoaded = false;
           var _versionsLoaded = false;
-          // auto-load Versions tab once on startup for faster access
-          try { if (typeof loadVersions === 'function') { loadVersions(); } } catch(e) {}
+          // Versions tab removed; don't auto-load versions here (global header load happens elsewhere)
           function loadConnections() {
             if (_connectionsLoaded) return Promise.resolve();
             _connectionsLoaded = true;
@@ -2709,8 +2664,7 @@ if (!document.addEventListener) {
           // wire tab lazy-load for connections and versions
           var connTabLink = document.querySelector('#mainTabs a[href="#tab-connections"]');
           if (connTabLink) connTabLink.addEventListener('click', function(){ loadConnections(); });
-          var verTabLink = document.querySelector('#mainTabs a[href="#tab-versions"]');
-          if (verTabLink) verTabLink.addEventListener('click', function(){ loadVersions(); });
+          // Versions tab removed; no lazy-load handler needed
         });
       }
     } else {
@@ -2901,27 +2855,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         } catch(e) { setTabError('tab-connections'); }
       }
-      if (id === '#tab-versions') {
-        console.log('Loading versions tab content...');
-        setTabLoading('tab-versions');
-        try {
-          if (!window._versionsLoadedGlobal) {
-            console.log('Fetching /versions.json API...');
-            fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(v){ try { console.log('Versions data received:', Object.keys(v)); renderVersionsPanel(v); window._versionsLoadedGlobal = true; setTabLoaded('tab-versions'); } catch(e){ setTabError('tab-versions'); } }).catch(function(){
-              // Show fallback content when API fails
-              console.error('Failed to fetch versions data');
-              var wrap = document.getElementById('versions-wrap');
-              if (wrap) {
-                wrap.innerHTML = '<div class="alert alert-info">Version information not available. This tab requires backend API access.</div>';
-              }
-              setTabError('tab-versions');
-            });
-          } else {
-            console.log('Versions already loaded');
-            setTabLoaded('tab-versions');
-          }
-        } catch(e) { setTabError('tab-versions'); }
-      }
+      // Versions tab removed - no action needed here
       if (id === '#tab-traceroute') {
         try {
           // Use the dedicated traceroute endpoint which returns a clean JSON payload
@@ -4210,7 +4144,7 @@ document.addEventListener('DOMContentLoaded', function(){
     document.body.appendChild(o);
     function update(){
       try {
-        var ids = ['#tab-status','#tab-olsr','#tab-stats','#tab-connections','#tab-versions','#tab-traceroute','#tab-log'];
+  var ids = ['#tab-status','#tab-olsr','#tab-stats','#tab-connections','#tab-traceroute','#tab-log'];
         var out = [];
         ids.forEach(function(id){
           var el = document.querySelector(id);
