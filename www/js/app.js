@@ -342,6 +342,10 @@ function clearChildren(el) {
       var card = document.createElement('div'); card.className = 'diag-compact-card';
       var kdiv = document.createElement('div'); kdiv.className = 'diag-compact-key'; kdiv.textContent = key;
       var vdiv = document.createElement('div'); vdiv.className = 'diag-compact-val'; vdiv.textContent = val;
+      // tooltip with full value for hover
+      try { card.setAttribute('title', key + ' = ' + val); } catch(e) {}
+      // click to expand full JSON in modal
+      (function(k, v, lineStr){ card.addEventListener('click', function(ev){ try { var pre = document.getElementById('diag-expand-pre'); if (pre) pre.textContent = JSON.stringify({key:k, value:v, raw:lineStr}, null, 2); var modal = document.getElementById('diag-expand-modal'); if (modal) { modal.setAttribute('aria-hidden','false'); modal.style.display='block'; } } catch(e){} ev.stopPropagation(); }); })(key, val, line);
       card.appendChild(kdiv); card.appendChild(vdiv);
       grid.appendChild(card);
     }
@@ -398,6 +402,24 @@ function clearChildren(el) {
       e.stopPropagation();
     });
     var closeBtn = el('footer-diagnostics-close'); if(closeBtn) closeBtn.addEventListener('click', function(ev){ showDiagnostics(false); ev.stopPropagation(); });
+    // view toggle (Compact <-> Raw)
+    var viewToggle = el('diag-view-toggle');
+    if (viewToggle) {
+      viewToggle.addEventListener('click', function(ev){
+        var body = el('footer-diagnostics-body'); if(!body) return;
+        if (viewToggle.textContent.trim() === 'Compact') { viewToggle.textContent = 'Raw'; // show raw pre
+          var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = '';
+          // fetch latest diagnostics and render raw
+          fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){ try { pre.textContent = JSON.stringify(j, null, 2); } catch(e){ pre.textContent = String(j); } });
+          clearChildren(body); body.appendChild(pre);
+        } else { viewToggle.textContent = 'Compact'; fetchAllAndRender(); }
+        ev.stopPropagation();
+      });
+    }
+    // modal close
+    var modalClose = el('diag-expand-close'); if (modalClose) modalClose.addEventListener('click', function(ev){ var m = el('diag-expand-modal'); if (m) { m.setAttribute('aria-hidden','true'); m.style.display='none'; } ev.stopPropagation(); });
+    // hide modal on overlay click
+    var modalOverlay = el('diag-expand-modal'); if (modalOverlay) modalOverlay.addEventListener('click', function(ev){ if (ev.target === modalOverlay) { modalOverlay.setAttribute('aria-hidden','true'); modalOverlay.style.display='none'; } });
   });
 })();
 

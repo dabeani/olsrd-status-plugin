@@ -227,6 +227,12 @@
 .diag-compact-key { color:#333; font-weight:600; flex:0 0 48%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
 .diag-compact-val { color:#555; font-family: Monaco, Menlo, 'Ubuntu Mono', monospace; font-size:10px; line-height:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 
+/* Modal overlay (re-use .modal-overlay/.modal-panel rules already present) */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2600; }
+.modal-overlay[aria-hidden="false"] { display:block; }
+.modal-panel-sm { max-width:720px; margin:48px auto; padding:12px; }
+.diag-raw-pre { max-height:20vh; overflow:auto; font-size:12px; }
+
 /* Footer layout: use separators and right-aligned compact items */
 #status-footer .footer-sep { color:#bbb; margin:0 8px; }
 #status-footer #footer-indicators { display:flex; align-items:center; gap:8px; }
