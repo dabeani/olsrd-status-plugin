@@ -4322,7 +4322,8 @@ static int h_diagnostics_json(http_request_t *r) {
     int _cp_len = 0, _task_count = 0, _pool_enabled = 0, _pool_size = 0;
     extern void httpd_get_runtime_stats(int*,int*,int*,int*);
     httpd_get_runtime_stats(&_cp_len, &_task_count, &_pool_enabled, &_pool_size);
-    if (json_appendf(&fetchbuf, &flen, &fcap, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, (g_debug_last_fetch_msg && g_debug_last_fetch_msg[0]) ? g_debug_last_fetch_msg : "", _cp_len, _task_count, _pool_enabled, _pool_size) != 0) {
+    const char *dbgmsg = (g_debug_last_fetch_msg[0]) ? g_debug_last_fetch_msg : "";
+    if (json_appendf(&fetchbuf, &flen, &fcap, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, dbgmsg, _cp_len, _task_count, _pool_enabled, _pool_size) != 0) {
       free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
     }
   }
