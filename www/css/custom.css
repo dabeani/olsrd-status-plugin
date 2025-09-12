@@ -214,3 +214,11 @@
 .diag-box .diag-body { white-space:normal; }
 .diag-subgroup { margin-bottom:8px; border-top:1px dashed #eee; padding-top:8px; }
 .diag-subtitle { font-weight:700; margin-bottom:6px; font-size:12px; color:#333; }
+/* Subgroup copy icon button */
+.diag-subcopy { padding:2px 6px; font-size:11px; line-height:1; }
+
+/* Footer layout: use separators and right-aligned compact items */
+#status-footer .footer-sep { color:#bbb; margin:0 8px; }
+#status-footer #footer-indicators { display:flex; align-items:center; gap:8px; }
+#status-footer #footer-indicators > div { display:flex; align-items:center; gap:6px; }
+#status-footer .footer-small-icon { font-size:13px; color:#666; }

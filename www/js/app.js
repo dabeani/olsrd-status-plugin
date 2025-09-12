@@ -350,9 +350,20 @@ function clearChildren(el) {
             if (g[group]) {
               var title = group.charAt(0).toUpperCase() + group.slice(1).replace('_',' ');
               var grp = document.createElement('div'); grp.className = 'diag-subgroup';
-              var h = document.createElement('div'); h.className='diag-subtitle'; h.textContent = title; grp.appendChild(h);
+              var hwrap = document.createElement('div'); hwrap.style.display='flex'; hwrap.style.alignItems='center'; hwrap.style.justifyContent='space-between';
+              var h = document.createElement('div'); h.className='diag-subtitle'; h.textContent = title; hwrap.appendChild(h);
+              var subBtns = document.createElement('div');
+              var subCopy = document.createElement('button'); subCopy.className='btn btn-xs btn-default diag-subcopy'; subCopy.style.marginLeft='6px';
+              try { subCopy.innerHTML = '<span class="glyphicon glyphicon-copy" aria-hidden="true"></span>'; } catch(e) { subCopy.textContent = 'Copy'; }
+              subBtns.appendChild(subCopy);
+              hwrap.appendChild(subBtns);
+              grp.appendChild(hwrap);
               var keys = Object.keys(g[group]).sort();
               keys.forEach(function(k){ grp.appendChild(kvRow(k, g[group][k])); });
+              // per-subgroup copy: assemble simple JSON of this subgroup
+              try {
+                subCopy.addEventListener('click', function(){ try{ navigator.clipboard.writeText(JSON.stringify(g[group], null, 2)); }catch(e){} });
+              } catch(e) {}
               gb.body.appendChild(grp);
             }
           });
