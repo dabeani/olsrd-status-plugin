@@ -99,16 +99,30 @@
               </div>
             </div>
           </div>
-          <dl class="dl-horizontal">
-            <dt>System Uptime <span class="glyphicon glyphicon-time" aria-hidden="true"></span></dt>
-            <dd><span id="dl-uptime">-</span></dd>
-            <dt>Last Updated <span class="glyphicon glyphicon-time" aria-hidden="true"></span></dt>
-            <dd><span id="last-updated">-</span></dd>
-            <dt>IPv4 Default-Route <span class="glyphicon glyphicon-transfer" aria-hidden="true"></span></dt>
-            <dd><span id="dl-default-route"><span id="default-route">n/a</span></span></dd>
-            <dt>mgmt Devices <span class="glyphicon glyphicon-signal" aria-hidden="true"></span></dt>
-            <dd>&nbsp;</dd>
-          </dl>
+          <!-- Styled info block (match Versions tab style) -->
+          <div class="versions-container" style="margin-bottom:12px;">
+            <div class="info-item" style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="flex:1;">
+                <div class="info-label"><span class="glyphicon glyphicon-time" aria-hidden="true"></span> System Uptime</div>
+                <div class="info-value"><span id="dl-uptime">-</span></div>
+              </div>
+              <div style="width:220px; text-align:right; margin-left:12px;">
+                <div class="info-label"><span class="glyphicon glyphicon-time" aria-hidden="true"></span> Last Updated</div>
+                <div class="info-value"><span id="last-updated">-</span></div>
+              </div>
+            </div>
+
+            <div class="info-item" style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="flex:1;">
+                <div class="info-label"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> IPv4 Default-Route</div>
+                <div class="info-value"><span id="dl-default-route"><span id="default-route">n/a</span></span></div>
+              </div>
+              <div style="width:220px; text-align:right; margin-left:12px;">
+                <div class="info-label"><span class="glyphicon glyphicon-signal" aria-hidden="true"></span> mgmt Devices</div>
+                <div class="info-value">&nbsp;</div>
+              </div>
+            </div>
+          </div>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#devicesTable" placeholder="Search..."></div>
           <div class="table-responsive">
             <table id="devicesTable" class="table table-hover table-bordered table-condensed">
