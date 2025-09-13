@@ -16,9 +16,11 @@
 #include <sys/select.h>
 
 /* UDP port used by UBNT discovery */
-#ifndef UBNT_DISCOVERY_PORT
 #define UBNT_DISCOVERY_PORT 10001
-#endif
+#define UBNT_MAX_TAG_VALUE 0x41
+#define UBNT_MIN_PRINTABLE_RUN 3
+#define UBNT_MAX_VALUE_LEN 128
+#define UBNT_MAX_KEY_LEN 32
 
 /* The most common v1 probe payload observed in the wild is 4 bytes: 0x01 0x00 0x00 0x00.
  * We send that by default.
@@ -42,26 +44,30 @@ struct tlv {
     uint8_t len;
     const uint8_t *val;
 };
-static const struct { uint8_t t; const char *name; int is_str; int is_ipv4; int is_mac; int is_u32; } TAGS[] = {
-    {0x01, "hwaddr", 0, 0, 1, 0},
-    {0x02, "ipv4",   0, 1, 0, 0},
-    {0x0B, "hostname", 1, 0, 0, 0},
-    {0x0C, "product",  1, 0, 0, 0},
-    {0x0D, "fwversion",1, 0, 0, 0},
-    {0x2A, "essid",    1, 0, 0, 0},
-    {0x40, "uptime",   0, 0, 0, 1},
-    {0x41, "system_status",0,0,0,1},
-};
+/* Tag definitions moved to optimized lookup table below */
 
 static const char *tag_name(uint8_t t, int *is_str, int *is_ipv4, int *is_mac, int *is_u32) {
-    for (size_t i=0;i<sizeof(TAGS)/sizeof(TAGS[0]);++i) {
-        if (TAGS[i].t == t) {
-            if (is_str) *is_str = TAGS[i].is_str;
-            if (is_ipv4) *is_ipv4 = TAGS[i].is_ipv4;
-            if (is_mac) *is_mac = TAGS[i].is_mac;
-            if (is_u32) *is_u32 = TAGS[i].is_u32;
-            return TAGS[i].name;
-        }
+    /* Optimized lookup table for fast tag resolution */
+    static const struct tag_info {
+        const char *name;
+        int is_str, is_ipv4, is_mac, is_u32;
+    } TAG_LOOKUP[0x42] = {
+        [0x01] = {"hwaddr", 0, 0, 1, 0},
+        [0x02] = {"ipv4",   0, 1, 0, 0},
+        [0x0B] = {"hostname", 1, 0, 0, 0},
+        [0x0C] = {"product",  1, 0, 0, 0},
+        [0x0D] = {"fwversion",1, 0, 0, 0},
+        [0x2A] = {"essid",    1, 0, 0, 0},
+        [0x40] = {"uptime",   0, 0, 0, 1},
+        [0x41] = {"system_status",0,0,0,1},
+    };
+
+    if (t < sizeof(TAG_LOOKUP)/sizeof(TAG_LOOKUP[0]) && TAG_LOOKUP[t].name) {
+        if (is_str) *is_str = TAG_LOOKUP[t].is_str;
+        if (is_ipv4) *is_ipv4 = TAG_LOOKUP[t].is_ipv4;
+        if (is_mac) *is_mac = TAG_LOOKUP[t].is_mac;
+        if (is_u32) *is_u32 = TAG_LOOKUP[t].is_u32;
+        return TAG_LOOKUP[t].name;
     }
     if (is_str) *is_str = 0;
     if (is_ipv4) *is_ipv4 = 0;
@@ -213,13 +219,13 @@ static size_t parse_tlv(const uint8_t *buf, size_t len, struct ubnt_kv *kv, size
                         if (!isprint(c) && c != '\r' && c != '\n' && c != '\t') { printable = 0; break; }
                     }
                     if (printable) {
-                        char val[128] = {0};
+                        char val[UBNT_MAX_VALUE_LEN] = {0};
                         size_t copy = l;
                         if (copy >= sizeof(val)) copy = sizeof(val) - 1;
                         memcpy(val, v, copy);
                         while (copy > 0 && val[copy-1] == 0) copy--;
                         val[copy] = 0;
-                        char keybuf[32];
+                        char keybuf[UBNT_MAX_KEY_LEN];
                         const char *pfx = (v[0] == '{' || v[0] == '[') ? "json" : "str";
                         snprintf(keybuf, sizeof(keybuf), "%s_%02X", pfx, t);
                         out = kv_put(kv, cap, out, keybuf, val);
@@ -241,10 +247,10 @@ static size_t parse_tlv(const uint8_t *buf, size_t len, struct ubnt_kv *kv, size
             size_t start = pos;
             while (pos < len && isprint(buf[pos])) pos++;
             size_t run = pos - start;
-            if (run >= 3) {
-                char val[128] = {0}; size_t copy = (run < sizeof(val)-1) ? run : (sizeof(val)-1);
+            if (run >= UBNT_MIN_PRINTABLE_RUN) {
+                char val[UBNT_MAX_VALUE_LEN] = {0}; size_t copy = (run < sizeof(val)-1) ? run : (sizeof(val)-1);
                 memcpy(val, buf+start, copy); val[copy] = 0;
-                char keybuf[32]; snprintf(keybuf, sizeof(keybuf), "str_%02zu", ++idx);
+                char keybuf[UBNT_MAX_KEY_LEN]; snprintf(keybuf, sizeof(keybuf), "str_%02zu", ++idx);
                 out = kv_put(kv, cap, out, keybuf, val);
             }
         }

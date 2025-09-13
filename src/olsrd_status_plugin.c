@@ -20,6 +20,7 @@
 #endif
 #include <time.h>
 #include <sys/time.h>
+#include <sys/select.h>
 #include <pthread.h>
 #include <signal.h>
 #if defined(__APPLE__) || defined(__linux__)
@@ -2175,12 +2176,12 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
             if (retransmit_ms < 100) retransmit_ms = 100;
             if (ms > retransmit_ms) { ubnt_discover_send(s,&dst); }
             if (ms > g_ubnt_probe_window_ms) break; /* per-interface window configurable */
-            usleep(20000);
+            usleep(1000);
           }
         }
         close(s);
         /* small pause to avoid overwhelming the network */
-        usleep(20000);
+        usleep(1000);
       }
       freeifaddrs(ifap);
     }
