@@ -103,17 +103,39 @@ $(CLI_BIN): rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(HDRS
 LDFLAGS_SANITIZED := $(filter-out -static -shared,$(LDFLAGS))
 LDLIBS_SANITIZED := $(filter-out -static -shared,$(LDLIBS))
 
-# Determine link flag based on BUILD_TYPE: user/script can set BUILD_TYPE or pass -static flags
+# Sanitize CFLAGS for compilation: remove any -static and optionally -fPIC for static builds
+CFLAGS_SANITIZED := $(filter-out -static,$(CFLAGS))
 ifeq ($(BUILD_TYPE),static)
-LINK_FLAG := -static
+CFLAGS_COMPILE := $(filter-out -fPIC -static,$(CFLAGS))
 else
-LINK_FLAG := -shared
+CFLAGS_COMPILE := $(CFLAGS_SANITIZED)
 endif
 
-$(BUILDDIR)/$(SONAME): $(SRCS) $(HDRS) | $(BUILDDIR)
-	# Build with sanitized flags and a single explicit LINK_FLAG
-	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ $(SRCS) \
-		$(LDFLAGS_SANITIZED) $(LINK_FLAG) $(LDLIBS_SANITIZED)
+# Build object list under $(BUILDDIR)
+OBJS := $(patsubst %.c,$(BUILDDIR)/%.o,$(SRCS))
+
+# Plugin targets: shared .so or static archive .a
+PLUGIN_STATIC := $(BUILDDIR)/lib$(PLUGIN_NAME).a
+PLUGIN_SHARED := $(BUILDDIR)/$(SONAME)
+ifeq ($(BUILD_TYPE),static)
+PLUGIN_TARGET := $(PLUGIN_STATIC)
+else
+PLUGIN_TARGET := $(PLUGIN_SHARED)
+endif
+
+# Object compilation rule (creates parent dirs as needed)
+$(BUILDDIR)/%.o: %.c $(HDRS) | $(BUILDDIR)
+	$(MKDIR_P) $(dir $@)
+	$(CC) $(CFLAGS_COMPILE) $(WARNFLAGS) $(CPPFLAGS) -c -o $@ $<
+
+# Static archive target
+$(PLUGIN_STATIC): $(OBJS) | $(BUILDDIR)
+	ar rcs $@ $(OBJS)
+
+# Shared object target
+$(PLUGIN_SHARED): $(OBJS) | $(BUILDDIR)
+	# Link shared plugin with sanitized LDFLAGS/LDLIBS
+	$(CC) $(LDFLAGS_SANITIZED) -shared -o $@ $(OBJS) $(LDLIBS_SANITIZED)
 
 $(BUILDDIR):
 	$(MKDIR_P) $(BUILDDIR)
@@ -122,7 +144,7 @@ clean: status_plugin_clean
 status_plugin_clean:
 	$(RM) -r $(BUILDDIR)
 
-status_plugin: $(BUILDDIR)/$(SONAME)
+status_plugin: $(PLUGIN_TARGET)
 
 install: status_plugin_install
 uninstall: status_plugin_uninstall
@@ -130,7 +152,7 @@ uninstall: status_plugin_uninstall
 status_plugin_install: status_plugin
 	@echo ">>> Installing plugin to $(DESTDIR)$(LIBDIR)"
 	$(MKDIR_P) "$(DESTDIR)$(LIBDIR)"
-	install -m 0755 "$(BUILDDIR)/$(SONAME)" "$(DESTDIR)$(LIBDIR)/"
+	install -m 0755 "$(PLUGIN_TARGET)" "$(DESTDIR)$(LIBDIR)/"
 	@echo ">>> Installing shared data to $(DESTDIR)$(SHAREDIR)"
 	$(MKDIR_P) "$(DESTDIR)$(ASSETDIR)"
 	@if [ -d www ]; then \
@@ -149,6 +171,6 @@ status_plugin_install: status_plugin
 
 status_plugin_uninstall:
 	@echo ">>> Removing plugin and data from $(DESTDIR)$(PREFIX)"
-	$(RM) "$(DESTDIR)$(LIBDIR)/$(SONAME)"
+	$(RM) "$(DESTDIR)$(LIBDIR)/$(notdir $(PLUGIN_TARGET))"
 	$(RM) -r "$(DESTDIR)$(SHAREDIR)"
 	@echo ">>> Done."
