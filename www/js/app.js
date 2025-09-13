@@ -1703,20 +1703,22 @@ function updateUI(data) {
         nodePart = window._nodedb_cache[ipKey].n;
       }
     } catch(e) { /* ignore */ }
-    if (!nodePart) nodePart = 'nodename';
+    // Don't use 'nodename' as placeholder - use empty string if no real nodename
+    if (!nodePart || nodePart === 'nodename') nodePart = '';
     var fqdn = '';
     if (shortHost) {
-      if (nodePart.indexOf('wien.funkfeuer') !== -1 || nodePart.indexOf('.') !== -1) {
+      if (nodePart && (nodePart.indexOf('wien.funkfeuer') !== -1 || nodePart.indexOf('.') !== -1)) {
         fqdn = shortHost + '.' + nodePart;
-      } else {
+      } else if (nodePart) {
         fqdn = shortHost + '.' + nodePart + '.wien.funkfeuer.at';
+      } else {
+        fqdn = shortHost;
       }
     } else {
       fqdn = shortHost;
     }
     populateNavHost(fqdn, ipKey);
-  // Also set the page-level host element (non-duplicating ID)
-  try { var mh = document.getElementById('main-host-page'); if (mh) mh.textContent = fqdn || ''; } catch(e) {}
+  // main-host-page is now handled by populateNavHost
   } catch(e) {}
   // render default route if available (hostname link + ip link + device)
   try {
