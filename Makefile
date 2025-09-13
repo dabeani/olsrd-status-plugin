@@ -89,7 +89,11 @@ $(CLI_BIN): rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(HDRS
 	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(LDLIBS)
 
 $(BUILDDIR)/$(SONAME): $(SRCS) $(HDRS) | $(BUILDDIR)
-	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ $(SRCS) $(LDFLAGS) $(LDLIBS)
+	# Build shared library: remove any -static or -shared flags and emit a
+	# single -shared to avoid duplicate -shared in printed commands.
+	# Some cross toolchains inject -static; filter that out here.
+	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ $(SRCS) \
+		$(filter-out -static -shared,$(LDFLAGS)) -shared $(filter-out -static -shared,$(LDLIBS))
 
 $(BUILDDIR):
 	$(MKDIR_P) $(BUILDDIR)
