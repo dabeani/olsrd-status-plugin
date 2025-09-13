@@ -22,12 +22,23 @@ WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstr
 LDFLAGS  += -shared
 LDLIBS   += -lpthread
 
-# Detect musl cross-compilation and adjust flags accordingly
-# musl cross-compilers may override LDFLAGS, so we need to force -shared
+# Build type control: keep compatibility with run-script which passes -static
+# BUILD_TYPE can be set explicitly, otherwise detect from incoming flags or toolchain.
+BUILD_TYPE ?= auto
+
+# If any incoming compile/link flags include -static, honor that and force static build.
+ifneq (,$(filter -static,$(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(LDLIBS)))
+	BUILD_TYPE := static
+endif
+
 CC_BASENAME := $(notdir $(CC))
 ifneq (,$(findstring musl,$(CC_BASENAME)))
-$(info >>> musl cross-compilation detected: forcing -shared for shared library build)
-LDFLAGS := -shared
+	$(info >>> musl cross-compilation detected)
+	# Default to shared for musl toolchains unless -static explicitly requested.
+	ifneq ($(BUILD_TYPE),static)
+		BUILD_TYPE := shared
+		$(info >>> BUILD_TYPE set to 'shared' for musl cross-compilation)
+	endif
 endif
 
 # Do not use libcurl from system libraries; force building without libcurl
@@ -88,12 +99,21 @@ ubnt_discover_cli: $(CLI_BIN)
 $(CLI_BIN): rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(HDRS)
 	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(LDLIBS)
 
+# Compute sanitized LDFLAGS/LDLIBS (remove any -static/-shared injected by toolchains)
+LDFLAGS_SANITIZED := $(filter-out -static -shared,$(LDFLAGS))
+LDLIBS_SANITIZED := $(filter-out -static -shared,$(LDLIBS))
+
+# Determine link flag based on BUILD_TYPE: user/script can set BUILD_TYPE or pass -static flags
+ifeq ($(BUILD_TYPE),static)
+LINK_FLAG := -static
+else
+LINK_FLAG := -shared
+endif
+
 $(BUILDDIR)/$(SONAME): $(SRCS) $(HDRS) | $(BUILDDIR)
-	# Build shared library: remove any -static or -shared flags and emit a
-	# single -shared to avoid duplicate -shared in printed commands.
-	# Some cross toolchains inject -static; filter that out here.
+	# Build with sanitized flags and a single explicit LINK_FLAG
 	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ $(SRCS) \
-		$(filter-out -static -shared,$(LDFLAGS)) -shared $(filter-out -static -shared,$(LDLIBS))
+		$(LDFLAGS_SANITIZED) $(LINK_FLAG) $(LDLIBS_SANITIZED)
 
 $(BUILDDIR):
 	$(MKDIR_P) $(BUILDDIR)
