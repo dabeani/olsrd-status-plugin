@@ -488,7 +488,9 @@ function clearChildren(el) {
         if (viewToggle.textContent.trim() === 'Compact') { viewToggle.textContent = 'Raw'; // show raw pre
           var pre = document.createElement('pre'); pre.className='diag-compact-pre diag-raw-pre'; pre.textContent = '';
           // fetch latest diagnostics and render raw
-          fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){ try { pre.textContent = JSON.stringify(j, null, 2); } catch(e){ pre.textContent = String(j); } });
+          fetch('/diagnostics.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
+            try { var j = safeParseJson(txt); pre.textContent = JSON.stringify(j, null, 2); } catch(e){ pre.textContent = 'Error parsing JSON: '+String(e)+'\n--- Raw response ---\n'+txt; }
+          });
           clearChildren(body); body.appendChild(pre);
         } else { viewToggle.textContent = 'Compact'; fetchAllAndRender(); }
         ev.stopPropagation();
