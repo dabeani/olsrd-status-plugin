@@ -4,6 +4,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/select.h>
+#include <unistd.h>
+#include <sys/socket.h>
+
 
 int util_exec(const char *cmd, char **out, size_t *outlen) {
   /* Cap total output to avoid unbounded memory consumption from spawns */

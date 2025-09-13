@@ -2,7 +2,10 @@
     "files.associations": {
         "stdatomic.h": "c",
         "numbers": "c",
-        "tuple": "c"
+        "tuple": "c",
+        "types.h": "c",
+        "stat.h": "c",
+        "stdlib.h": "c"
     },
     "makefile.configureOnOpen": false
 }

@@ -15,3 +15,5 @@ tools/
 www/test/node_modules/.bin/esvalidate
 test/
 www/test/
+.vscode/
+.vscode/settings.json

@@ -24,7 +24,12 @@
 #include <pthread.h>
 #include <signal.h>
 #if defined(__APPLE__) || defined(__linux__)
-# include <execinfo.h>
+#ifdef __GLIBC__
+#include <execinfo.h>
+#else
+// musl: disable backtrace
+#define backtrace(a,b) 0
+#endif
 #endif
 #ifdef HAVE_LIBCURL
 #include <curl/curl.h>
