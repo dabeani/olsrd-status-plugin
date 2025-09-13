@@ -21,6 +21,24 @@
   font-size: 13px;
 }
 
+/* Mobile optimizations for table search */
+@media (max-width: 768px) {
+  .table-search-container {
+    justify-content: flex-start;
+  }
+  .table-search-input {
+    width: 100%;
+    max-width: 280px;
+  }
+  
+  /* Table optimizations for mobile */
+  .table-responsive { font-size: 12px; }
+  .table-condensed th, .table-condensed td { padding: 4px 6px; }
+  
+  /* Traceroute input optimization */
+  #tr-host { width: 100% !important; max-width: 320px; }
+}
+
 /* Make table header clickable pointer more obvious */
 #connectionsTable th, #neighborsTable th, #devicesTable th, #olsrLinksTable th {
   cursor: pointer;
@@ -65,6 +83,18 @@
   .sidebar { order:2; margin-top:12px; }
   .content { order:1; }
   .layout-root { padding: 6px; }
+  
+  /* Improve button touch targets */
+  .btn { min-height: 32px; padding: 6px 12px; }
+  .btn-xs { min-height: 28px; padding: 4px 8px; }
+  
+  /* Better spacing for mobile */
+  .tab-content { margin-top: 10px; }
+  .table-responsive { margin-bottom: 15px; }
+  
+  /* Improve form inputs */
+  .form-control { font-size: 16px; } /* Prevent zoom on iOS */
+  input[type="text"], input[type="number"] { font-size: 16px; }
 }
 
 /* Modal overlay/panel styles to replace inline styles */
@@ -74,6 +104,13 @@
 .modal-panel-sm { max-width:920px; padding:14px; margin:60px auto; }
 .modal-body-scroll { border:1px solid #ddd; border-radius:4px; max-height:520px; overflow:auto; }
 .modal-pre { margin:0; padding:12px; font-family:monospace; font-size:12px; }
+
+/* Mobile optimizations for modals */
+@media (max-width: 768px) {
+  .modal-panel { margin:20px auto; padding:12px 16px 16px; max-width:95%; }
+  .modal-panel-sm { margin:15px auto; padding:10px; max-width:98%; }
+  .modal-body-scroll { max-height:400px; }
+}
 
 /* status-summary-card removed: styles intentionally deleted */
 
@@ -245,4 +282,10 @@
   #status-footer .footer-diag-summary { display:none; }
   #status-footer .footer-sep { display:none; }
   #status-footer #footer-last-request { max-width:90px; }
+  
+  /* Further mobile optimizations for very small screens */
+  .nav-pills li { width: 100%; margin-bottom: 2px; }
+  .nav-pills li a { text-align: left; padding: 8px 12px; }
+  .site-header { padding: 2px 0; }
+  .page-header h1 { font-size: 24px; margin-bottom: 4px; }
 }
