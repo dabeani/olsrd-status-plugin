@@ -33,12 +33,12 @@ endif
 
 CC_BASENAME := $(notdir $(CC))
 ifneq (,$(findstring musl,$(CC_BASENAME)))
-	$(info >>> musl cross-compilation detected)
-	# Default to shared for musl toolchains unless -static explicitly requested.
-	ifneq ($(BUILD_TYPE),static)
-		BUILD_TYPE := shared
-		$(info >>> BUILD_TYPE set to 'shared' for musl cross-compilation)
-	endif
+$(info >>> musl cross-compilation detected)
+# Default to shared for musl toolchains unless -static explicitly requested.
+ifneq ($(BUILD_TYPE),static)
+BUILD_TYPE := shared
+$(info >>> BUILD_TYPE set to 'shared' for musl cross-compilation)
+endif
 endif
 
 # Do not use libcurl from system libraries; force building without libcurl
