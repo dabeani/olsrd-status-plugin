@@ -22,6 +22,14 @@ WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstr
 LDFLAGS  += -shared
 LDLIBS   += -lpthread
 
+# Detect musl cross-compilation and adjust flags accordingly
+# musl cross-compilers may override LDFLAGS, so we need to force -shared
+CC_BASENAME := $(notdir $(CC))
+ifneq (,$(findstring musl,$(CC_BASENAME)))
+$(info >>> musl cross-compilation detected: forcing -shared for shared library build)
+LDFLAGS := -shared
+endif
+
 # Do not use libcurl from system libraries; force building without libcurl
 # so the plugin will use the external `curl` binary at runtime instead.
 # This removes any dependency on libcurl headers/libs during build.

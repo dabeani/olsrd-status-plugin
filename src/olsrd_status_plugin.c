@@ -2210,22 +2210,28 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
                   /* Process key-value pairs (same logic as before) */
                   for (size_t j = 0; j < kvn; j++) {
                     if (strcmp(kv[j].key, "hostname") == 0 && !devices[idx].have_hostname) {
-                      snprintf(devices[idx].hostname, sizeof(devices[idx].hostname), "%s", kv[j].value);
+                      strncpy(devices[idx].hostname, kv[j].value, sizeof(devices[idx].hostname) - 1);
+                      devices[idx].hostname[sizeof(devices[idx].hostname) - 1] = '\0';
                       devices[idx].have_hostname = 1;
                     } else if (strcmp(kv[j].key, "hwaddr") == 0 && !devices[idx].have_hw) {
-                      snprintf(devices[idx].hw, sizeof(devices[idx].hw), "%s", kv[j].value);
+                      strncpy(devices[idx].hw, kv[j].value, sizeof(devices[idx].hw) - 1);
+                      devices[idx].hw[sizeof(devices[idx].hw) - 1] = '\0';
                       devices[idx].have_hw = 1;
                     } else if (strcmp(kv[j].key, "product") == 0 && !devices[idx].have_product) {
-                      snprintf(devices[idx].product, sizeof(devices[idx].product), "%s", kv[j].value);
+                      strncpy(devices[idx].product, kv[j].value, sizeof(devices[idx].product) - 1);
+                      devices[idx].product[sizeof(devices[idx].product) - 1] = '\0';
                       devices[idx].have_product = 1;
                     } else if (strcmp(kv[j].key, "uptime") == 0 && !devices[idx].have_uptime) {
-                      snprintf(devices[idx].uptime, sizeof(devices[idx].uptime), "%s", kv[j].value);
+                      strncpy(devices[idx].uptime, kv[j].value, sizeof(devices[idx].uptime) - 1);
+                      devices[idx].uptime[sizeof(devices[idx].uptime) - 1] = '\0';
                       devices[idx].have_uptime = 1;
                     } else if (strcmp(kv[j].key, "mode") == 0 && !devices[idx].have_mode) {
-                      snprintf(devices[idx].mode, sizeof(devices[idx].mode), "%s", kv[j].value);
+                      strncpy(devices[idx].mode, kv[j].value, sizeof(devices[idx].mode) - 1);
+                      devices[idx].mode[sizeof(devices[idx].mode) - 1] = '\0';
                       devices[idx].have_mode = 1;
                     } else if (strcmp(kv[j].key, "essid") == 0 && !devices[idx].have_essid) {
-                      snprintf(devices[idx].essid, sizeof(devices[idx].essid), "%s", kv[j].value);
+                      strncpy(devices[idx].essid, kv[j].value, sizeof(devices[idx].essid) - 1);
+                      devices[idx].essid[sizeof(devices[idx].essid) - 1] = '\0';
                       devices[idx].have_essid = 1;
                     } else if (strcmp(kv[j].key, "firmware") == 0 && !devices[idx].have_firmware) {
                       snprintf(devices[idx].firmware, sizeof(devices[idx].firmware), "%s", kv[j].value);
@@ -2293,7 +2299,11 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
                           /* look for a corresponding hwaddr_N */
                           char hwkey[32]; snprintf(hwkey, sizeof(hwkey), "hwaddr_%d", idx_num);
                           for (size_t k=0;k<kvn;k++){
-                            if (strcmp(kv[k].key, hwkey) == 0) { if (!devices[didx].have_hw) { snprintf(devices[didx].hw, sizeof(devices[didx].hw), "%s", kv[k].value); devices[didx].have_hw = 1; } break; }
+                            if (strcmp(kv[k].key, hwkey) == 0) { if (!devices[didx].have_hw) { 
+                              strncpy(devices[didx].hw, kv[k].value, sizeof(devices[didx].hw) - 1);
+                              devices[didx].hw[sizeof(devices[didx].hw) - 1] = '\0';
+                              devices[didx].have_hw = 1; 
+                            } break; }
                           }
                         }
                       }
