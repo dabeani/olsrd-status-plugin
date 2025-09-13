@@ -2438,7 +2438,7 @@ function populateFetchStats(fs) {
             if (_versionsLoaded) return Promise.resolve();
             _versionsLoaded = true;
             var statusEl = document.getElementById('versions-status'); if(statusEl) statusEl.textContent = 'Loading...';
-            return fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ try { var v = safeParseJson(txt); renderVersionsPanel(v); if(statusEl) statusEl.textContent = ''; } catch(e){ if(statusEl) statusEl.textContent='ERR: '+e; } }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
+            return fetch('/versions.json',{cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ try { var v = JSON.parse(txt); renderVersionsPanel(v); if(statusEl) statusEl.textContent = ''; } catch(e){ if(statusEl) statusEl.textContent='ERR: '+e; } }).catch(function(e){ var el=document.getElementById('versions-status'); if(el) el.textContent='ERR: '+e; });
           }
           document.getElementById('tr-run').addEventListener('click', function(){ runTraceroute(); });
           // Wire refresh buttons with consistent spinner + disable behavior
@@ -2463,7 +2463,7 @@ function populateFetchStats(fs) {
             refreshVerBtn.addEventListener('click', function(){
               try { refreshVerBtn.disabled = true; } catch(e){}
               // Always fetch fresh versions.json on manual refresh (force bypassing loadVersions cache)
-              fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ try { var v = safeParseJson(txt); renderVersionsPanel(v); } catch(e){} }).catch(function(e){ console.error('Failed to refresh versions:', e); }).finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} });
+              fetch('/versions.json', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ try { var v = JSON.parse(txt); renderVersionsPanel(v); } catch(e){} }).catch(function(e){ console.error('Failed to refresh versions:', e); }).finally(function(){ try{ refreshVerBtn.disabled=false; }catch(e){} });
             });
           }
           // render fixed traceroute-to-uplink results when provided by /status
@@ -2846,7 +2846,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // avoid duplicate work when the Versions tab later lazy-loads.
   try {
     if (!window._versionsLoadedGlobal) {
-      fetch('/versions.json', {cache: 'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ try { var v = safeParseJson(txt); renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e) { console.error('Failed to load versions for header:', e); } }).catch(function(e){ console.error('Failed to fetch versions for header:', e); });
+      fetch('/versions.json', {cache: 'no-store'}).then(function(r){ return r.text(); }).then(function(txt){ try { var v = JSON.parse(txt); renderVersionsPanel(v); window._versionsLoadedGlobal = true; } catch(e) { console.error('Failed to load versions for header:', e); } }).catch(function(e){ console.error('Failed to fetch versions for header:', e); });
     }
   } catch(e) {}
 
