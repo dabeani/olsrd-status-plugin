@@ -449,19 +449,19 @@ function clearChildren(el) {
       } catch(e){}
       // fall back to per-endpoint fetches for anything missing
       var tasks = [
-        fetch('/versions.json',{cache:'no-store'}).then(r=>r.json()).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
-        fetch('/capabilities',{cache:'no-store'}).then(r=>r.json()).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
-        fetch('/fetch_debug',{cache:'no-store'}).then(r=>r.json()).then(j=>p.fetch_debug=j).catch(function(e){ p.fetch_debug={error:String(e)}; }),
-        fetch('/status/summary',{cache:'no-store'}).then(r=>r.json()).then(j=>p.summary=j).catch(function(e){ p.summary={error:String(e)}; })
+        fetch('/versions.json',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
+        fetch('/capabilities',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
+        fetch('/fetch_debug',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.fetch_debug=j).catch(function(e){ p.fetch_debug={error:String(e)}; }),
+        fetch('/status/summary',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.summary=j).catch(function(e){ p.summary={error:String(e)}; })
       ];
       Promise.all(tasks).then(function(){ renderDiagnostics(p); }).catch(function(){ renderDiagnostics(p); });
     }).catch(function(){
       // diagnostics endpoint completely unavailable: fetch per-endpoint
       var tasks = [
-        fetch('/versions.json',{cache:'no-store'}).then(r=>r.json()).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
-        fetch('/capabilities',{cache:'no-store'}).then(r=>r.json()).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
-        fetch('/fetch_debug',{cache:'no-store'}).then(r=>r.json()).then(j=>p.fetch_debug=j).catch(function(e){ p.fetch_debug={error:String(e)}; }),
-        fetch('/status/summary',{cache:'no-store'}).then(r=>r.json()).then(j=>p.summary=j).catch(function(e){ p.summary={error:String(e)}; })
+        fetch('/versions.json',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.versions=j).catch(function(e){ p.versions = {error: String(e)}; }),
+        fetch('/capabilities',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.capabilities=j).catch(function(e){ p.capabilities={error:String(e)}; }),
+        fetch('/fetch_debug',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.fetch_debug=j).catch(function(e){ p.fetch_debug={error:String(e)}; }),
+        fetch('/status/summary',{cache:'no-store'}).then(r => r.text()).then(t => { try { return JSON.parse(t); } catch(e) { return {error: 'JSON parse error: ' + e.message}; } }).then(j=>p.summary=j).catch(function(e){ p.summary={error:String(e)}; })
       ];
       Promise.all(tasks).then(function(){ renderDiagnostics(p); }).catch(function(){ renderDiagnostics(p); });
     });
