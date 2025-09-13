@@ -27,8 +27,9 @@
 #ifdef __GLIBC__
 #include <execinfo.h>
 #else
-// musl: disable backtrace
+// musl: disable all backtrace functions
 #define backtrace(a,b) 0
+#define backtrace_symbols_fd(a,b,c) do {} while(0)
 #endif
 #endif
 #ifdef HAVE_LIBCURL
@@ -969,6 +970,7 @@ static void *fetch_worker_thread(void *arg) {
 /* Minimal SIGSEGV handler that logs a backtrace to stderr then exits. */
 static void sigsegv_handler(int sig) {
 #if defined(__APPLE__) || defined(__linux__)
+#ifdef __GLIBC__
   void *bt[64]; int bt_size = 0;
   bt_size = backtrace(bt, (int)(sizeof(bt)/sizeof(bt[0])));
   if (bt_size > 0) {
@@ -977,6 +979,10 @@ static void sigsegv_handler(int sig) {
   } else {
     fprintf(stderr, "[status-plugin] caught signal %d (SIGSEGV) - no backtrace available\n", sig);
   }
+#else
+  /* musl: no backtrace support */
+  fprintf(stderr, "[status-plugin] caught signal %d (SIGSEGV) - backtrace not available (musl)\n", sig);
+#endif
 #else
   fprintf(stderr, "[status-plugin] caught signal %d (SIGSEGV)\n", sig);
 #endif
@@ -4020,7 +4026,7 @@ static int h_nodedb(http_request_t *r) {
   char url_copy[256];
   strncpy(url_copy, g_nodedb_url, sizeof(url_copy) - 1);
   url_copy[sizeof(url_copy) - 1] = '\0';
-  snprintf(debug_json, sizeof(debug_json), "{\"error\":\"No remote node_db data available\",\"url\":\"%s\",\"last_fetch\":%ld,\"cached_len\":%zu}", url_copy, g_nodedb_last_fetch, g_nodedb_cached_len);
+  snprintf(debug_json, sizeof(debug_json), "{\"error\":\"No remote node_db data available\",\"url\":\"%s\",\"last_fetch\":%lld,\"cached_len\":%zu}", url_copy, (long long)g_nodedb_last_fetch, g_nodedb_cached_len);
   send_json(r, debug_json); return 0;
 }
 
@@ -4043,7 +4049,7 @@ static int h_nodedb_refresh(http_request_t *r) {
     pthread_mutex_lock(&g_nodedb_lock);
     if (g_nodedb_cached && g_nodedb_cached_len>0) {
       /* return a small success JSON including last_fetch */
-      char resp[256]; snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"last_fetch\":%ld,\"len\":%zu}", g_nodedb_last_fetch, g_nodedb_cached_len);
+      char resp[256]; snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"last_fetch\":%lld,\"len\":%zu}", (long long)g_nodedb_last_fetch, g_nodedb_cached_len);
       http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp,strlen(resp)); pthread_mutex_unlock(&g_nodedb_lock); return 0;
     }
     pthread_mutex_unlock(&g_nodedb_lock);

@@ -5,7 +5,8 @@
         "tuple": "c",
         "types.h": "c",
         "stat.h": "c",
-        "stdlib.h": "c"
+        "stdlib.h": "c",
+        "stddef.h": "c"
     },
     "makefile.configureOnOpen": false
 }
