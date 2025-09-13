@@ -1672,6 +1672,17 @@ function updateUI(data) {
   // prefer human-friendly uptime string if provided by backend
   setText('uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
   setText('dl-uptime', data.uptime_linux || data.uptime_str || data.uptime || '');
+  // Extract load average from uptime_linux for CPU stats
+  try {
+    var uptimeStr = data.uptime_linux || '';
+    var loadMatch = uptimeStr.match(/load average:\s*([0-9.]+),/);
+    if (loadMatch && loadMatch[1]) {
+      var loadAvg = parseFloat(loadMatch[1]);
+      if (!isNaN(loadAvg)) {
+        pushStat('cpu_load', loadAvg);
+      }
+    }
+  } catch(e) {}
   try { if (data.hostname) document.title = data.hostname; } catch(e) {}
   try { setText('main-host', data.ip || ''); } catch(e) {}
   try {
@@ -1770,9 +1781,20 @@ function updateUI(data) {
   try { setLastUpdated(); } catch(e) {}
 }
 
-// --- Statistics graphs: maintain short in-memory series and render sparklines ---
-window._stats_series = window._stats_series || { olsr_routes: [], olsr_nodes: [], fetch_queued: [], fetch_processing: [] };
+// --- Modern Statistics Dashboard with Chart.js ---
+window._stats_series = window._stats_series || { 
+  olsr_routes: [], 
+  olsr_nodes: [], 
+  fetch_queued: [], 
+  fetch_processing: [],
+  cpu_load: [],
+  memory_used: [],
+  memory_free: []
+};
 var STATS_SERIES_MAX = 60; // keep last 60 samples (~1 min at 1s sampling)
+
+// Chart.js instances
+window._charts = window._charts || {};
 
 function pushStat(seriesName, value) {
   try {
@@ -1782,90 +1804,282 @@ function pushStat(seriesName, value) {
   } catch(e) {}
 }
 
-// renderSparkline removed: replaced with a no-op to keep callers safe
-// Render a simple line graph in a canvas for the last 10 datapoints
-function renderLineGraph(canvasId, series, color, yLabel) {
-  // If an <svg> with this id exists, render a sparkline there for crisper scaling.
-  var el = document.getElementById(canvasId);
-  var data = (series || []).slice(-10);
-  if (!data || !data.length) return;
-  if (el && el.tagName && el.tagName.toLowerCase() === 'svg') {
-    var svg = el;
-    var viewW = 320, viewH = 100;
-    svg.setAttribute('viewBox', '0 0 ' + viewW + ' ' + viewH);
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-    // normalize numeric values and guard against degenerate series (length===1)
-    var norm = data.map(function(v){ return Number(v) || 0; });
-    var minY = Math.min.apply(null, norm), maxY = Math.max.apply(null, norm);
-    if (minY === maxY) { minY = 0; maxY = maxY + 1; }
-    var pad = 12;
-    var denomX = (norm.length - 1) || 1;
-    var points = norm.map(function(v, i){
-      var x = pad + ((viewW-2*pad) * i/denomX);
-      var y = viewH - pad - ((viewH-2*pad) * (v - minY)/(maxY - minY));
-      return [x,y];
-    });
-    var areaPts = points.map(function(p){ return p[0]+','+p[1]; }).join(' ');
-    var area = document.createElementNS('http://www.w3.org/2000/svg','polygon');
-    area.setAttribute('points', pad+','+(viewH-pad)+' '+ areaPts +' '+(viewW-pad)+','+(viewH-pad));
-    area.setAttribute('fill', color); area.setAttribute('fill-opacity', '0.08'); svg.appendChild(area);
-    var pathD = points.map(function(p,i){ return (i===0? 'M':'L') + p[0] + ' ' + p[1]; }).join(' ');
-    var path = document.createElementNS('http://www.w3.org/2000/svg','path');
-    path.setAttribute('d', pathD); path.setAttribute('stroke', color); path.setAttribute('stroke-width','2'); path.setAttribute('fill','none'); svg.appendChild(path);
-    points.forEach(function(p){ var c = document.createElementNS('http://www.w3.org/2000/svg','circle'); c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r','3'); c.setAttribute('fill', color); svg.appendChild(c); });
-    var txtMin = document.createElementNS('http://www.w3.org/2000/svg','text'); txtMin.setAttribute('x', 4); txtMin.setAttribute('y', viewH-pad); txtMin.setAttribute('fill','#666'); txtMin.setAttribute('font-size','10'); txtMin.textContent = String(Math.round(minY)); svg.appendChild(txtMin);
-    var txtMax = document.createElementNS('http://www.w3.org/2000/svg','text'); txtMax.setAttribute('x', 4); txtMax.setAttribute('y', pad+8); txtMax.setAttribute('fill','#666'); txtMax.setAttribute('font-size','10'); txtMax.textContent = String(Math.round(maxY)); svg.appendChild(txtMax);
-    return;
+// Initialize modern Chart.js charts for statistics
+function initStatsCharts() {
+  try {
+    // Network chart (Nodes & Routes)
+    var networkCtx = document.getElementById('network-chart');
+    if (networkCtx) {
+      window._charts.network = new Chart(networkCtx, {
+        type: 'line',
+        data: {
+          labels: Array.from({length: STATS_SERIES_MAX}, (_, i) => i + 1),
+          datasets: [{
+            label: 'Nodes',
+            data: [],
+            borderColor: '#007bff',
+            backgroundColor: 'rgba(0, 123, 255, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }, {
+            label: 'Routes',
+            data: [],
+            borderColor: '#28a745',
+            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            intersect: false,
+            mode: 'index'
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            },
+            tooltip: {
+              enabled: true,
+              callbacks: {
+                title: function(context) {
+                  return 'Sample ' + context[0].dataIndex;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              display: false
+            },
+            y: {
+              beginAtZero: true,
+              grid: {
+                color: 'rgba(0,0,0,0.05)'
+              }
+            }
+          },
+          animation: {
+            duration: 0 // Disable animations for real-time updates
+          }
+        }
+      });
+    }
+
+    // System resources chart (CPU & Memory)
+    var systemCtx = document.getElementById('system-chart');
+    if (systemCtx) {
+      window._charts.system = new Chart(systemCtx, {
+        type: 'line',
+        data: {
+          labels: Array.from({length: STATS_SERIES_MAX}, (_, i) => i + 1),
+          datasets: [{
+            label: 'CPU Load',
+            data: [],
+            borderColor: '#fd7e14',
+            backgroundColor: 'rgba(253, 126, 20, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }, {
+            label: 'Memory Used (%)',
+            data: [],
+            borderColor: '#dc3545',
+            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            intersect: false,
+            mode: 'index'
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            }
+          },
+          scales: {
+            x: {
+              display: false
+            },
+            y: {
+              beginAtZero: true,
+              max: 100,
+              grid: {
+                color: 'rgba(0,0,0,0.05)'
+              }
+            }
+          },
+          animation: {
+            duration: 0
+          }
+        }
+      });
+    }
+
+    // Fetch operations chart
+    var fetchCtx = document.getElementById('fetch-chart');
+    if (fetchCtx) {
+      window._charts.fetch = new Chart(fetchCtx, {
+        type: 'line',
+        data: {
+          labels: Array.from({length: STATS_SERIES_MAX}, (_, i) => i + 1),
+          datasets: [{
+            label: 'Queue Length',
+            data: [],
+            borderColor: '#6f42c1',
+            backgroundColor: 'rgba(111, 66, 193, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }, {
+            label: 'Processing',
+            data: [],
+            borderColor: '#20c997',
+            backgroundColor: 'rgba(32, 201, 151, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            intersect: false,
+            mode: 'index'
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            }
+          },
+          scales: {
+            x: {
+              display: false
+            },
+            y: {
+              beginAtZero: true,
+              grid: {
+                color: 'rgba(0,0,0,0.05)'
+              }
+            }
+          },
+          animation: {
+            duration: 0
+          }
+        }
+      });
+    }
+  } catch(e) {
+    console.error('Failed to initialize stats charts:', e);
   }
-  // Fallback: draw to canvas if present
-  var canvas = el && el.getContext ? el : document.getElementById(canvasId);
-  if (!canvas || !canvas.getContext) return;
-  var ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  var w = canvas.width, h = canvas.height;
-  var norm = data.map(function(v){ return Number(v) || 0; });
-  var minY = Math.min.apply(null, norm), maxY = Math.max.apply(null, norm);
-  if (minY === maxY) { minY = 0; maxY = maxY + 1; }
-  var pad = 12;
-  // Draw background grid lines
-  ctx.strokeStyle = '#f0f0f0';
-  ctx.lineWidth = 1;
-  for (var gy=0; gy<4; gy++) {
-    var yy = pad + ((h-2*pad) * gy/3);
-    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(w-pad, yy); ctx.stroke();
+}
+
+// Update chart data
+function updateStatsCharts() {
+  try {
+    // Update network chart
+    if (window._charts.network) {
+      window._charts.network.data.datasets[0].data = window._stats_series.olsr_nodes.slice(-STATS_SERIES_MAX);
+      window._charts.network.data.datasets[1].data = window._stats_series.olsr_routes.slice(-STATS_SERIES_MAX);
+      window._charts.network.update('none');
+    }
+
+    // Update system chart
+    if (window._charts.system) {
+      window._charts.system.data.datasets[0].data = window._stats_series.cpu_load.slice(-STATS_SERIES_MAX);
+      window._charts.system.data.datasets[1].data = window._stats_series.memory_used.slice(-STATS_SERIES_MAX);
+      window._charts.system.update('none');
+    }
+
+    // Update fetch chart
+    if (window._charts.fetch) {
+      window._charts.fetch.data.datasets[0].data = window._stats_series.fetch_queued.slice(-STATS_SERIES_MAX);
+      window._charts.fetch.data.datasets[1].data = window._stats_series.fetch_processing.slice(-STATS_SERIES_MAX);
+      window._charts.fetch.update('none');
+    }
+  } catch(e) {
+    console.error('Failed to update stats charts:', e);
   }
-  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad); ctx.stroke();
-  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
-  ctx.fillText(yLabel, 4, pad+6);
-  ctx.strokeStyle = color || '#0074d9';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  var denomX2 = (norm.length - 1) || 1;
-  for (var i=0; i<norm.length; i++) {
-    var x = pad + ((w-2*pad) * i/denomX2);
-    var y = h-pad - ((h-2*pad) * (norm[i]-minY)/(maxY-minY));
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.globalAlpha = 0.08; ctx.fillStyle = color || '#0074d9';
-  ctx.beginPath();
-  for (var i=0; i<norm.length; i++) {
-    var x = pad + ((w-2*pad) * i/denomX2);
-    var y = h-pad - ((h-2*pad) * (norm[i]-minY)/(maxY-minY));
-    if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-  }
-  ctx.lineTo(w-pad, h-pad); ctx.lineTo(pad, h-pad); ctx.closePath(); ctx.fill();
-  ctx.globalAlpha = 1.0;
-  ctx.fillStyle = color || '#0074d9';
-  for (var i=0; i<data.length; i++) {
-  var x = pad + ((w-2*pad) * i/denomX2);
-  var y = h-pad - ((h-2*pad) * (norm[i]-minY)/(maxY-minY));
-    ctx.beginPath(); ctx.arc(x, y, 3, 0, 2*Math.PI); ctx.fill();
-  }
-  ctx.fillStyle = '#666'; ctx.font = '10px sans-serif';
-  ctx.fillText(minY, 2, h-pad);
-  ctx.fillText(maxY, 2, pad+4);
+}
+
+// Update trend indicators for nodes and routes
+function updateTrendIndicators(routesArr, nodesArr) {
+  try {
+    function statsFromArr(arr) {
+      if (!arr || !arr.length) return { min:0, max:0, avg:0, trend:0 };
+      var min = Math.min.apply(null, arr);
+      var max = Math.max.apply(null, arr);
+      var sum = arr.reduce(function(a,b){return a+(Number(b)||0);},0);
+      var avg = sum / arr.length;
+      var trend = 0;
+      if (arr.length >= 2) {
+        var last = Number(arr[arr.length-1])||0;
+        var prior = Number(arr[Math.max(0, arr.length-6)])||0; // compare against ~6 samples ago
+        trend = last - prior;
+      }
+      return { min: Math.round(min), max: Math.round(max), avg: Math.round(avg*10)/10, trend: Math.round(trend) };
+    }
+    
+    var rStats = statsFromArr(routesArr.slice(-10));
+    var nStats = statsFromArr(nodesArr.slice(-10));
+    
+    // Update trend elements
+    var routesTrendEl = document.getElementById('routes-trend'); 
+    if (routesTrendEl) {
+      routesTrendEl.className = '';
+      if (rStats.trend > 0) { 
+        routesTrendEl.textContent = '▲ ' + String(rStats.trend); 
+        routesTrendEl.classList.add('trend-up'); 
+      } else if (rStats.trend < 0) { 
+        routesTrendEl.textContent = '▼ ' + String(Math.abs(rStats.trend)); 
+        routesTrendEl.classList.add('trend-down'); 
+      } else { 
+        routesTrendEl.textContent = '◦'; 
+        routesTrendEl.classList.add('trend-flat'); 
+      }
+    }
+    
+    var nodesTrendEl = document.getElementById('nodes-trend'); 
+    if (nodesTrendEl) {
+      nodesTrendEl.className = '';
+      if (nStats.trend > 0) { 
+        nodesTrendEl.textContent = '▲ ' + String(nStats.trend); 
+        nodesTrendEl.classList.add('trend-up'); 
+      } else if (nStats.trend < 0) { 
+        nodesTrendEl.textContent = '▼ ' + String(Math.abs(nStats.trend)); 
+        nodesTrendEl.classList.add('trend-down'); 
+      } else { 
+        nodesTrendEl.textContent = '◦'; 
+        nodesTrendEl.classList.add('trend-flat'); 
+      }
+    }
+  } catch(e) {}
 }
 
 // Single flexible card renderer: renders a Bootstrap-style panel into a container.
@@ -1951,56 +2165,69 @@ updateUI = function(data) {
       pushStat('fetch_queued', fq);
       pushStat('fetch_processing', fp);
     } catch(e) {}
-    // render graphs for nodes and routes (last 10 datapoints)
-      try {
-        var routesArr = window._stats_series.olsr_routes || [];
-        var nodesArr = window._stats_series.olsr_nodes || [];
-        var routesCur = routesArr.length ? routesArr[routesArr.length-1] : 0;
-        var nodesCur = nodesArr.length ? nodesArr[nodesArr.length-1] : 0;
-        var routesEl = document.getElementById('routes-cur'); if (routesEl) routesEl.textContent = String(routesCur);
-        var nodesEl = document.getElementById('nodes-cur'); if (nodesEl) nodesEl.textContent = String(nodesCur);
-        // Draw graphs
-        renderLineGraph('routes-graph', routesArr, '#0074d9', 'Routes');
-        renderLineGraph('nodes-graph', nodesArr, '#2ecc40', 'Nodes');
-        // compute min/avg/max and trend for routes and nodes
-        try {
-          function statsFromArr(arr) {
-            if (!arr || !arr.length) return { min:0, max:0, avg:0, trend:0 };
-            var min = Math.min.apply(null, arr);
-            var max = Math.max.apply(null, arr);
-            var sum = arr.reduce(function(a,b){return a+(Number(b)||0);},0);
-            var avg = sum / arr.length;
-            var trend = 0;
-            if (arr.length >= 2) {
-              var last = Number(arr[arr.length-1])||0;
-              var prior = Number(arr[Math.max(0, arr.length-6)])||0; // compare against ~6 samples ago
-              trend = last - prior;
-            }
-            return { min: Math.round(min), max: Math.round(max), avg: Math.round(avg*10)/10, trend: Math.round(trend) };
-          }
-          var rStats = statsFromArr(routesArr.slice(-10));
-          var nStats = statsFromArr(nodesArr.slice(-10));
-          var routesMinEl = document.getElementById('routes-min'); if (routesMinEl) routesMinEl.textContent = String(rStats.min);
-          var routesAvgEl = document.getElementById('routes-avg'); if (routesAvgEl) routesAvgEl.textContent = String(rStats.avg);
-          var routesMaxEl = document.getElementById('routes-max'); if (routesMaxEl) routesMaxEl.textContent = String(rStats.max);
-          var nodesMinEl = document.getElementById('nodes-min'); if (nodesMinEl) nodesMinEl.textContent = String(nStats.min);
-          var nodesAvgEl = document.getElementById('nodes-avg'); if (nodesAvgEl) nodesAvgEl.textContent = String(nStats.avg);
-          var nodesMaxEl = document.getElementById('nodes-max'); if (nodesMaxEl) nodesMaxEl.textContent = String(nStats.max);
-          // trend arrows
-          var routesTrendEl = document.getElementById('routes-trend'); if (routesTrendEl) {
-            routesTrendEl.className = '';
-            if (rStats.trend > 0) { routesTrendEl.textContent = '▲ ' + String(rStats.trend); routesTrendEl.classList.add('trend-up'); }
-            else if (rStats.trend < 0) { routesTrendEl.textContent = '▼ ' + String(Math.abs(rStats.trend)); routesTrendEl.classList.add('trend-down'); }
-            else { routesTrendEl.textContent = '◦'; routesTrendEl.classList.add('trend-flat'); }
-          }
-          var nodesTrendEl = document.getElementById('nodes-trend'); if (nodesTrendEl) {
-            nodesTrendEl.className = '';
-            if (nStats.trend > 0) { nodesTrendEl.textContent = '▲ ' + String(nStats.trend); nodesTrendEl.classList.add('trend-up'); }
-            else if (nStats.trend < 0) { nodesTrendEl.textContent = '▼ ' + String(Math.abs(nStats.trend)); nodesTrendEl.classList.add('trend-down'); }
-            else { nodesTrendEl.textContent = '◦'; nodesTrendEl.classList.add('trend-flat'); }
-          }
-        } catch(e) {}
-      } catch(e) {}
+    
+    // sample CPU load from uptime string
+    try {
+      if (data.uptime_linux) {
+        var uptimeMatch = data.uptime_linux.match(/load average:\s*([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)/);
+        if (uptimeMatch) {
+          var load1m = parseFloat(uptimeMatch[1]); // Keep as raw load average
+          pushStat('cpu_load', load1m);
+        }
+      }
+    } catch(e) {}
+    
+    // sample memory usage (if available in future backend updates)
+    try {
+      // For now, we'll simulate or wait for backend memory data
+      // pushStat('memory_used', memoryPercent);
+      // pushStat('memory_free', freePercent);
+    } catch(e) {}
+    
+    // Update modern charts
+    try {
+      updateStatsCharts();
+    } catch(e) {}
+    
+    // Update UI elements for nodes and routes
+    try {
+      var routesArr = window._stats_series.olsr_routes || [];
+      var nodesArr = window._stats_series.olsr_nodes || [];
+      var routesCur = routesArr.length ? routesArr[routesArr.length-1] : 0;
+      var nodesCur = nodesArr.length ? nodesArr[nodesArr.length-1] : 0;
+      var routesEl = document.getElementById('routes-cur'); if (routesEl) routesEl.textContent = String(routesCur);
+      var nodesEl = document.getElementById('nodes-cur'); if (nodesEl) nodesEl.textContent = String(nodesCur);
+      
+      // Update CPU and memory displays
+      var cpuArr = window._stats_series.cpu_load || [];
+      var cpuCur = cpuArr.length ? cpuArr[cpuArr.length-1] : 0;
+      var cpuEl = document.getElementById('cpu-load'); if (cpuEl) cpuEl.textContent = cpuCur.toFixed(1) + '%';
+      
+      var memEl = document.getElementById('memory-usage'); if (memEl) memEl.textContent = 'N/A';
+      
+      // Update fetch stats
+      var queueArr = window._stats_series.fetch_queued || [];
+      var procArr = window._stats_series.fetch_processing || [];
+      var queueCur = queueArr.length ? queueArr[queueArr.length-1] : 0;
+      var procCur = procArr.length ? procArr[procArr.length-1] : 0;
+      var queueEl = document.getElementById('queue-length'); if (queueEl) queueEl.textContent = String(queueCur);
+      var procEl = document.getElementById('processing-count'); if (procEl) procEl.textContent = String(procCur);
+      
+      // Calculate success rate
+      var successEl = document.getElementById('success-rate');
+      if (successEl && data.fetch_stats) {
+        var total = (data.fetch_stats.successes || 0) + (data.fetch_stats.retries || 0) + (data.fetch_stats.dropped || 0);
+        if (total > 0) {
+          var rate = ((data.fetch_stats.successes || 0) / total * 100).toFixed(1) + '%';
+          successEl.textContent = rate;
+        } else {
+          successEl.textContent = 'N/A';
+        }
+      }
+      
+      // Update trend indicators
+      updateTrendIndicators(routesArr, nodesArr);
+    } catch(e) {}
   } catch(e) {}
   // Only call the original full updateUI when the payload looks like a full status
   try {
@@ -2017,12 +2244,22 @@ updateUI = function(data) {
   // Lightweight polling to keep statistics live: fetch /status/lite periodically and feed updateUI
   window._stats_poll_interval_ms = 5000; // enforce 5s polling as requested
   function _statsPollOnce() {
-    fetch('/status/stats', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s) {
+    fetch('/status/lite', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(s){ try { if (s) {
       // Map minimal stats payload into shape expected by updateUI
       var mapped = {};
       if (typeof s.olsr_routes_count !== 'undefined') mapped.olsr_routes_count = s.olsr_routes_count;
       if (typeof s.olsr_nodes_count !== 'undefined') mapped.olsr_nodes_count = s.olsr_nodes_count;
       if (s.fetch_stats) mapped.fetch_stats = s.fetch_stats;
+      // Extract load average from uptime_linux
+      if (s.uptime_linux) {
+        var loadMatch = s.uptime_linux.match(/load average:\s*([0-9.]+),/);
+        if (loadMatch && loadMatch[1]) {
+          var loadAvg = parseFloat(loadMatch[1]);
+          if (!isNaN(loadAvg)) {
+            pushStat('cpu_load', loadAvg);
+          }
+        }
+      }
       updateUI(mapped);
     } } catch(e) {} }).catch(function(){});
   }
@@ -2914,6 +3151,22 @@ document.addEventListener('DOMContentLoaded', function() {
             setTabLoaded('tab-status');
           }
         } catch(e) { setTabError('tab-status'); }
+      }
+      if (id === '#tab-stats') {
+        console.log('Loading statistics tab content...');
+        setTabLoading('tab-stats');
+        try {
+          // Initialize Chart.js charts if not already done
+          if (!window._charts || !window._charts.network) {
+            initStatsCharts();
+          }
+          // Start stats polling if not already running
+          _startStatsPoll();
+          setTabLoaded('tab-stats');
+        } catch(e) {
+          console.error('Failed to initialize stats tab:', e);
+          setTabError('tab-stats');
+        }
       }
       if (id === '#tab-olsr') {
         console.log('Loading OLSR links tab content...');
