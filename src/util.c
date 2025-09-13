@@ -250,11 +250,11 @@ int env_is_edgerouter(void){
 int env_is_linux_container(void){
   /* Detect Linux container environment (not EdgeRouter) */
   if (env_is_edgerouter()) return 0; /* If it's EdgeRouter, it's not a container */
-  
+
   /* Check for container indicators */
   if (path_exists("/.dockerenv")) return 1;
   if (path_exists("/run/.containerenv")) return 1; /* podman */
-  
+
   /* Check for common container paths */
   if (path_exists("/etc/alpine-release")) return 1;
   if (path_exists("/etc/os-release")) {
@@ -271,7 +271,7 @@ int env_is_linux_container(void){
       fclose(f);
     }
   }
-  
+
   /* Check for typical container networking */
   if (path_exists("/proc/net/route")) {
     /* If we have very few interfaces, might be containerized */
@@ -284,6 +284,6 @@ int env_is_linux_container(void){
       if (lines <= 3) return 1; /* Very few routes, likely container */
     }
   }
-  
+
   return 0;
 }

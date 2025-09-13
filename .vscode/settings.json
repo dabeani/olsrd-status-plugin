@@ -1,7 +1,8 @@
 {
     "files.associations": {
         "stdatomic.h": "c",
-        "numbers": "c"
+        "numbers": "c",
+        "tuple": "c"
     },
     "makefile.configureOnOpen": false
 }

@@ -204,7 +204,7 @@ function clearChildren(el) {
     try {
   // keep internal pending counter for diagnostics but the UI now shows
   // last-request text instead of a numeric pending badge.
-  var el = document.getElementById('footer-pending-count');
+  var el = document.getElementById('footer-pending');
       if (!el) return;
       el.textContent = String(_pendingFetches);
   var badge = el;
@@ -1101,12 +1101,12 @@ function populateOlsrLinksTable(links) {
     var parts = [];
     if (link.node_names && typeof link.node_names === 'string') parts = link.node_names.split(',').map(function(s){ return s.trim(); }).filter(function(x){ return x.length; });
     var resolved = null; var reason = 'none';
-    
+
     // 1) Try resolving by IP/CIDR via nodedb first (most authoritative) - use same logic as Connections tab
     if (typeof getNodeNameForIp === 'function') {
       try { var nn = getNodeNameForIp(remote); if (nn) { resolved = nn; reason = 'nodedb-cidr-or-key'; } } catch(e){}
     }
-    
+
     // 1b) If getNodeNameForIp didn't work, try direct nodedb lookup using same logic as Connections tab
     if (!resolved && window._nodedb_cache) {
       // Check if remote IP is a direct key in nodedb cache
@@ -1117,7 +1117,7 @@ function populateOlsrLinksTable(links) {
       } else {
         // Check other nodedb entries where this IP might be referenced in h, host, ip, ipv4, addr fields
         Object.keys(window._nodedb_cache).some(function(k){
-          var v = window._nodedb_cache[k]; 
+          var v = window._nodedb_cache[k];
           if (!v) return false;
           try {
             // Check if this entry references the remote IP via various host fields
@@ -1133,7 +1133,7 @@ function populateOlsrLinksTable(links) {
         });
       }
     }
-    
+
     // 2) Prefer explicit node_names that exactly match nodedb entries mapped to this remote
     if (!resolved && parts.length && window._nodedb_cache) {
       for (var i=0;i<parts.length;i++) {
@@ -1158,7 +1158,7 @@ function populateOlsrLinksTable(links) {
         if (found) { resolved = pname; reason = 'node_names->nodedb-match'; break; }
       }
     }
-    
+
     // 3) Check for explicit link fields that often carry node names
     if (!resolved) {
       var altFields = ['remote_node','remote_node_name','remote_name','node','node_name','name'];
@@ -1166,7 +1166,7 @@ function populateOlsrLinksTable(links) {
         var fld = altFields[af]; if (link[fld]) { resolved = link[fld]; reason = 'alt-field-'+fld; break; }
       }
     }
-    
+
     // 4) If still not resolved, prefer first node_names entry
     if (!resolved && parts.length) {
       // Avoid selecting short device-like names (e.g. 'eno', 'eth0') when a
@@ -1184,10 +1184,10 @@ function populateOlsrLinksTable(links) {
       } catch(e){}
       if (!resolved) { resolved = parts[0]; reason = 'first-node_names-fallback'; }
     }
-    
+
     // 5) Prefer remote_host if available
     if (!resolved && link.remote_host) { resolved = link.remote_host; reason = 'remote_host-fallback'; }
-    
+
     // 6) final fallback: remote IP string
     if (!resolved) { resolved = remote; reason = 'ip-fallback'; }
     return { name: resolved, reason: reason, parts: parts };
@@ -2224,7 +2224,7 @@ function populateFetchStats(fs) {
   // (status-summary card removed; fetch stats now live in the Fetch Queue tab)
       var hostEl = document.getElementById('nav-host');
       if (hostEl) {
-      
+
 
       // Render a small SVG sparkline into an <svg> element with given id
       function renderSparkline(svgId, series, color) {

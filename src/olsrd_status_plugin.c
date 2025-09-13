@@ -532,8 +532,6 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
 static void get_primary_ipv4(char *out, size_t outlen);
 static int buffer_has_content(const char *b, size_t n);
 static int validate_nodedb_json(const char *buf, size_t len);
-/* forward-declare cached helper and mark unused to avoid warning when not referenced */
-static void get_primary_ipv4_cached(char *out, size_t outlen) __attribute__((unused));
 
 /* Small helper: append formatted text directly into growing buffer to avoid asprintf churn */
 static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
@@ -680,37 +678,6 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
 /* Use cached wrapper in this compilation unit */
 #undef util_http_get_url_local
 #define util_http_get_url_local(url,out,outlen,timeout_sec) cached_util_http_get_url_local(url,out,outlen,timeout_sec)
-
-/* Cache primary IPv4 for short TTL to avoid repeated getifaddrs */
-static void get_primary_ipv4_cached(char *out, size_t outlen);
-static void get_primary_ipv4_cached(char *out, size_t outlen) {
-  static char cached[128] = "";
-  static time_t ts = 0;
-  time_t nowt = time(NULL);
-  if (out && outlen) out[0] = 0;
-  if (nowt - ts <= LOCAL_CACHE_TTL_SEC && cached[0]) {
-    if (out && outlen) snprintf(out, outlen, "%s", cached);
-    return;
-  }
-  struct ifaddrs *ifap = NULL, *ifa = NULL;
-  if (getifaddrs(&ifap) == 0) {
-    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
-      if (!ifa->ifa_addr) continue;
-      if (ifa->ifa_addr->sa_family == AF_INET) {
-        struct sockaddr_in sa; memcpy(&sa, ifa->ifa_addr, sizeof(sa));
-        char b[INET_ADDRSTRLEN]; if (inet_ntop(AF_INET, &sa.sin_addr, b, sizeof(b))) {
-          if (strcmp(b, "127.0.0.1") != 0) {
-            snprintf(cached, sizeof(cached), "%s", b);
-            ts = nowt;
-            break;
-          }
-        }
-      }
-    }
-    if (ifap) freeifaddrs(ifap);
-  }
-  if (out && outlen) snprintf(out, outlen, "%s", cached);
-}
 
 /* Worker: periodically refresh devices cache using ubnt_discover_output + normalize_ubnt_devices */
 static void *devices_cache_worker(void *arg) {
@@ -1716,7 +1683,7 @@ static void fetch_remote_nodedb(void) {
       if (waited >= 30) fprintf(stderr, "[status-plugin] nodedb fetch: proceeding after timeout waiting for DNS (%s)\n", hostbuf);
     }
   }
-  
+
   /* Prefer internal HTTP fetch for plain http:// URLs to avoid spawning curl. */
   int success = 0;
   if (strncmp(g_nodedb_url, "http://", 7) == 0) {
@@ -1781,7 +1748,7 @@ static void fetch_remote_nodedb(void) {
     }
 #endif
   }
-  
+
   if (success) {
     /* augment: if remote JSON is an object mapping IP -> { n:.. } ensure each has hostname/name keys */
     int is_object_mapping = 0; /* heuristic: starts with '{' and contains '"n"' and an IPv4 pattern */
@@ -1814,7 +1781,7 @@ static void fetch_remote_nodedb(void) {
     pthread_mutex_unlock(&g_nodedb_lock);
     /* write a copy for external inspection if explicitly enabled (avoid frequent flash writes) */
     if (g_nodedb_write_disk) {
-      FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);} 
+      FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);}
     }
     fresh=NULL;
   } else if (fresh) { free(fresh); }
@@ -3081,7 +3048,7 @@ static int h_status(http_request_t *r) {
             /* leave as '*' no latency */
           }
           /* Tokenize manually */
-          char *save=NULL; char *tok=strtok_r(norm," ",&save); int idx=0; char seen_paren_ip=0; char raw_ip_paren[64]=""; char raw_host[256]=""; 
+          char *save=NULL; char *tok=strtok_r(norm," ",&save); int idx=0; char seen_paren_ip=0; char raw_ip_paren[64]=""; char raw_host[256]="";
           char prev_tok[64]="";
           while(tok){
             if(idx==0){ snprintf(hop,sizeof(hop),"%s",tok); }
@@ -3306,7 +3273,7 @@ static int h_status_lite(http_request_t *r) {
     p = strstr(rout, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def_dev)) { strncpy(def_dev, p, L); def_dev[L] = 0; } } }
     free(rout);
   }
-  
+
   if (def_ip[0]) {
     struct in_addr ina;
     if (inet_aton(def_ip, &ina)) {
@@ -3855,7 +3822,7 @@ done:
 /* Lightweight summary: only essentials for initial paint */
 static int h_status_summary(http_request_t *r) {
   char hostname[256]=""; if (gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; else hostname[0]=0;
-  char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if (getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break;} } } if(ifap) freeifaddrs(ifap);} 
+  char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if (getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break;} } } if(ifap) freeifaddrs(ifap);}
   long uptime_seconds = get_uptime_seconds();
   char uptime_h[160]=""; format_uptime_linux(uptime_seconds, uptime_h, sizeof(uptime_h));
   char buf[1024]; snprintf(buf,sizeof(buf),"{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime_linux\":\"%s\"}\n", hostname, ipaddr, uptime_h);
@@ -4381,7 +4348,7 @@ static int h_diagnostics_json(http_request_t *r) {
   /* status summary: hostname, ip, uptime */
   {
     char hostname[256]=""; if (gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; else hostname[0]=0;
-    char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if (getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break;} } } if(ifap) freeifaddrs(ifap);} 
+    char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if (getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break;} } } if(ifap) freeifaddrs(ifap);}
     long uptime_seconds = get_uptime_seconds(); char uptime_h[160]=""; format_uptime_linux(uptime_seconds, uptime_h, sizeof(uptime_h));
     size_t sl = snprintf(NULL,0,"{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime_linux\":\"%s\"}", hostname, ipaddr, uptime_h) + 1;
     summary = malloc(sl); if (summary) snprintf(summary, sl, "{\"hostname\":\"%s\",\"ip\":\"%s\",\"uptime_linux\":\"%s\"}", hostname, ipaddr, uptime_h);
@@ -4754,7 +4721,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
   /* try cached remote node_db first */
   fetch_remote_nodedb_if_needed();
   if (g_nodedb_cached && g_nodedb_cached_len > 0) {
-    char needle[256]; 
+    char needle[256];
     if (snprintf(needle, sizeof(needle), "\"%s\":", ipv4) >= (int)sizeof(needle)) {
       /* IP address too long, skip */
       goto nothing_found;
@@ -4886,8 +4853,8 @@ int olsrd_plugin_init(void) {
   for (const char **p = olsrd_candidates; *p; ++p) { if (path_exists(*p)) { snprintf(g_olsrd_path, sizeof(g_olsrd_path), "%s", *p); break; } }
   g_is_edgerouter = env_is_edgerouter();
   g_is_linux_container = env_is_linux_container();
-  
-  fprintf(stderr, "[status-plugin] environment detection: edgerouter=%s, linux_container=%s\n", 
+
+  fprintf(stderr, "[status-plugin] environment detection: edgerouter=%s, linux_container=%s\n",
           g_is_edgerouter ? "yes" : "no", g_is_linux_container ? "yes" : "no");
 
   /* Try to detect local www directory for development */
